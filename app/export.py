@@ -54,7 +54,8 @@ def _total_row(ws, row: int, ncols: int, label: str):
         cell.font, cell.fill, cell.border = F_BOLD, FILL_TOT, TOP
 
 
-def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang: str = "it") -> bytes:
+def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang: str = "it",
+                     filaments: list[dict] | None = None) -> bytes:
     now = time.time()
     T = lambda text, **kw: tr(lang, text, **kw)  # noqa: E731
     sh = lambda text: T(text)[:SHEET_LIMIT].replace("'", "")  # noqa: E731
@@ -63,8 +64,7 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
     # ------------------------------------------------------------ Dettaglio stampe
     det = wb.active
     det.title = sh("Dettaglio stampe")
-    cols = [T(x) for x in ["Avvio", "Fine", "Stampante", "Seriale", "Lavoro", "Avviata da", "Durata (h)",
-            "Filamento (g)", "Esito", "Avanzamento", "Errore"]]
+    cols = [T("Avvio"), T("Fine"), T("Stampante"), T("Seriale"), T("Lavoro"), T("Avviata da"), T("Durata (h)"), T("Filamento (g)"), T("Esito"), T("Avanzamento"), T("Errore")]
     _header(det, 1, cols, [17, 17, 22, 18, 34, 14, 11, 13, 13, 13, 12])
     for i, j in enumerate(sorted(jobs, key=lambda x: x["started_at"]), start=2):
         end = j.get("ended_at")
@@ -96,8 +96,7 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
         p["h"] += ((j.get("ended_at") or now) - j["started_at"]) / 3600
         p["g"] += j.get("filament_g") or 0
     ps = wb.create_sheet(sh("Per stampante"))
-    pcols = [T(x) for x in ["Stampante", "Seriale", "Stampe", "Riuscite", "Fallite", "Annullate", "Tasso di successo",
-             "Ore di stampa", "Filamento (g)"]]
+    pcols = [T("Stampante"), T("Seriale"), T("Stampe"), T("Riuscite"), T("Fallite"), T("Annullate"), T("Tasso di successo"), T("Ore di stampa"), T("Filamento (g)")]
     _header(ps, 1, pcols, [24, 18, 10, 10, 10, 11, 12, 12, 13])
     rows = sorted(per.items(), key=lambda kv: -kv[1]["n"])
     for i, (sn, p) in enumerate(rows, start=2):
@@ -126,7 +125,7 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
         daily[d]["ok"] += j["status"] == "finished"
         daily[d]["g"] += j.get("filament_g") or 0
     gs = wb.create_sheet(sh("Per giorno"))
-    gcols = [T(x) for x in ["Data", "Stampe", "Riuscite", "Non riuscite", "Tasso di successo", "Filamento (g)"]]
+    gcols = [T("Data"), T("Stampe"), T("Riuscite"), T("Non riuscite"), T("Tasso di successo"), T("Filamento (g)")]
     _header(gs, 1, gcols, [13, 10, 10, 12, 12, 13])
     drows = sorted(daily.items())
     for i, (d, v) in enumerate(drows, start=2):
@@ -145,6 +144,35 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
         gs.cell(row=tg, column=c, value=f"=SUM({L}2:{L}{last_g})" if drows else 0)
     gs.cell(row=tg, column=5, value=f"=IF(B{tg}=0,0,C{tg}/B{tg})").number_format = "0.0%"
     gs.cell(row=tg, column=6).number_format = "#,##0"
+
+    # ------------------------------------------------------------ Filamenti
+    fs = wb.create_sheet(sh("Filamenti"))
+    fcols = [T("Tipo"), T("Marca"), T("Colore"), T("Filamento (g)"), T("Metri"), T("Stampe")]
+    _header(fs, 1, fcols, [12, 22, 12, 14, 10, 10])
+    frows = filaments or []
+    for i, f in enumerate(frows, start=2):
+        fs.cell(row=i, column=1, value=f["type"])
+        fs.cell(row=i, column=2, value=f.get("brand") or "")
+        col = (f.get("color") or "").lstrip("#")[:6].upper()
+        c = fs.cell(row=i, column=3, value=f"#{col}" if col else "")
+        if len(col) == 6:
+            c.fill = PatternFill("solid", start_color=col)
+            dark = sum(int(col[k:k + 2], 16) for k in (0, 2, 4)) < 384
+            c.font = Font(name=FONT, size=10, color="FFFFFF" if dark else "000000")
+        fs.cell(row=i, column=4, value=f["grams"]).number_format = "#,##0.0"
+        fs.cell(row=i, column=5, value=f.get("meters") or 0).number_format = "#,##0.0"
+        fs.cell(row=i, column=6, value=f["prints"])
+    last_f = len(frows) + 1
+    _style_rows(fs, 2, last_f, 2)
+    for r in range(2, last_f + 1):
+        for cidx in (4, 5, 6):
+            fs.cell(row=r, column=cidx).font = F_BASE
+    tf = last_f + 1
+    _total_row(fs, tf, len(fcols), T("Totale"))
+    fs.cell(row=tf, column=4, value=f"=SUM(D2:D{last_f})" if frows else 0).number_format = "#,##0.0"
+    fs.cell(row=tf, column=5, value=f"=SUM(E2:E{last_f})" if frows else 0).number_format = "#,##0.0"
+    fs.cell(row=tf + 2, column=1, value=T(
+        "Il consumo per tipo e colore è noto per le stampe avviate da FleetBuddy o il cui file è nell'archivio.")).font = F_NOTE
 
     # ------------------------------------------------------------ Riepilogo (primo foglio)
     rs = wb.create_sheet(sh("Riepilogo"), 0)

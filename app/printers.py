@@ -78,6 +78,27 @@ def _color(c: str | None) -> str:
     return ""
 
 
+def _remain(t: dict) -> tuple[int | None, int | None]:
+    """Capacità residua della bobina in % e peso nominale in g, se la stampante li riporta.
+
+    Non sono documentati nelle API del Hub v1.0.0: le stampanti Bambu li inviano per le bobine con RFID
+    quando la stima del filamento residuo è attiva; -1 o campo assente = sconosciuto."""
+    try:
+        r = int(float(t.get("remain")))
+    except (TypeError, ValueError):
+        r = None
+    try:
+        w = int(float(t.get("tray_weight")))
+    except (TypeError, ValueError):
+        w = None
+    return (r if r is not None and 0 <= r <= 100 else None), (w if w and w > 0 else None)
+
+
+def _remain_fields(t: dict) -> dict:
+    pct, weight = _remain(t)
+    return {"remain": pct, "spool_g": weight, "remain_g": round(weight * pct / 100) if pct is not None and weight else None}
+
+
 def trays(rs: dict, model: str) -> list[dict]:
     out = []
     ams = rs.get("ams") or {}
@@ -92,6 +113,7 @@ def trays(rs: dict, model: str) -> list[dict]:
                 "sub_brand": t.get("tray_sub_brands", ""), "loaded": bool(ttype),
                 "rfid": (t.get("tag_uid") or "0").strip("0") != "",
                 "humidity": unit.get("humidity"), "kind": "ams",
+                **_remain_fields(t),
             })
     ext = []
     for v in rs.get("vir_slot") or []:          # serie X / H / P2
@@ -107,8 +129,26 @@ def trays(rs: dict, model: str) -> list[dict]:
             "color": _color(v.get("tray_color")), "idx": v.get("tray_info_idx", ""),
             "sub_brand": v.get("tray_sub_brands", ""), "loaded": bool(ttype), "rfid": False,
             "humidity": None, "kind": "external",
+            **_remain_fields(v),
         })
     return out
+
+
+# modelli con sensore di temperatura della camera (sugli altri, ad es. P1S, il valore riportato non è reale)
+CHAMBER_SENSOR = {"X1", "X1C", "X1E", "H2D", "H2D PRO", "H2DPRO", "H2S", "H2C", "X2D"}
+
+
+def chamber(rs: dict, model: str) -> tuple[float | None, int]:
+    """(temperatura attuale, obiettivo) della camera; None se la stampante non la misura.
+    Le stampanti con camera riscaldata (es. H2D) la riportano in device.ctc.info.temp, compressa
+    come quella degli estrusori (bit 0–15 attuale, 16–31 obiettivo)."""
+    ctc = ((rs.get("device") or {}).get("ctc") or {}).get("info") or {}
+    if ctc.get("temp") is not None:
+        packed = int(_num(ctc.get("temp")))
+        return float(packed & 0xFFFF), (packed >> 16) & 0xFFFF
+    if model in CHAMBER_SENSOR and rs.get("chamber_temper") is not None:
+        return round(_num(rs.get("chamber_temper")), 1), 0
+    return None, 0
 
 
 def extruders(rs: dict) -> list[dict]:
@@ -147,7 +187,8 @@ def normalize(d: dict) -> dict:
         "nozzle_target": round(_num(rs.get("nozzle_target_temper")), 1),
         "bed": round(_num(rs.get("bed_temper")), 1),
         "bed_target": round(_num(rs.get("bed_target_temper")), 1),
-        "chamber": round(_num(rs.get("chamber_temper")), 1),
+        "chamber": chamber(rs, model)[0],
+        "chamber_target": chamber(rs, model)[1],
         "extruders": ex,
         "speed_lvl": int(_num(rs.get("spd_lvl"))),
         "wifi": rs.get("wifi_signal", ""),

@@ -23,14 +23,16 @@ ma passando **esclusivamente dal Bambu Fleet Hub** (HTTP API v1.0.0) invece che 
 | Avvio stampa | auto‑mappatura filamento → slot (tipo, ID Bambu, colore), modificabile a mano; usa la cache MD5 del Hub per non ricaricare il file |
 | Coda di stampa | parte da sola sulla prima stampante inattiva con i filamenti giusti; copie multiple; pausa coda |
 | Storico | registra **tutte** le stampe viste dal Hub (anche quelle lanciate da Bambu Studio), con foto finale |
-| Statistiche | stampe, tasso di successo, ore, filamento, per giorno e per stampante; esportazione in Excel (riepilogo, per stampante, per giorno, dettaglio stampe) |
+| Consumo filamento | per ogni stampa, grammi e metri per tipo, marca e colore: dal file del 3MF quando è in archivio (anche se la stampa è partita da Bambu Studio), altrimenti stimati dal calo del residuo delle bobine AMS (segnati con ≈) |
+| Residuo bobine | percentuale e grammi rimasti, per le bobine di cui la stampante li comunica (tipicamente Bambu con RFID) |
+| Statistiche | stampe, tasso di successo, ore, filamento per tipo e colore, per giorno e per stampante; esportazione in Excel (riepilogo, per stampante, per giorno, filamenti, dettaglio stampe) |
 | Errori HMS | decodifica `attr/code` e descrizione tramite `/v1/hub/hms` e `/v1/hub/device_error`, con cache locale |
 | Notifiche | ntfy, Telegram (con foto), webhook generico |
 | Gestione Hub | info e spazio, NTP/ora, ricerca SSDP e scansione IP, collega/scollega stampanti, firmware, cache file |
 | Attivazione | `tools/activate.py` esegue i 3 passi del Layer 2 |
 
 ### Cosa non si può fare tramite il Hub (rispetto a Bambuddy)
-Le API v1.0.0 non espongono: **modifica di temperature e velocità**, stream camera continuo, download dei timelapse,
+Le API v1.0.0 non espongono: **modifica di temperature (ugelli, piano, camera) e velocità**, stream camera continuo, download dei timelapse,
 luce, invio di G-code, ventole, scheda SD. FleetBuddy mostra temperature e velocità in sola lettura; per cambiarle
 durante una stampa usa il display della stampante o Bambu Studio (che resta compatibile con il Hub). Se in futuro il Hub le aggiungerà, basta estendere `app/hub_client.py`.
 

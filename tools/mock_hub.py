@@ -7,7 +7,9 @@ Espone le principali API in HTTPS con mTLS obbligatorio, usando certificati auto
 Poi in config.toml: host="127.0.0.1", client_cert="certs/mock/client.crt",
 client_key="certs/mock/client.key", server_ca="certs/mock/ca.crt", password="Mock1234!".
 """
+import asyncio
 import base64
+import os
 import hashlib
 import json
 import random
@@ -31,8 +33,12 @@ CACHE: dict[str, float] = {}
 
 
 def tray(i, typ, col, rfid=False):
-    return {"id": str(i), "tray_type": typ, "tray_color": col, "tray_info_idx": "GFA00" if typ == "PLA" else "GFG00",
-            "tag_uid": "A1B2C3D4E5F60708" if rfid else "0000000000000000", "tray_sub_brands": ""}
+    t = {"id": str(i), "tray_type": typ, "tray_color": col, "tray_info_idx": "GFA00" if typ == "PLA" else "GFG00",
+         "tag_uid": "A1B2C3D4E5F60708" if rfid else "0000000000000000", "tray_sub_brands": "PLA Basic" if rfid else "",
+         "remain": 72 if rfid else -1}
+    if rfid:
+        t["tray_weight"] = "1000"
+    return t
 
 
 PRINTERS = {
@@ -102,7 +108,12 @@ async def login(req: Request):
 def advance():
     for p in PRINTERS.values():
         if p["state"] in ("RUNNING", "PREPARE"):
+            old = p["pct"]
             p["pct"] = min(100, int(100 * (time.time() - p["t0"]) / p["dur"]))
+            # la bobina RFID in uso cala del 3 % ogni 10 % di avanzamento (≈ 30 g su 1 kg)
+            for t in p["ams"]:
+                if isinstance(t.get("remain"), int) and t["remain"] >= 0:
+                    t["remain"] -= 3 * (p["pct"] // 10 - old // 10)
             p["state"] = "RUNNING" if p["pct"] > 2 else "PREPARE"
             if p["pct"] >= 100:
                 p["state"] = "FINISH"
@@ -124,9 +135,18 @@ def device(sn, p):
             "ams": {"ams_exist_bits": "1", "ams": [{"id": "0", "humidity": "3", "tray": p["ams"]}]},
             "vt_tray": {"id": "255", "tray_type": "", "tray_color": "00000000"} if p["model"] != "H2D" else {},
             "vir_slot": [{"id": "255", "tray_type": "PLA", "tray_color": "00AA55FF"}, {"id": "254", "tray_type": ""}] if p["model"] == "H2D" else [],
-            "device": {"extruder": {"info": [{"id": 0, "temp": (220 << 16) | 219}, {"id": 1, "temp": 35}]}} if p["model"] == "H2D" else {},
+            "device": {"extruder": {"info": [{"id": 0, "temp": (220 << 16) | 219}, {"id": 1, "temp": 35}]},
+                       "ctc": {"info": {"temp": (45 << 16) | 38}}} if p["model"] == "H2D" else {},
         },
     }
+
+
+@app.post("/mock/start/{sn}")
+def mock_external_print(sn: str, dur: int = 20):
+    """Solo per i test: simula una stampa avviata da Bambu Studio (fuori da FleetBuddy)."""
+    PRINTERS[sn].update(state="PREPARE", pct=0, t0=time.time(), dur=dur, task="Da Bambu Studio",
+                        task_id=random.randint(1, 10**6))
+    return ok()
 
 
 @app.get("/v1/hub/devices")
@@ -175,6 +195,20 @@ async def do_print(req: Request):
             return err(1051, "device busy")
         p.update(state="PREPARE", pct=0, t0=time.time(), task=cmd["task_name"], task_id=random.randint(1, 10**6))
     print("print_cmd:", cmd)
+    await asyncio.sleep(float(os.environ.get("MOCK_PRINT_DELAY", "0")))
+    return ok()
+
+
+@app.post("/debug/start")
+def debug_start(sn: str, task: str):
+    """Simula una stampa avviata da Bambu Studio (non da FleetBuddy)."""
+    PRINTERS[sn].update(state="PREPARE", pct=0, t0=time.time(), task=task, task_id=random.randint(1, 10**6))
+    return ok()
+
+
+@app.post("/debug/finish")
+def debug_finish(sn: str):
+    PRINTERS[sn].update(state="FINISH", pct=100, t0=time.time() - PRINTERS[sn]["dur"])
     return ok()
 
 

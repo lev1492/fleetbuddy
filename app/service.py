@@ -21,6 +21,62 @@ from .printers import auto_map, is_ready, normalize
 
 log = logging.getLogger("fleetbuddy.service")
 
+def task_name_for(filename: str, plate: int, plates: int) -> str:
+    """Nome del lavoro inviato al Hub: lo stesso usato per riconoscere la stampa nello storico."""
+    task = Path(filename).name.replace(".gcode.3mf", "").replace(".3mf", "")
+    return f"{task}_plate_{plate}" if plates > 1 else task
+
+
+def filament_plan(plate_meta: dict, slots: list[dict] | None = None, printer: dict | None = None) -> list[dict]:
+    """Filamenti previsti dal file (slice_info), con la bobina reale su cui sono stati mappati se nota."""
+    trays = {(t["ams_id"], t["slot_id"]): t for t in (printer or {}).get("trays", [])}
+    plan = []
+    for f in plate_meta.get("filaments", []):
+        if not f.get("used_g"):
+            continue
+        slot = (slots or [])[f["id"] - 1] if slots and f["id"] - 1 < len(slots) else None
+        tray = trays.get((slot["ams_id"], slot["slot_id"])) if slot else None
+        loaded = tray if tray and tray.get("loaded") else None
+        plan.append({
+            "type": (loaded or {}).get("type") or f.get("type") or "?",
+            "brand": (loaded or {}).get("sub_brand") or "",
+            "color": (loaded or {}).get("color") or f.get("color") or "#888888",
+            "tray_info_idx": (loaded or {}).get("idx") or f.get("tray_info_idx") or "",
+            "grams": float(f.get("used_g") or 0), "meters": float(f.get("used_m") or 0),
+            "ams_id": slot["ams_id"] if slot else None, "slot_id": slot["slot_id"] if slot else None,
+        })
+    return plan
+
+
+def tray_levels(printer: dict) -> list[dict]:
+    """Residuo delle bobine all'avvio della stampa (solo quelle per cui la stampante lo comunica)."""
+    return [{k: t.get(k) for k in ("ams_id", "slot_id", "type", "color", "sub_brand", "idx", "remain", "spool_g")}
+            for t in printer.get("trays", []) if t.get("loaded") and t.get("remain") is not None]
+
+
+def ams_usage(start_json: str | None, printer: dict) -> list[dict]:
+    """Consumo stimato confrontando il residuo (%) delle bobine a inizio e fine stampa.
+    Funziona solo con bobine di cui la stampante conosce residuo e peso (tipicamente Bambu con RFID);
+    la precisione è di circa l'1 % della bobina (10 g su 1 kg)."""
+    try:
+        start = json.loads(start_json or "[]")
+    except ValueError:
+        return []
+    now = {(t["ams_id"], t["slot_id"]): t for t in printer.get("trays", [])}
+    out = []
+    for s in start:
+        cur = now.get((s["ams_id"], s["slot_id"]))
+        if not cur or cur.get("remain") is None or cur.get("color") != s.get("color") or cur.get("type") != s.get("type"):
+            continue   # bobina tolta o cambiata durante la stampa: impossibile stimare
+        drop = (s.get("remain") or 0) - cur["remain"]
+        weight = s.get("spool_g") or cur.get("spool_g")
+        if 0 < drop <= 100 and weight:
+            out.append({"type": s.get("type") or "?", "brand": s.get("sub_brand") or "", "color": (s.get("color") or "").upper(),
+                        "idx": s.get("idx") or "", "grams": round(weight * drop / 100, 1),
+                        "ams_id": s["ams_id"], "slot_id": s["slot_id"]})
+    return out
+
+
 # avvisi di fine stampa (frasi del catalogo traduzioni)
 JOB_TOASTS = {"finished": "{printer}: stampa completata – {task}", "failed": "{printer}: stampa fallita – {task}",
               "cancelled": "{printer}: stampa annullata – {task}", "unknown": "{printer}: stampa interrotta – {task}"}
@@ -40,7 +96,7 @@ class Service:
         self.last_poll = 0.0
         self._subscribers: set[asyncio.Queue] = set()
         self._open_jobs = self.db.open_jobs()
-        self._pending: dict[str, dict] = {}     # sn -> stampa appena inviata da FleetBuddy
+        self.raw: dict[str, dict] = {}          # ultima risposta grezza del Hub per stampante (diagnostica)
         self._cooldown: dict[str, float] = {}   # sn -> non inviare altro fino a ...
         self.stopped_by_user: set[str] = set()   # interruzioni chieste da qui -> 'annullata', non 'fallita'
         self._hms_seen: dict[str, set] = {}
@@ -89,6 +145,10 @@ class Service:
 
     # ------------------------------------------------------------------ ciclo
     def start(self):
+        try:
+            self.backfill_filaments()
+        except Exception:  # noqa: BLE001 - non deve impedire l'avvio
+            log.exception("Ricostruzione del consumo di filamento non riuscita")
         self._task = asyncio.create_task(self._loop())
 
     async def stop(self):
@@ -101,6 +161,7 @@ class Service:
             try:
                 raw = await asyncio.to_thread(self.hub.devices)
                 new = {p["sn"]: p for p in (normalize(d) for d in raw) if p["sn"]}
+                self.raw = {d.get("dev_sn"): d for d in raw if d.get("dev_sn")}
                 self.hub_ok, self.hub_error, self.hub_error_obj = True, "", None
                 for sn, p in new.items():
                     await self._track(p, self.printers.get(sn))
@@ -118,6 +179,43 @@ class Service:
             self.emit("state", self.snapshot_state())
             await asyncio.sleep(max(1.0, self.cfg.app.poll_interval - (time.time() - t0)))
 
+    # ------------------------------------------------------------------ stampe in arrivo
+    def _set_pending(self, sn: str, data: dict):
+        self.db.x("INSERT OR REPLACE INTO pending_prints(printer_sn, data, at) VALUES(?,?,?)",
+                  (sn, json.dumps(data), time.time()))
+
+    def _take_pending(self, sn: str, consume: bool = True) -> dict | None:
+        r = self.db.one("SELECT data, at FROM pending_prints WHERE printer_sn=?", (sn,))
+        if not r:
+            return None
+        if consume or time.time() - r["at"] > 1800:
+            self.db.x("DELETE FROM pending_prints WHERE printer_sn=?", (sn,))
+        return json.loads(r["data"]) if time.time() - r["at"] <= 1800 else None
+
+    def _match_file(self, task_name: str) -> tuple[dict, dict] | None:
+        """Stampa non avviata da FleetBuddy (o avviata prima di un riavvio): cerca nell'archivio
+        un file con lo stesso nome del lavoro, così si conoscono comunque i filamenti usati."""
+        if not task_name:
+            return None
+        for f in self.db.q("SELECT id FROM files ORDER BY uploaded_at DESC"):
+            full = self.db.file(f["id"])
+            plates = full["meta"].get("plates", [])
+            for pl in plates:
+                if task_name_for(full["filename"], pl["index"], len(plates)) == task_name:
+                    return full, pl
+        return None
+
+    def _plan_for_job(self, pend: dict | None, task_name: str) -> dict:
+        if pend:
+            return pend
+        m = self._match_file(task_name)
+        if not m:
+            return {}
+        f, pl = m
+        plan = filament_plan(pl)
+        return {"file_id": f["id"], "plate": pl["index"], "plan": plan,
+                "planned_g": round(sum(x["grams"] for x in plan), 1) or pl.get("weight_g", 0)}
+
     # ------------------------------------------------------------------ storico
     async def _track(self, p: dict, prev: dict | None):
         sn = p["sn"]
@@ -129,18 +227,26 @@ class Service:
                 await self._close_job(job, p, "unknown")
                 job = None
             if not job:
-                pend = self._pending.pop(sn, None)
-                if pend and time.time() - pend["at"] > 1800:
-                    pend = None
+                info = self._plan_for_job(self._take_pending(sn), p["task_name"])
                 jid = self.db.start_job(
                     printer_sn=sn, printer_name=p["name"], task_id=key,
-                    task_name=(pend or {}).get("task_name") or p["task_name"],
-                    file_id=(pend or {}).get("file_id"), plate=(pend or {}).get("plate"),
-                    planned_g=(pend or {}).get("planned_g", 0), started_by=(pend or {}).get("user_id"))
+                    task_name=info.get("task_name") or p["task_name"],
+                    file_id=info.get("file_id"), plate=info.get("plate"),
+                    planned_g=info.get("planned_g", 0), started_by=info.get("user_id"),
+                    filaments=json.dumps(info.get("plan") or []), start_trays=json.dumps(tray_levels(p)))
                 self._open_jobs[sn] = self.db.one("SELECT * FROM jobs WHERE id=?", (jid,))
                 self.toast("{printer}: stampa avviata – {task}", sn=sn, printer=p["name"], task=p["task_name"])
             else:
-                self.db.update_job(job["id"], progress=p["progress"])
+                upd = {"progress": p["progress"]}
+                if not job.get("file_id"):
+                    # il comando di stampa può arrivare al Hub dopo che la stampante ha già iniziato
+                    late = self._take_pending(sn)
+                    if late:
+                        upd.update(file_id=late.get("file_id"), plate=late.get("plate"),
+                                   planned_g=late.get("planned_g", 0), started_by=late.get("user_id"),
+                                   filaments=json.dumps(late.get("plan") or []))
+                self.db.update_job(job["id"], **upd)
+                job.update(upd)
         elif job:
             if p["state"] == "FINISH":
                 await self._close_job(job, p, "finished")
@@ -168,8 +274,7 @@ class Service:
             status = "cancelled"
         self.stopped_by_user.discard(p["sn"])
         progress = 100 if status == "finished" else max(job.get("progress") or 0, p["progress"])
-        grams = job.get("planned_g") or 0
-        grams = grams if status == "finished" else round(grams * progress / 100, 1)
+        grams = self._record_filaments(job, progress if status != "finished" else 100, printer=p)
         snap = ""
         img = None
         if self.cfg.app.snapshot_on_finish and status in ("finished", "failed"):
@@ -190,6 +295,63 @@ class Service:
             title = self.nt(JOB_TITLES.get(status, JOB_TITLES["unknown"]), printer=p["name"])
             body = name + "\n" + self.nt("Durata {h} h {m} min, {g} g", h=dur // 60, m=dur % 60, g=grams)
             await self._notify(status, f"{icon} {title}", body, p["name"], img)
+
+    def _record_filaments(self, job: dict, progress: float, printer: dict | None = None) -> float:
+        """Registra il consumo per filamento (in proporzione all'avanzamento se la stampa non è finita)."""
+        factor = max(0.0, min(1.0, (progress or 0) / 100))
+        try:
+            plan = json.loads(job.get("filaments") or "[]")
+        except ValueError:
+            plan = []
+        self.db.x("DELETE FROM job_filaments WHERE job_id=?", (job["id"],))
+        total = 0.0
+        for f in plan:
+            g = round(f["grams"] * factor, 1)
+            if g <= 0:
+                continue
+            total += g
+            self.db.x("INSERT INTO job_filaments(job_id, type, brand, color, tray_info_idx, grams, meters, ams_id, slot_id) "
+                      "VALUES(?,?,?,?,?,?,?,?,?)", (job["id"], f["type"], f.get("brand", ""), (f.get("color") or "").upper(),
+                                                    f.get("tray_info_idx", ""), g, round(f.get("meters", 0) * factor, 2),
+                                                    f.get("ams_id"), f.get("slot_id")))
+        if not plan and printer:
+            # stampa avviata fuori da FleetBuddy e file non in archivio: stima dal calo del residuo AMS
+            for f in ams_usage(job.get("start_trays"), printer):
+                total += f["grams"]
+                self.db.x("INSERT INTO job_filaments(job_id, type, brand, color, tray_info_idx, grams, meters, ams_id, "
+                          "slot_id, source) VALUES(?,?,?,?,?,?,0,?,?,'ams')",
+                          (job["id"], f["type"], f["brand"], f["color"], f["idx"], f["grams"], f["ams_id"], f["slot_id"]))
+        if not plan and not total:   # nessun dettaglio per filamento: solo il totale previsto, se noto
+            total = (job.get("planned_g") or 0) * factor
+        return round(total, 1)
+
+    def backfill_filaments(self):
+        """Una tantum: ricostruisce il consumo delle stampe già nello storico, quando il file è in archivio."""
+        if self.db.get_setting("filament_backfill_v1"):
+            return
+        rows = self.db.q("""SELECT * FROM jobs WHERE status IN ('finished','failed','cancelled','unknown')
+                            AND id NOT IN (SELECT DISTINCT job_id FROM job_filaments)""")
+        fixed = 0
+        for j in rows:
+            f = self.db.file(j["file_id"]) if j.get("file_id") else None
+            pl = None
+            if f:
+                pl = next((x for x in f["meta"].get("plates", []) if x["index"] == (j.get("plate") or 1)), None)
+            if not pl:
+                m = self._match_file(j.get("task_name") or "")
+                if m:
+                    f, pl = m
+            if not (f and pl):
+                continue
+            plan = filament_plan(pl)
+            j.update(file_id=f["id"], plate=pl["index"], filaments=json.dumps(plan))
+            grams = self._record_filaments(j, 100 if j["status"] == "finished" else (j.get("progress") or 0))
+            self.db.update_job(j["id"], file_id=f["id"], plate=pl["index"], filaments=j["filaments"],
+                               planned_g=round(sum(x["grams"] for x in plan), 1), filament_g=grams)
+            fixed += 1
+        self.db.set_setting("filament_backfill_v1", True)
+        if fixed:
+            log.info("Ricostruito il consumo di filamento per %d stampe dello storico", fixed)
 
     async def _notify(self, event, title, message, printer="", image=None):
         await asyncio.to_thread(notifier.send, self.cfg.notify, event, title, message, printer, image)
@@ -254,10 +416,12 @@ class Service:
             slots, warnings = auto_map(pl["filaments"], p)
             if slots is None:
                 raise HubError(key="Mappatura automatica impossibile: {w}", params={"w": "; ".join(warnings)})
-        task = Path(f["filename"]).name.replace(".gcode.3mf", "").replace(".3mf", "")
-        if len(f["meta"]["plates"]) > 1:
-            task += f"_plate_{plate}"
+        task = task_name_for(f["filename"], plate, len(f["meta"]["plates"]))
         cmd = self.build_print_cmd(task, plate, slots, options or {})
+        plan = filament_plan(pl, slots, p)
+        # registrata prima dell'invio: la stampante può iniziare prima che il Hub risponda
+        self._set_pending(sn, {"file_id": file_id, "plate": plate, "task_name": task, "user_id": user_id,
+                               "planned_g": round(sum(x["grams"] for x in plan), 1) or pl["weight_g"], "plan": plan})
 
         cached = False
         try:
@@ -266,17 +430,19 @@ class Service:
         except HubError:
             pass
         try:
-            if cached:
-                res = await asyncio.to_thread(self.hub.print_cached, f["md5"], cmd, [sn])
-            else:
-                raise HubError("not cached", code=-1)
-        except HubError as e:
-            if e.code != -1 and e.code in (1051, 1052, 1053):
-                raise
-            res = await asyncio.to_thread(self.hub.print_upload, str(self.cfg.path(f["path"])),
-                                          f["filename"], cmd, [sn])
-        self._pending[sn] = {"at": time.time(), "file_id": file_id, "plate": plate,
-                             "task_name": task, "planned_g": pl["weight_g"], "user_id": user_id}
+            try:
+                if cached:
+                    res = await asyncio.to_thread(self.hub.print_cached, f["md5"], cmd, [sn])
+                else:
+                    raise HubError("not cached", code=-1)
+            except HubError as e:
+                if e.code != -1 and e.code in (1051, 1052, 1053):
+                    raise
+                res = await asyncio.to_thread(self.hub.print_upload, str(self.cfg.path(f["path"])),
+                                              f["filename"], cmd, [sn])
+        except Exception:
+            self.db.x("DELETE FROM pending_prints WHERE printer_sn=?", (sn,))
+            raise
         self._cooldown[sn] = time.time() + 45
         return {"ok": True, "cached": cached, "warnings": warnings, "print_cmd": cmd, "hub": res}
 

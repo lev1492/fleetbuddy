@@ -537,6 +537,15 @@ async def printer_snapshot(request: Request, sn: str):
     return Response(img, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/printers/{sn}/raw")
+async def printer_raw(request: Request, sn: str):
+    """Dati grezzi ricevuti dal Hub per una stampante (diagnostica, solo amministratori)."""
+    u = U(request)
+    need_admin(u)
+    printer_for(u, sn)
+    return S().raw.get(sn) or {}
+
+
 @app.get("/api/filament_presets")
 async def filament_presets():
     return FILAMENT_PRESETS
@@ -775,8 +784,33 @@ async def jobs(request: Request, limit: int = 200, printer: str | None = None):
     u = U(request)
     rows = S().db.q("""SELECT j.*, us.username AS started_by_name FROM jobs j LEFT JOIN users us ON us.id=j.started_by
                        ORDER BY j.started_at DESC LIMIT ?""", (limit * 3 if not u.is_admin else limit,))
-    rows = [r for r in rows if u.sees_printer(r["printer_sn"]) and (not printer or r["printer_sn"] == printer)]
-    return rows[:limit]
+    rows = [r for r in rows if u.sees_printer(r["printer_sn"]) and (not printer or r["printer_sn"] == printer)][:limit]
+    fil = job_filaments([r["id"] for r in rows])
+    for r in rows:
+        r.pop("filaments", None)
+        r["filaments"] = fil.get(r["id"], [])
+    return rows
+
+
+def job_filaments(job_ids: list[int]) -> dict[int, list[dict]]:
+    out: dict[int, list[dict]] = {}
+    for i in range(0, len(job_ids), 500):
+        chunk = job_ids[i:i + 500]
+        if not chunk:
+            continue
+        for f in S().db.q(f"SELECT * FROM job_filaments WHERE job_id IN ({','.join('?' * len(chunk))}) ORDER BY id", chunk):
+            out.setdefault(f["job_id"], []).append(
+                {k: f.get(k) for k in ("type", "brand", "color", "grams", "meters", "ams_id", "slot_id", "source")})
+    return out
+
+
+def filament_totals(where: str, args: list) -> list[dict]:
+    """Consumo raggruppato per tipo, marca e colore nel periodo."""
+    w = where.replace("started_at", "j.started_at").replace("printer_sn", "j.printer_sn")
+    return S().db.q(f"""SELECT f.type, f.brand, f.color, ROUND(SUM(f.grams), 1) grams, ROUND(SUM(f.meters), 1) meters,
+                        COUNT(DISTINCT f.job_id) prints
+                        FROM job_filaments f JOIN jobs j ON j.id=f.job_id WHERE {w}
+                        GROUP BY f.type, f.brand, f.color ORDER BY grams DESC""", args)
 
 
 @app.delete("/api/jobs/{jid}")
@@ -825,7 +859,8 @@ async def stats_export(request: Request, days: int = 30, group: int | None = Non
     gname = S().db.one("SELECT name FROM printer_groups WHERE id=?", (group,)) if group else None
     scope = (_("Gruppo {g}", g=gname["name"]) if gname else
              (_("Tutte") if u.is_admin else _("Tutte quelle assegnate all'utente")))
-    data = await asyncio.to_thread(build_stats_xlsx, jobs, days=days, scope=scope, user=u.username,
+    data = await asyncio.to_thread(build_stats_xlsx, jobs, filaments=filament_totals(where, args),
+                                   days=days, scope=scope, user=u.username,
                                    lang=current_lang.get())
     fname = f"fleetbuddy-stats-{time.strftime('%Y%m%d')}-{days}d.xlsx"
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -848,7 +883,7 @@ async def stats(request: Request, days: int = 30, group: int | None = None):
     daily = db.q(f"""SELECT date(started_at,'unixepoch','localtime') day, COUNT(*) n,
                     SUM(status='finished') ok, COALESCE(SUM(filament_g),0) grams
                     FROM jobs WHERE {where} GROUP BY day ORDER BY day""", args)
-    return {"days": days, "total": tot, "per_printer": per, "daily": daily}
+    return {"days": days, "total": tot, "per_printer": per, "daily": daily, "filaments": filament_totals(where, args)}
 
 
 # ====================================================================== Hub (solo admin)

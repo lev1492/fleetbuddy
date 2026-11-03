@@ -39,6 +39,14 @@ CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY, name TEXT UNIQUE COLLATE NOCASE, description TEXT DEFAULT '',
     color TEXT DEFAULT '#2B63C6', created_at REAL, created_by INTEGER
 );
+-- consumo di filamento per stampa (una riga per filamento usato)
+CREATE TABLE IF NOT EXISTS job_filaments (
+    id INTEGER PRIMARY KEY, job_id INTEGER, type TEXT, brand TEXT DEFAULT '', color TEXT, tray_info_idx TEXT DEFAULT '',
+    grams REAL DEFAULT 0, meters REAL DEFAULT 0, ams_id INTEGER, slot_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS job_filaments_job ON job_filaments(job_id);
+-- stampe appena inviate da FleetBuddy, in attesa che il Hub le segnali come avviate (sopravvive ai riavvii)
+CREATE TABLE IF NOT EXISTS pending_prints (printer_sn TEXT PRIMARY KEY, data TEXT, at REAL);
 -- permessi: kind = 'printer' (ref = seriale), 'group' (ref = id gruppo), 'project' (ref = id progetto)
 CREATE TABLE IF NOT EXISTS access (user_id INTEGER, kind TEXT, ref TEXT, PRIMARY KEY (user_id, kind, ref));
 """
@@ -52,7 +60,10 @@ MIGRATIONS = [
     ("jobs", "started_by", "INTEGER"),
     ("users", "language", "TEXT"),
     ("users", "first_name", "TEXT DEFAULT ''"),
+    ("jobs", "filaments", "TEXT"),
     ("users", "last_name", "TEXT DEFAULT ''"),
+    ("jobs", "start_trays", "TEXT"),
+    ("job_filaments", "source", "TEXT DEFAULT 'slicer'"),
 ]
 
 

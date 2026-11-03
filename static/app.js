@@ -225,10 +225,10 @@ function cardBody(p) {
         <span>${p.active ? t("mancano {d}", {d: fmtDur(p.remaining_min * 60)}) : ""}</span></div>`
       : `<div class="task" style="color:var(--muted)">${p.online ? t("Pronta per una nuova stampa") : t("Non raggiungibile dal Hub")}</div>`}
     <div class="temps">${temps}<span>${t("Piatto|letto")} <b>${p.bed}°</b>${p.bed_target ? "/" + p.bed_target : ""}</span>
-      ${p.chamber ? `<span>${t("Camera")} <b>${p.chamber}°</b></span>` : ""}<span>${t("Velocità")} <b>${esc(t(SPEEDS[p.speed_lvl] || "—"))}</b></span></div>
+      ${p.chamber != null ? `<span>${t("Camera")} <b>${p.chamber}°</b>${p.chamber_target ? "/" + p.chamber_target : ""}</span>` : ""}<span>${t("Velocità")} <b>${esc(t(SPEEDS[p.speed_lvl] || "—"))}</b></span></div>
     ${p.trays.length ? `<div class="spools">${p.trays.map(x => `<button class="sp ${x.loaded ? "" : "empty"} ${x.rfid ? "rfid" : ""}"
-        data-ams="${x.ams_id}" data-slot="${x.slot_id}" title="${esc(trayLabel(x.label))} ${esc(x.type)} ${esc(x.sub_brand)}${x.rfid ? " (RFID)" : ""}">
-        <span class="dot" style="--c:${x.color || "transparent"}"></span>${esc(trayLabel(x.label))}</button>`).join("")}</div>` : ""}
+        data-ams="${x.ams_id}" data-slot="${x.slot_id}" title="${esc(trayLabel(x.label))} ${esc(x.type)} ${esc(x.sub_brand)}${x.rfid ? " (RFID)" : ""}${x.remain != null ? " · " + esc(t("residuo {p}%", {p: x.remain})) + (x.remain_g ? ` (~${x.remain_g} g)` : "") : ""}">
+        <span class="dot" style="--c:${x.color || "transparent"}"></span>${esc(trayLabel(x.label))}${x.remain != null ? `<span class="pct">${x.remain}%</span>` : ""}</button>`).join("")}</div>` : ""}
     ${alerts ? `<div class="alerts">${alerts}</div>` : ""}
     ${p.fw_min ? `<div class="warn">${t("Firmware {v} inferiore al minimo supportato dal Hub ({min}).", {v: esc(p.firmware), min: p.fw_min})}</div>` : ""}
     ${p.last_cmd_error ? `<div class="warn">${t("Ultimo invio fallito: {e}", {e: esc(p.last_cmd_error)})}</div>` : ""}
@@ -245,7 +245,8 @@ function createCard(p) {
     a.classList.add("has-menu");
     a.insertAdjacentHTML("afterbegin", `<div class="pc-menu">
       <button type="button" class="dots" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(t("Altre azioni"))}" title="${esc(t("Altre azioni"))}">⋮</button>
-      <div class="menu" role="menu" hidden><button type="button" role="menuitem" data-rename>${t("Rinomina")}</button></div></div>`);
+      <div class="menu" role="menu" hidden><button type="button" role="menuitem" data-rename>${t("Rinomina")}</button>
+        <button type="button" role="menuitem" data-raw>${t("Dati tecnici")}</button></div></div>`);
   }
   refreshCam(a);
   return a;
@@ -328,6 +329,13 @@ $("#v-printers").addEventListener("click", async e => {
     const open = b.getAttribute("aria-expanded") === "true";
     closeMenus();
     if (!open) { b.setAttribute("aria-expanded", "true"); b.nextElementSibling.hidden = false; b.nextElementSibling.querySelector("button").focus(); }
+  } else if (b.hasAttribute("data-raw")) {
+    closeMenus();
+    const raw = await act(() => api(`/api/printers/${sn}/raw`));
+    if (raw) openDialog(`<h3>${t("Dati tecnici")} – ${esc(p.name)}</h3>
+      <p class="sub" style="margin:0">${t("Dati così come arrivano dal Hub: utili per verificare quali informazioni invia la stampante, ad esempio la capacità residua delle bobine (campo remain).")}</p>
+      <pre class="raw">${esc(JSON.stringify(raw, null, 2))}</pre>
+      <div class="dlgfoot"><button value="ok">${t("Chiudi")}</button></div>`);
   } else if (b.hasAttribute("data-rename")) {
     closeMenus();
     const n = prompt(t("Nuovo nome della stampante"), p.name);
@@ -553,7 +561,7 @@ RENDER.history = async function renderHistory() {
     ${jobs.map(j => `<tr data-id="${j.id}" data-file="${j.file_id || ""}">
       <td>${j.snapshot ? `<img class="snap" loading="lazy" alt="${esc(t("Foto a fine stampa"))}" src="/api/jobs/${j.id}/snapshot">` : ""}</td>
       <td>${fmtDate(j.started_at)}</td><td>${esc(j.printer_name)}</td><td>${esc(j.task_name)}</td><td>${esc(j.started_by_name || "—")}</td>
-      <td>${fmtDur((j.ended_at || Date.now() / 1000) - j.started_at)}</td><td>${j.filament_g ? j.filament_g + " g" : "—"}</td>
+      <td>${fmtDur((j.ended_at || Date.now() / 1000) - j.started_at)}</td><td>${filCell(j)}</td>
       <td><span class="st ${j.status}">${jobName(j.status)}</span>${j.status !== "finished" && j.status !== "running" ? ` · ${j.progress}%` : ""}${j.error ? `<br><small>${esc(j.error)}</small>` : ""}</td>
       <td style="white-space:nowrap">${j.file_id && canOperate() ? `<button data-reprint>${t("Ristampa")}</button>` : ""} ${isAdmin() ? `<button class="danger" data-del aria-label="${esc(t("Elimina"))}">✕</button>` : ""}</td></tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">${t("Ancora nessuna stampa registrata.")}</div>`);
@@ -583,6 +591,11 @@ RENDER.stats = async function renderStats(days) {
       <div class="kpi"><b>${tot.ko || 0}</b><span>${t("fallite")}</span></div></div>
     <h2>${t("Stampe al giorno")}</h2>
     <div class="bars">${s.daily.length ? s.daily.map(d => `<div class="${d.ok < d.n ? "ko" : ""}" style="height:${100 * d.n / max}%" title="${esc(t("{day}: {n} stampe, {ok} riuscite, {g} g", {day: d.day, n: d.n, ok: d.ok, g: Math.round(d.grams)}))}"></div>`).join("") : `<span style="color:var(--muted)">${t("Nessun dato nel periodo")}</span>`}</div>
+    <h2>${t("Filamento consumato")}</h2>
+    ${s.filaments && s.filaments.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Marca")}</th><th>${t("Colore")}</th><th>${t("Filamento (g)")}</th><th>${t("Metri")}</th><th>${t("Stampe")}</th></tr></thead><tbody>
+    ${s.filaments.map(f => `<tr><td>${esc(f.type)}</td><td>${esc(f.brand || "—")}</td><td><span class="sw" style="--c:${esc(f.color)}"></span>${esc(f.color)}</td><td><b>${f.grams >= 1000 ? (f.grams / 1000).toFixed(2) + " kg" : Math.round(f.grams) + " g"}</b></td><td>${(f.meters || 0).toFixed(1)}</td><td>${f.prints}</td></tr>`).join("")}
+    </tbody></table></div><p class="sub" style="margin-top:8px">${t("Il consumo per tipo e colore è noto per le stampe avviate da FleetBuddy o il cui file è nell'archivio.")}</p>`
+      : `<p class="sub">${t("Nessun consumo registrato nel periodo. Il dettaglio è disponibile per le stampe avviate da FleetBuddy o il cui file è nell'archivio.")}</p>`}
     <h2>${t("Per stampante")}</h2>
     <div class="tablewrap"><table><thead><tr><th>${t("Stampante")}</th><th>${t("Stampe")}</th><th>${t("Riuscite")}</th><th>${t("Fallite")}</th><th>${t("Ore")}</th><th>${t("Filamento")}</th></tr></thead><tbody>
     ${s.per_printer.map(p => `<tr><td>${esc(p.name)}</td><td>${p.n}</td><td>${p.ok || 0}</td><td>${p.ko || 0}</td><td>${(p.secs / 3600).toFixed(1)}</td><td>${Math.round(p.grams)} g</td></tr>`).join("") || `<tr><td colspan="6">${t("Nessun dato")}</td></tr>`}
@@ -747,6 +760,10 @@ RENDER.admin = async function renderAdmin() {
     if (confirm(t("Eliminare il gruppo {g}? Le stampanti restano collegate; le stampe in coda per questo gruppo andranno in errore.", {g: g.name}))) { await act(() => api(`/api/groups/${g.id}`, {method: "DELETE"}), t("Gruppo eliminato")); RENDER.admin(); }
   });
 };
+const filCell = j => j.filaments && j.filaments.length
+  ? `<div class="fils">${j.filaments.map(f => { const est = f.source === "ams";
+      return `<span title="${esc([f.type, f.brand, f.color].filter(Boolean).join(" · ") + (est ? " – " + t("Stima dal calo del residuo delle bobine AMS") : ""))}"><i style="--c:${esc(f.color)}"></i>${esc(f.type)} ${est ? "≈" : ""}${f.grams} g</span>`; }).join("")}</div>`
+  : (j.filament_g ? `${j.filament_g} g` : `<span class="muted" title="${esc(t("Consumo non disponibile: la stampa non è partita da FleetBuddy e il file non è nell'archivio"))}">—</span>`);
 const fullName = u => [u.first_name, u.last_name].filter(Boolean).join(" ");
 function userDialog(u) {
   openDialog(`<h3>${u ? t("Modifica {u}", {u: esc(u.username)}) : t("Nuovo utente")}</h3>

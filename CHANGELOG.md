@@ -3,6 +3,24 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.2.0] – 2026-11-03
+
+### Novità
+- Consumo di filamento registrato per ogni stampa, suddiviso per tipo, marca e colore, e visibile nello storico.
+  La fonte è il file del 3MF; per le stampe avviate fuori da FleetBuddy si cerca il file in archivio con lo stesso nome
+  e, se manca, si stima il consumo dal calo del residuo delle bobine AMS (valori segnati con ≈).
+- Statistiche e file Excel con l'elenco dei filamenti consumati per tipo e colore.
+- Residuo delle bobine (percentuale e grammi) nelle schede, quando la stampante lo comunica.
+- Temperatura della camera per le stampanti che la misurano (H2D e simili), con l'obiettivo impostato;
+  non viene più mostrato il valore fittizio delle stampanti senza sensore.
+- Barra laterale fissa: resta visibile mentre si scorre l'elenco delle stampanti.
+- Dati grezzi di una stampante (menu ⋮, solo amministratori), per verificare quali informazioni invia il Hub.
+
+### Correzioni
+- Le stampe avviate da FleetBuddy restano collegate al loro file anche se il Hub segnala l'avvio in ritardo
+  o se FleetBuddy viene riavviato nel frattempo: prima in questi casi il consumo di filamento andava perso.
+- Lo storico esistente viene ricostruito, una volta sola, per le stampe il cui file è ancora in archivio.
+
 ## [0.1.1] – 2026-11-03
 
 ### Correzioni
