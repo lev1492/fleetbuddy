@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FleetBuddy</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧵</text></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="brand"><span class="spool" aria-hidden="true"></span>FleetBuddy</div>
+  <a href="#printers" data-view="printers"><span data-i18n="Stampanti">Stampanti</span></a>
+  <a href="#queue" data-view="queue"><span data-i18n="Coda">Coda</span> <span class="badge" id="qbadge"></span></a>
+  <a href="#archive" data-view="archive"><span data-i18n="Archivio">Archivio</span></a>
+  <a href="#history" data-view="history"><span data-i18n="Storico">Storico</span></a>
+  <a href="#stats" data-view="stats"><span data-i18n="Statistiche">Statistiche</span></a>
+  <a href="#admin" data-view="admin" class="admin-only"><span data-i18n="Amministrazione">Amministrazione</span></a>
+  <div class="navfoot">
+    <div class="hubstate" id="hubstate"></div>
+    <div class="me"><span id="mename"></span>
+      <button type="button" id="mepwd" class="linkbtn" data-i18n="Cambia password">Cambia password</button>
+      <button type="button" id="logout" class="linkbtn" data-i18n="Esci">Esci</button>
+      <select id="melang" class="langsel" aria-label="Language"></select></div>
+    <div class="appver" id="appver"></div>
+  </div>
+</nav>
+<main id="main">
+  <section id="v-printers" class="view"></section>
+  <section id="v-queue" class="view"></section>
+  <section id="v-archive" class="view"></section>
+  <section id="v-history" class="view"></section>
+  <section id="v-stats" class="view"></section>
+  <section id="v-hub" class="view"></section>
+  <section id="v-admin" class="view"></section>
+</main>
+<div id="login" hidden>
+  <form class="logincard" id="loginform">
+    <div class="brand"><span class="spool" aria-hidden="true"></span>FleetBuddy</div>
+    <p id="loginintro" class="sub"></p>
+    <label><span data-i18n="Nome utente">Nome utente</span><input name="username" autocomplete="username" required></label>
+    <label><span data-i18n="Password">Password</span><input name="password" type="password" autocomplete="current-password" required></label>
+    <div id="loginerr" class="warn" role="alert"></div>
+    <button class="primary" id="loginbtn"></button>
+    <div class="loginfoot"><select id="loginlang" class="langsel" aria-label="Language"></select><div class="appver" id="loginver"></div></div>
+  </form>
+</div>
+<dialog id="dlg"><form method="dialog" id="dlgbody"></form></dialog>
+<div id="toasts" aria-live="polite"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

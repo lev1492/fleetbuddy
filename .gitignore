@@ -1,0 +1,18 @@
+config.toml
+data/
+# certificati e chiavi: mai nel repository (root-ca.crt va copiato dalla demo ufficiale Bambu)
+certs/*
+!certs/.gitkeep
+.venv/
+__pycache__/
+*.xlsx
+*.tar.gz
+# sicurezza: nessuna chiave, certificato, database o backup in nessuna cartella
+*.key
+*.pem
+*.crt
+*.db
+*.db-*
+fleetbuddy-backup-*
+test_cfg.ini
+.env

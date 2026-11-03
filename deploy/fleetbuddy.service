@@ -1,0 +1,17 @@
+[Unit]
+Description=FleetBuddy - gestione stampanti Bambu Lab via Fleet Hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/.venv/bin/python -m app
+UMask=0077
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

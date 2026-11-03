@@ -1,0 +1,54 @@
+# FleetBuddy – configurazione
+# Copia in config.toml e adatta i valori.
+
+[hub]
+host = "192.168.1.50"          # IP del Fleet Hub (trovalo con: python -m tools.find_hub --write)
+port = 8888                    # API HTTP mTLS (la 443 è solo il Web Client del Hub)
+sni_hostname = "fleet_v1.bambulab.com"   # nome atteso dal certificato del Hub (dalla demo)
+client_cert = "certs/hub_client.chain.crt"   # certificato client scaricato dal Developer Center
+client_key  = "certs/hub_client.key"
+server_ca   = "certs/root-ca.crt"            # CA del Hub (inclusa nella demo: cert/root-ca.crt)
+user_name = "admin"            # account API locale creato in fase di attivazione
+password  = "CambiaMi123!"   # se la perdi, l'unico rimedio è il ripristino di fabbrica del Hub
+# Formula hash password al login. "demo" = come gli script Python del produttore
+# sha256(sha256(pwd+salt)+challenge). "doc" = come il PDF (con un sha256 in più).
+# Se il login fallisce con codice 1023, il client prova automaticamente l'altra.
+password_hash_mode = "demo"
+
+[cloud]
+# Serve solo per l'attivazione (tools/activate.py)
+domain = "api.bambulab.com"    # Cina: api.bambulab.cn
+activation_key = "fh_sk_live_..."   # dal Developer Center, formato fh_sk_live_<40 caratteri>
+
+[app]
+listen = "0.0.0.0"
+port = 8000
+poll_interval = 5              # secondi tra un'interrogazione e l'altra del Hub
+data_dir = "data"
+# Primo amministratore di FleetBuddy, creato al primo avvio se il database non ha ancora utenti.
+# Se lasci vuota la password, il primo accesso dal browser chiederà di crearlo.
+# Dopo il primo avvio gli utenti si gestiscono da Amministrazione (queste due righe non servono più).
+ui_user = "admin"
+ui_password = ""
+# Salva un'istantanea della camera a fine stampa nello storico
+snapshot_on_finish = true
+# HTTPS per l'interfaccia di FleetBuddy (consigliato: protegge password e cookie di sessione).
+# Genera un certificato con: bash deploy/make_ui_cert.sh
+tls_cert = ""                  # es. "certs/ui.crt"
+tls_key = ""                   # es. "certs/ui.key"
+
+[notify]
+# Attiva uno o più canali. Lascia vuoto per disattivare.
+ntfy_url = ""                  # es. https://ntfy.sh/mia-stampa-segreta
+telegram_bot_token = ""
+telegram_chat_id = ""
+webhook_url = ""               # riceve un POST JSON {event, printer, message}
+on_finish = true
+on_failed = true
+on_error = true                # nuovi codici HMS / print_error
+on_queue_start = false
+
+[update]
+# Ogni notte FleetBuddy controlla se su GitHub c'è una nuova release e lo segnala agli amministratori.
+# Con auto_install = true la installa anche da solo (con backup e ripristino automatico in caso di problemi).
+auto_install = false

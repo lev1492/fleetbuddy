@@ -1,0 +1,28 @@
+name: Controlli
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Dipendenze
+        run: pip install -r requirements.txt
+      - name: Il codice Python si compila e si importa
+        run: |
+          python -m compileall -q app tools
+          python -c "import app.main"
+      - name: Traduzioni complete
+        run: python -m tools.i18n_check --strict
+      - name: Sintassi JavaScript
+        run: node --check static/app.js
+      - name: Nessun file riservato nel repository
+        run: |
+          if git ls-files | grep -E '(^|/)config\.toml$|\.key$|\.pem$|\.crt$|\.db$|^data/'; then
+            echo "Trovati file che non devono stare nel repository"; exit 1
+          fi
