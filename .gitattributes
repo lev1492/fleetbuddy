@@ -1,0 +1,7 @@
+# Fine riga Unix per tutto: gli script devono funzionare sul Raspberry Pi anche se modificati da Windows
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.png binary
+*.jpg binary
+*.xlsx binary

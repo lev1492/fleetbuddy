@@ -7,6 +7,6 @@ Wants=network-online.target
 Type=oneshot
 User=__USER__
 WorkingDirectory=__DIR__
-ExecStart=__DIR__/tools/update.sh --auto
+ExecStart=/bin/bash __DIR__/tools/update.sh --auto
 # esce con 10 quando c'è un aggiornamento non installato: non è un errore
 SuccessExitStatus=10

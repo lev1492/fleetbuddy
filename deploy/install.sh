@@ -23,7 +23,9 @@ find certs -type f -name "*.key" -exec chmod 600 {} +
 echo "==> Servizio systemd"
 sed -e "s#__DIR__#$DIR#g" -e "s#__USER__#$USER#g" deploy/fleetbuddy.service | sudo tee /etc/systemd/system/fleetbuddy.service >/dev/null
 # aggiornamenti: comando fleetbuddy-update, timer notturno e permesso di riavviare il servizio senza password
-sudo ln -sf "$DIR/tools/update.sh" /usr/local/bin/fleetbuddy-update
+sudo rm -f /usr/local/bin/fleetbuddy-update
+printf '#!/bin/sh\nexec /bin/bash "%s/tools/update.sh" "$@"\n' "$DIR" | sudo tee /usr/local/bin/fleetbuddy-update >/dev/null
+sudo chmod 755 /usr/local/bin/fleetbuddy-update
 for unit in fleetbuddy-update.service fleetbuddy-update.timer; do
   sed -e "s#__DIR__#$DIR#g" -e "s#__USER__#$USER#g" "deploy/$unit" | sudo tee "/etc/systemd/system/$unit" >/dev/null
 done

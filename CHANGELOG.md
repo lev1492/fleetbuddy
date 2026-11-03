@@ -3,6 +3,13 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.1.1] – 2026-11-03
+
+### Correzioni
+- Il comando `fleetbuddy-update` e il controllo notturno funzionano anche se il repository è stato caricato da Windows
+  (permessi di esecuzione persi): vengono avviati tramite bash e i soli cambi di permessi non bloccano più l'aggiornamento.
+- Aggiunto `.gitattributes` per mantenere le fine riga Unix negli script; `tools/release.sh` funziona anche da Git Bash su Windows.
+
 ## [0.1.0] – 2026-11-03
 
 Prima versione pubblica (anteprima: fino alla 1.0.0 configurazione e funzioni possono ancora cambiare).

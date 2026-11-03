@@ -84,8 +84,8 @@ PYEOF
 fi
 
 # modifiche fatte a mano ai file del programma: meglio fermarsi che perderle
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-  git status --short --untracked-files=no
+if [ -n "$(git -c core.fileMode=false status --porcelain --untracked-files=no)" ]; then
+  git -c core.fileMode=false status --short --untracked-files=no
   die "ci sono file del programma modificati a mano (elencati sopra). Annullali con: git checkout -- .  e riprova."
 fi
 
