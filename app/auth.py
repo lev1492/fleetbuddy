@@ -57,6 +57,7 @@ class User:
     language: str | None = None
     printers: set[str] = field(default_factory=set)   # seriali consentiti (non usato per admin)
     projects: set[int] = field(default_factory=set)   # progetti consentiti (non usato per admin)
+    must_change_pw: bool = False                      # password assegnata dall'admin: proporre di cambiarla
 
     @property
     def is_admin(self) -> bool:
@@ -75,7 +76,8 @@ class User:
 
     def public(self) -> dict:
         # nome e cognome restano nella sola gestione utenti dell'amministratore
-        return {"id": self.id, "username": self.username, "role": self.role, "language": self.language}
+        return {"id": self.id, "username": self.username, "role": self.role, "language": self.language,
+                "must_change_pw": self.must_change_pw}
 
 
 class Auth:
@@ -108,7 +110,7 @@ class Auth:
         r = self.db.one("SELECT * FROM users WHERE id=? AND active=1", (uid,))
         if not r:
             return None
-        u = User(r["id"], r["username"], r["role"], r.get("language"))
+        u = User(r["id"], r["username"], r["role"], r.get("language"), must_change_pw=bool(r.get("must_change_pw")))
         if not u.is_admin:
             acc = self.db.q("SELECT kind, ref FROM access WHERE user_id=?", (uid,))
             groups = printer_groups if printer_groups is not None else self.group_members()

@@ -90,6 +90,21 @@ async function boot() {
   $("#mename").textContent = `${ME.username} · ${roleName(ME.role)}`;
   await loadMeta();
   connect(); go();
+  if (ME.must_change_pw) firstLoginDialog();
+}
+// Primo accesso con una password assegnata dall'amministratore: proposta di cambiarla (facoltativa)
+function firstLoginDialog() {
+  openDialog(`<h3>${t("Benvenuto in FleetBuddy")}</h3>
+    <p class="sub" style="margin:0">${t("La tua password è stata impostata dall'amministratore. Puoi sceglierne una tua adesso, oppure continuare a usare quella attuale.")}</p>
+    <label>${t("Password attuale")}<input type="password" name="old" autocomplete="current-password"></label>
+    <label>${t("Nuova password")}<input type="password" name="new" autocomplete="new-password"></label>
+    <p class="sub" style="margin:0">${t("Almeno 8 caratteri, con lettere e numeri.")}</p>
+    <div class="dlgfoot"><button type="button" id="pwkeep">${t("Mantieni quella attuale")}</button><button class="primary" id="pwnew">${t("Cambia password")}</button></div>`);
+  $("#pwkeep").onclick = async () => { await act(() => api("/api/me/keep_password", {method: "POST"})); ME.must_change_pw = false; $("#dlg").close(); };
+  $("#pwnew").onclick = async ev => {
+    ev.preventDefault(); const f = $("#dlgbody");
+    if (await act(() => api("/api/me/password", {method: "POST", body: {old: f.old.value, new: f.new.value}}), t("Password aggiornata"))) { ME.must_change_pw = false; $("#dlg").close(); }
+  };
 }
 function showVersion() {
   const label = `${esc(APP.name)} v${esc(APP.version)}`;
@@ -191,11 +206,11 @@ function connect() {
 // non viene mai ricreata, quindi non sparisce né lampeggia quando arriva un nuovo stato.
 const hmsDesc = {};
 function snapAge(p) {
+  // solo l'orario della foto: il testo cambia quando arriva una foto nuova, non ogni minuto
   const ts = Date.parse(p.liveview_time || "");
   if (!ts || ts < Date.UTC(2000, 0, 1)) return t("Nessuna istantanea dal Hub");
-  const min = Math.round((Date.now() - ts) / 60000);
-  const when = min < 1 ? t("meno di un minuto fa") : min < 120 ? t("{n} min fa", {n: min}) : new Date(ts).toLocaleString(LOCALES[LANG], {dateStyle: "short", timeStyle: "short"});
-  return t("Istantanea di {when}", {when}) + (p.active ? "" : " · " + t("il Hub la aggiorna solo durante la stampa"));
+  const d = new Date(ts), today = new Date().toDateString() === d.toDateString();
+  return t("Foto delle {time}", {time: d.toLocaleString(LOCALES[LANG], today ? {timeStyle: "short"} : {dateStyle: "short", timeStyle: "short"})});
 }
 function activeColor(p) { const l = p.trays.filter(x => x.loaded); return l.length === 1 ? l[0].color : ""; }
 function cardTop(p) {
@@ -203,10 +218,52 @@ function cardTop(p) {
     <div class="pc-model">${esc(p.model)} · ${esc(p.sn)}${p.firmware ? " · fw " + esc(p.firmware) : ""}</div></div>
     <span class="pill ${p.state}">${p.online ? stateName(p.state) : t("Offline")}</span>`;
 }
+const FLOW = {standard: "Flusso standard", high: "Alto flusso", tpu: "TPU alto flusso"};
+const MATERIAL = {stainless: "Acciaio inox", hardened: "Acciaio temprato", tungsten: "Carburo di tungsteno"};
+const TAB = {};   // sotto-scheda scelta per ogni stampante (resta selezionata tra un aggiornamento e l'altro)
+const deg = (v, target) => v == null ? "—" : `${Math.round(v)}°${target ? ` <span class="muted">/ ${Math.round(target)}°</span>` : ""}`;
+const nozzleLabel = n => n.side === "left" ? t("Ugello sx") : n.side === "right" ? t("Ugello dx") : t("Ugello");
+function nozzleType(n) {
+  const parts = [n.diameter ? `${n.diameter} mm` : "", n.flow ? t(FLOW[n.flow]) : "", n.material ? t(MATERIAL[n.material]) : ""].filter(Boolean);
+  return parts.length ? parts.join(" · ") : (n.code ? esc(n.code) : `<span class="muted">${t("non comunicato")}</span>`);
+}
+function spoolBtn(x) {
+  return `<button class="sp ${x.loaded ? "" : "empty"} ${x.rfid ? "rfid" : ""}" data-ams="${x.ams_id}" data-slot="${x.slot_id}"
+    title="${esc(trayLabel(x.label))} ${esc(x.type)} ${esc(x.sub_brand)}${x.rfid ? " (RFID)" : ""}${x.remain != null ? " · " + esc(t("residuo {p}%", {p: x.remain})) + (x.remain_g ? ` (~${x.remain_g} g)` : "") : ""}">
+    <span class="dot" style="--c:${x.color || "transparent"}"></span>${esc(trayLabel(x.label))}${x.remain != null ? `<span class="pct">${x.remain}%</span>` : ""}</button>`;
+}
+function unitBlock(p, u) {
+  const spools = p.trays.filter(x => x.kind === "ams" && x.ams_id === u.ams_id);
+  return `<div class="unit"><div class="unit-h"><b>${esc(u.kind)} ${esc(u.letter)}</b>${u.humidity != null ? `<span class="muted">${t("umidità {h}%", {h: u.humidity})}</span>` : ""}</div>
+    <div class="spools">${spools.map(spoolBtn).join("")}</div></div>`;
+}
+function panel(p) {
+  const tabs = p.nozzles.map(n => ({key: "n" + n.id, label: nozzleLabel(n), temp: n.temp, target: n.target, n}));
+  tabs.push({key: "bed", label: t("Piatto|letto"), temp: p.bed, target: p.bed_target});
+  if (p.chamber != null) tabs.push({key: "chamber", label: t("Camera"), temp: p.chamber, target: p.chamber_target});
+  const unlinked = p.nozzles.length > 1 ? p.ams_units.filter(u => u.nozzle == null) : [];
+  if (unlinked.length) tabs.push({key: "ams", label: "AMS"});
+  const sel = tabs.find(x => x.key === TAB[p.sn]) || tabs[0];
+  const bar = `<div class="ptabs" role="tablist">${tabs.map(x => `<button type="button" role="tab" data-tab="${x.key}" aria-selected="${x === sel}" class="${x === sel ? "on" : ""}">
+    <span>${x.label}</span>${x.temp != null ? `<b>${Math.round(x.temp)}°</b>` : ""}</button>`).join("")}</div>`;
+  let body;
+  if (sel.n) {
+    const n = sel.n, single = p.nozzles.length === 1;
+    const units = p.ams_units.filter(u => single || u.nozzle === n.id);
+    const ext = p.trays.filter(x => x.kind === "external" && (single || x.nozzle === n.id));
+    body = `<dl class="pdl"><dt>${t("Temperatura")}</dt><dd class="big">${deg(n.temp, n.target)}</dd>
+      <dt>${t("Tipo")}</dt><dd>${nozzleType(n)}</dd></dl>
+      ${units.map(u => unitBlock(p, u)).join("")}
+      ${ext.length ? `<div class="unit"><div class="unit-h"><b>${t("Bobina esterna")}</b></div><div class="spools">${ext.map(spoolBtn).join("")}</div></div>` : ""}
+      ${!units.length && !ext.length ? `<p class="muted small">${t("Nessun AMS o bobina collegati")}</p>` : ""}`;
+  } else if (sel.key === "ams") {
+    body = `<p class="muted small">${t("La stampante non comunica a quale ugello sono collegati questi AMS.")}</p>${unlinked.map(u => unitBlock(p, u)).join("")}`;
+  } else {
+    body = `<dl class="pdl"><dt>${t("Temperatura")}</dt><dd class="big">${deg(sel.temp, sel.target)}</dd></dl>`;
+  }
+  return `<div class="pbox">${bar}<div class="ppanel" role="tabpanel">${body}</div></div>`;
+}
 function cardBody(p) {
-  const temps = p.extruders.length > 1
-    ? p.extruders.map(e => `<span>${e.id === 0 ? t("Ugello dx") : t("Ugello sx")} <b>${e.temp}°</b>${e.target ? "/" + e.target : ""}</span>`).join("")
-    : `<span>${t("Ugello")} <b>${p.nozzle}°</b>${p.nozzle_target ? "/" + p.nozzle_target : ""}</span>`;
   const alerts = [...(p.print_error ? [p.print_error] : []), ...p.hms]
     .map(c => `<div class="alert">${c} ${esc(hmsDesc[p.model + c] || "")}</div>`).join("");
   const btns = [];
@@ -224,11 +281,8 @@ function cardBody(p) {
       <div class="prog"><span><b>${p.progress}%</b> · ${t("strato {a}/{b}", {a: p.layer, b: p.total_layers})}</span>
         <span>${p.active ? t("mancano {d}", {d: fmtDur(p.remaining_min * 60)}) : ""}</span></div>`
       : `<div class="task" style="color:var(--muted)">${p.online ? t("Pronta per una nuova stampa") : t("Non raggiungibile dal Hub")}</div>`}
-    <div class="temps">${temps}<span>${t("Piatto|letto")} <b>${p.bed}°</b>${p.bed_target ? "/" + p.bed_target : ""}</span>
-      ${p.chamber != null ? `<span>${t("Camera")} <b>${p.chamber}°</b>${p.chamber_target ? "/" + p.chamber_target : ""}</span>` : ""}<span>${t("Velocità")} <b>${esc(t(SPEEDS[p.speed_lvl] || "—"))}</b></span></div>
-    ${p.trays.length ? `<div class="spools">${p.trays.map(x => `<button class="sp ${x.loaded ? "" : "empty"} ${x.rfid ? "rfid" : ""}"
-        data-ams="${x.ams_id}" data-slot="${x.slot_id}" title="${esc(trayLabel(x.label))} ${esc(x.type)} ${esc(x.sub_brand)}${x.rfid ? " (RFID)" : ""}${x.remain != null ? " · " + esc(t("residuo {p}%", {p: x.remain})) + (x.remain_g ? ` (~${x.remain_g} g)` : "") : ""}">
-        <span class="dot" style="--c:${x.color || "transparent"}"></span>${esc(trayLabel(x.label))}${x.remain != null ? `<span class="pct">${x.remain}%</span>` : ""}</button>`).join("")}</div>` : ""}
+    <div class="temps"><span>${t("Velocità")} <b>${esc(t(SPEEDS[p.speed_lvl] || "—"))}</b></span></div>
+    ${panel(p)}
     ${alerts ? `<div class="alerts">${alerts}</div>` : ""}
     ${p.fw_min ? `<div class="warn">${t("Firmware {v} inferiore al minimo supportato dal Hub ({min}).", {v: esc(p.firmware), min: p.fw_min})}</div>` : ""}
     ${p.last_cmd_error ? `<div class="warn">${t("Ultimo invio fallito: {e}", {e: esc(p.last_cmd_error)})}</div>` : ""}
@@ -325,6 +379,8 @@ $("#v-printers").addEventListener("click", async e => {
     if (ask[b.dataset.opt] && !confirm(ask[b.dataset.opt])) return;
     b.disabled = true;
     await act(() => api(`/api/printers/${sn}/opt`, {method: "POST", body: {opt: b.dataset.opt}}), t("Comando inviato (lo stato si aggiorna in ~10 s)"));
+  } else if (b.dataset.tab) {
+    TAB[sn] = b.dataset.tab; RENDER.printers();
   } else if (b.classList.contains("dots")) {
     const open = b.getAttribute("aria-expanded") === "true";
     closeMenus();
@@ -574,6 +630,16 @@ RENDER.history = async function renderHistory() {
 };
 
 // ------------------------------------------------------------------ statistiche
+function downloadMenu(q) {
+  const items = [[`/api/stats/export.json?${q}`, t("JSON (tutti i dati)")],
+    [`/api/stats/export.csv?kind=jobs&${q}`, t("CSV – dettaglio stampe")],
+    [`/api/stats/export.csv?kind=filaments&${q}`, t("CSV – filamenti")],
+    [`/api/stats/export.csv?kind=printers&${q}`, t("CSV – per stampante")],
+    [`/api/stats/export.csv?kind=daily&${q}`, t("CSV – per giorno")],
+    [`/api/stats/export.xlsx?${q}`, t("Excel (tutte le tabelle)")]];
+  return `<details class="dlmenu"><summary class="btn">${t("Scarica")} ▾</summary>
+    <div class="menu">${items.map(([h, l]) => `<a href="${h}" download>${l}</a>`).join("")}</div></details>`;
+}
 RENDER.stats = async function renderStats(days) {
   days = (typeof days === "number" && days) || +(localStorage.getItem("fb_days") || 30);
   const grp = localStorage.getItem("fb_stats_group") || "";
@@ -585,7 +651,7 @@ RENDER.stats = async function renderStats(days) {
   el.innerHTML = `<div class="head"><div><h1>${t("Statistiche")}</h1><p class="sub">${t("Ultimi {n} giorni", {n: days})}</p></div>
     <div class="row">${GROUPS.length ? `<select id="sgroup"><option value="">${t("Tutte le stampanti")}</option>${GROUPS.map(g => `<option value="${g.id}" ${String(g.id) === grp ? "selected" : ""}>${t("Gruppo {g}", {g: esc(g.name)})}</option>`).join("")}</select>` : ""}
     <select id="days">${[7, 30, 90, 365].map(d => `<option ${d === days ? "selected" : ""} value="${d}">${t("{n} giorni", {n: d})}</option>`).join("")}</select>
-    <a class="btn" href="/api/stats/export.xlsx?days=${days}${grp ? "&group=" + grp : ""}&lang=${LANG}" download>${t("Scarica Excel")}</a></div></div>
+    ${downloadMenu(`days=${days}${grp ? "&group=" + grp : ""}&lang=${LANG}`)}</div></div>
     <div class="kpis"><div class="kpi"><b>${tot.n}</b><span>${t("stampe")}</span></div><div class="kpi"><b>${rate}%</b><span>${t("riuscite")}</span></div>
       <div class="kpi"><b>${Math.round(tot.secs / 3600)} h</b><span>${t("di stampa")}</span></div><div class="kpi"><b>${(tot.grams / 1000).toFixed(2)} kg</b><span>${t("filamento")}</span></div>
       <div class="kpi"><b>${tot.ko || 0}</b><span>${t("fallite")}</span></div></div>
@@ -765,6 +831,15 @@ const filCell = j => j.filaments && j.filaments.length
       return `<span title="${esc([f.type, f.brand, f.color].filter(Boolean).join(" · ") + (est ? " – " + t("Stima dal calo del residuo delle bobine AMS") : ""))}"><i style="--c:${esc(f.color)}"></i>${esc(f.type)} ${est ? "≈" : ""}${f.grams} g</span>`; }).join("")}</div>`
   : (j.filament_g ? `${j.filament_g} g` : `<span class="muted" title="${esc(t("Consumo non disponibile: la stampa non è partita da FleetBuddy e il file non è nell'archivio"))}">—</span>`);
 const fullName = u => [u.first_name, u.last_name].filter(Boolean).join(" ");
+// Password casuale di 14 caratteri (lettere, numeri e simboli), senza caratteri che si confondono (0/O, 1/l/I)
+function generatePassword(len = 14) {
+  const sets = ["abcdefghijkmnpqrstuvwxyz", "ABCDEFGHJKLMNPQRSTUVWXYZ", "23456789", "!@#%&*?-+="];
+  const all = sets.join(""), rnd = n => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; };
+  const out = sets.map(s => s[rnd(s.length)]);              // almeno uno per tipo
+  while (out.length < len) out.push(all[rnd(all.length)]);
+  for (let i = out.length - 1; i > 0; i--) { const j = rnd(i + 1); [out[i], out[j]] = [out[j], out[i]]; }
+  return out.join("");
+}
 function userDialog(u) {
   openDialog(`<h3>${u ? t("Modifica {u}", {u: esc(u.username)}) : t("Nuovo utente")}</h3>
     <div class="row">
@@ -776,13 +851,27 @@ function userDialog(u) {
       <label>${t("Ruolo")}<select name="role">${Object.keys(ROLES).map(k => `<option value="${k}" ${(u ? u.role : "operator") === k ? "selected" : ""}>${roleName(k)}</option>`).join("")}</select></label>
       <label>${t("Lingua")}<select name="language">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${(u ? u.language || LANG : LANG) === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>
     </div>
-    <label>${u ? t("Nuova password (lascia vuoto per non cambiarla)") : t("Password")}<input name="password" type="password" autocomplete="new-password"></label>
+    <label>${u ? t("Nuova password (lascia vuoto per non cambiarla)") : t("Password")}
+      <span class="pwrow"><input name="password" type="password" autocomplete="new-password">
+      <button type="button" id="pwgen">${t("Genera password")}</button><button type="button" id="pwcopy" hidden>${t("Copia")}</button></span></label>
+    ${u && u.id === ME.id ? "" : `<label class="inline"><input type="checkbox" name="must_change" checked> ${t("Proponi di cambiarla al primo accesso")}</label>`}
     ${u && u.id !== ME.id ? `<label class="inline"><input type="checkbox" name="active" ${u.active ? "checked" : ""}> ${t("Utente attivo (se disattivato non può accedere)")}</label>` : ""}
     <p class="sub" style="margin:0">${t("Password: almeno 8 caratteri, con lettere e numeri.")}${u ? "" : " " + t("Dopo la creazione assegna i permessi con il pulsante \"Permessi\".")}</p>
     <div class="dlgfoot">${btnCancel()}<button class="primary" id="uok">${u ? t("Salva") : t("Crea utente")}</button></div>`);
+  $("#pwgen").onclick = () => {
+    const f = $("#dlgbody");
+    f.password.value = generatePassword(); f.password.type = "text"; f.password.select();
+    $("#pwcopy").hidden = false;
+  };
+  $("#pwcopy").onclick = async () => {
+    const v = $("#dlgbody").password.value;
+    try { await navigator.clipboard.writeText(v); toast(t("Password copiata"), "ok"); }
+    catch { $("#dlgbody").password.select(); toast(t("Selezionata: copiala con Ctrl+C"), "info"); }
+  };
   $("#uok").onclick = async ev => {
     ev.preventDefault(); const f = $("#dlgbody");
     const body = {first_name: f.first_name.value, last_name: f.last_name.value, role: f.role.value, language: f.language.value};
+    if (f.must_change) body.must_change = f.must_change.checked;
     if (f.password.value) body.password = f.password.value;
     if (f.active) body.active = f.active.checked;
     let r;

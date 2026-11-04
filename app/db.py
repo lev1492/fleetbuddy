@@ -63,6 +63,7 @@ MIGRATIONS = [
     ("jobs", "filaments", "TEXT"),
     ("users", "last_name", "TEXT DEFAULT ''"),
     ("jobs", "start_trays", "TEXT"),
+    ("users", "must_change_pw", "INTEGER DEFAULT 0"),
     ("job_filaments", "source", "TEXT DEFAULT 'slicer'"),
 ]
 

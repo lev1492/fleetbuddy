@@ -151,6 +151,91 @@ def chamber(rs: dict, model: str) -> tuple[float | None, int]:
     return None, 0
 
 
+# ---------------------------------------------------------------- ugelli e AMS
+NOZZLE_FLOW = {"S": "standard", "H": "high", "U": "tpu"}
+NOZZLE_MATERIAL = {"00": "stainless", "01": "hardened", "05": "tungsten"}
+LEGACY_MATERIAL = {"stainless_steel": "stainless", "hardened_steel": "hardened", "tungsten_carbide": "tungsten"}
+
+
+def nozzle_kind(code: str | None) -> dict:
+    """Decodifica device.nozzle.info.type (API par. 4.1.2), formato H[Byte1][Byte2-3]:
+    "HS00" = hotend, flusso standard, acciaio inox; "HH01" = alto flusso, acciaio temprato; ecc.
+    Accetta anche i valori testuali delle stampanti a ugello singolo ("hardened_steel")."""
+    code = (code or "").strip()
+    up = code.upper()
+    if len(up) == 4 and up[0] == "H":
+        return {"code": code, "flow": NOZZLE_FLOW.get(up[1]), "material": NOZZLE_MATERIAL.get(up[2:4])}
+    return {"code": code, "flow": None, "material": LEGACY_MATERIAL.get(code.lower())}
+
+
+# tipo di unità AMS (bit 0–3 del campo "info", come nel protocollo delle stampanti Bambu)
+AMS_KIND = {1: "AMS", 2: "AMS Lite", 3: "AMS 2 Pro", 4: "AMS HT"}
+
+
+def _ams_info(unit: dict) -> tuple[str | None, int | None]:
+    """(tipo di AMS, ugello a cui è collegato) dal campo "info" esadecimale dell'unità.
+    Il campo non è documentato nelle API del Hub v1.0.0: se manca, il collegamento resta sconosciuto."""
+    raw = unit.get("info")
+    if raw in (None, ""):
+        return None, None
+    try:
+        v = int(str(raw), 16)
+    except ValueError:
+        return None, None
+    return AMS_KIND.get(v & 0xF), (v >> 8) & 0xF
+
+
+def nozzles(rs: dict, model: str, ex: list[dict]) -> list[dict]:
+    """Un elemento per ugello: lato, temperatura, diametro, tipo e bobine/AMS collegati."""
+    dev_noz = ((rs.get("device") or {}).get("nozzle") or {}).get("info") or []
+    temps = {e["id"]: e for e in ex}
+    dual = model in DUAL_NOZZLE or len(ex) > 1 or len(dev_noz) > 1
+    out = []
+    if dev_noz:
+        for n in dev_noz:
+            nid = int(_num(n.get("id")))
+            t = temps.get(nid, {})
+            out.append({"id": nid, "side": ("right" if nid == 0 else "left") if dual else "main",
+                        "temp": t.get("temp"), "target": t.get("target"),
+                        "diameter": _num(n.get("diameter")) or None, **nozzle_kind(n.get("type"))})
+    elif ex:
+        for e in ex:
+            out.append({"id": e["id"], "side": ("right" if e["id"] == 0 else "left") if dual else "main",
+                        "temp": e["temp"], "target": e["target"], "diameter": None, **nozzle_kind(None)})
+    else:   # stampanti a ugello singolo (P1, A1, X1): valori classici di report_status
+        out.append({"id": 0, "side": "main", "temp": round(_num(rs.get("nozzle_temper")), 1),
+                    "target": round(_num(rs.get("nozzle_target_temper")), 1),
+                    "diameter": _num(rs.get("nozzle_diameter")) or None, **nozzle_kind(rs.get("nozzle_type"))})
+    if dual and len(out) == 2 and out[0]["side"] == "left":
+        out.reverse()
+    out.sort(key=lambda n: {"left": 0, "main": 1, "right": 2}[n["side"]])   # sinistro prima, come sulla macchina
+    return out
+
+
+def ams_units(rs: dict, model: str, noz: list[dict]) -> list[dict]:
+    """Unità AMS e bobine esterne, con l'ugello a cui sono collegate quando la stampante lo comunica."""
+    single = len(noz) == 1
+    out = []
+    for unit in (rs.get("ams") or {}).get("ams") or []:
+        aid = int(_num(unit.get("id")))
+        kind, nid = _ams_info(unit)
+        if kind is None:
+            kind = "AMS HT" if 128 <= aid <= 135 else "AMS"
+        hum_raw = unit.get("humidity_raw")
+        out.append({"ams_id": aid, "kind": kind,
+                    "letter": chr(65 + aid - 128) if 128 <= aid <= 135 else chr(65 + aid),
+                    "nozzle": noz[0]["id"] if single else nid,
+                    "humidity": int(_num(hum_raw)) if hum_raw not in (None, "") else None,
+                    "temp": _num(unit.get("temp")) or None})
+    return out
+
+
+def external_nozzle(ams_id: int, noz: list[dict]) -> int | None:
+    if len(noz) == 1:
+        return noz[0]["id"]
+    return 0 if ams_id == 255 else 1 if ams_id == 254 else None
+
+
 def extruders(rs: dict) -> list[dict]:
     info = ((rs.get("device") or {}).get("extruder") or {}).get("info") or []
     res = []
@@ -166,6 +251,11 @@ def normalize(d: dict) -> dict:
     state = (rs.get("gcode_state") or "UNKNOWN").upper()
     up = d.get("upgrade_info") or {}
     ex = extruders(rs)
+    noz = nozzles(rs, model, ex)
+    tr = trays(rs, model)
+    for t in tr:
+        if t["kind"] == "external":
+            t["nozzle"] = external_nozzle(t["ams_id"], noz)
     return {
         "sn": d.get("dev_sn"),
         "model": model,
@@ -195,7 +285,9 @@ def normalize(d: dict) -> dict:
         "nozzle_diameter": rs.get("nozzle_diameter", ""),
         "nozzle_type": rs.get("nozzle_type", ""),
         "ams_busy": (int(_num(rs.get("ams_status"))) >> 8) != 0,
-        "trays": trays(rs, model),
+        "trays": tr,
+        "nozzles": noz,
+        "ams_units": ams_units(rs, model, noz),
         "hms": [hms_code(h) for h in rs.get("hms") or []],
         "print_error": print_error_code(rs.get("print_error")),
         "firmware": up.get("current_ver", ""),
@@ -237,10 +329,14 @@ def auto_map(filaments: list[dict], printer: dict) -> tuple[list[dict] | None, l
     for f in filaments:
         cands = [t for t in loaded if t["type"].upper() == f["type"].upper()]
         if printer["dual_nozzle"] and f.get("extruder"):
-            # sx = estrusore 1 (AMS collegati a sx / esterna 254), dx = estrusore 2.
-            # Non conosciamo il collegamento AMS<->estrusore, quindi filtriamo solo le bobine esterne.
-            wrong_ext = 255 if f["extruder"] == 1 else 254
-            cands = [t for t in cands if t["ams_id"] != wrong_ext]
+            # slicer: estrusore 1 = sinistro, 2 = destro; Hub: ugello 1 = sinistro, 0 = destro
+            want = 1 if f["extruder"] == 1 else 0
+            unit_noz = {u["ams_id"]: u.get("nozzle") for u in printer.get("ams_units", [])}
+            def side(t):
+                return t.get("nozzle") if t["kind"] == "external" else unit_noz.get(t["ams_id"])
+            known = [t for t in cands if side(t) == want]
+            # se il collegamento di qualche AMS non è comunicato, si escludono solo le bobine sicuramente sbagliate
+            cands = known or [t for t in cands if side(t) is None]
         if not cands:
             warnings.append(_("Filamento {n} ({type}) non caricato", n=f["id"], type=f["type"]))
             return None, warnings

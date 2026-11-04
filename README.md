@@ -25,7 +25,8 @@ ma passando **esclusivamente dal Bambu Fleet Hub** (HTTP API v1.0.0) invece che 
 | Storico | registra **tutte** le stampe viste dal Hub (anche quelle lanciate da Bambu Studio), con foto finale |
 | Consumo filamento | per ogni stampa, grammi e metri per tipo, marca e colore: dal file del 3MF quando è in archivio (anche se la stampa è partita da Bambu Studio), altrimenti stimati dal calo del residuo delle bobine AMS (segnati con ≈) |
 | Residuo bobine | percentuale e grammi rimasti, per le bobine di cui la stampante li comunica (tipicamente Bambu con RFID) |
-| Statistiche | stampe, tasso di successo, ore, filamento per tipo e colore, per giorno e per stampante; esportazione in Excel (riepilogo, per stampante, per giorno, filamenti, dettaglio stampe) |
+| Ugelli, piano e camera | sotto-schede nella scheda della stampante: temperatura, diametro, tipo di hotend e materiale per ogni ugello, con gli AMS e le bobine esterne collegati |
+| Statistiche | stampe, tasso di successo, ore, filamento per tipo e colore, per giorno e per stampante; esportazione in JSON, CSV ed Excel |
 | Errori HMS | decodifica `attr/code` e descrizione tramite `/v1/hub/hms` e `/v1/hub/device_error`, con cache locale |
 | Notifiche | ntfy, Telegram (con foto), webhook generico |
 | Gestione Hub | info e spazio, NTP/ora, ricerca SSDP e scansione IP, collega/scollega stampanti, firmware, cache file |
@@ -164,6 +165,8 @@ sudo systemctl restart fleetbuddy
 - Gli altri utenti si creano da **Amministrazione**; con **Permessi** si scelgono gruppi, stampanti e progetti visibili.
 - Per accedere servono solo nome utente e password. Nome e cognome sono facoltativi e compaiono solo nella
   gestione utenti dell'amministratore; nel resto dell'interfaccia e nello storico si vede il nome utente.
+- Il pulsante **Genera password** crea una password sicura da consegnare al nuovo utente; al primo accesso
+  FleetBuddy gli propone di sceglierne una propria (facoltativo).
 - Password admin dimenticata: `.venv/bin/python -m tools.users reset-password admin`.
 - Le password sono salvate con PBKDF2-SHA256; le sessioni durano 30 giorni; dopo 5 tentativi errati
   l'accesso da quell'indirizzo è sospeso per 5 minuti.

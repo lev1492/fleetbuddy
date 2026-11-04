@@ -3,6 +3,21 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.3.0] – 2026-11-04
+
+### Novità
+- Scheda della stampante con sotto-schede: una per ugello (sinistro/destro sulle doppio estrusore), una per il piano
+  e una per la camera quando è misurata. Ogni ugello mostra temperatura, diametro, tipo di hotend (flusso standard,
+  alto flusso, TPU alto flusso) e materiale (acciaio inox, acciaio temprato, carburo di tungsteno), decodificati dal
+  codice `device.nozzle.info.type` (es. `HH01`), e gli AMS e le bobine esterne collegati a quell'ugello.
+- La mappatura automatica dei filamenti sulle doppio estrusore usa gli AMS collegati all'ugello giusto.
+- Sotto la camera compare solo l'orario della foto, che cambia soltanto quando arriva una foto nuova.
+- Statistiche scaricabili in JSON (tutti i dati) e in CSV (dettaglio stampe, filamenti, per stampante, per giorno);
+  Excel resta disponibile. I CSV usano separatore e decimali adatti alla lingua, per aprirsi correttamente in Excel.
+- Amministrazione: pulsante per generare una password sicura per i nuovi utenti, da copiare e consegnare.
+- Al primo accesso con una password assegnata dall'amministratore, l'utente può sceglierne una propria
+  oppure tenere quella ricevuta.
+
 ## [0.2.0] – 2026-11-03
 
 ### Novità

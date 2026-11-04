@@ -214,3 +214,54 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------------- CSV
+CSV_COLUMNS = {
+    "jobs": [("Avvio", "started_at", "datetime"), ("Fine", "ended_at", "datetime"), ("Stampante", "printer_name", "text"),
+             ("Seriale", "printer_sn", "text"), ("Lavoro", "task_name", "text"), ("Avviata da", "started_by_name", "text"),
+             ("Durata (h)", "_hours", "num"), ("Filamento (g)", "filament_g", "num"), ("Esito", "_status", "text"),
+             ("Avanzamento", "progress", "int"), ("Filamenti", "_filaments", "text"), ("Errore", "error", "text")],
+    "filaments": [("Tipo", "type", "text"), ("Marca", "brand", "text"), ("Colore", "color", "text"),
+                  ("Filamento (g)", "grams", "num"), ("Metri", "meters", "num"), ("Stampe", "prints", "int")],
+    "printers": [("Stampante", "name", "text"), ("Seriale", "printer_sn", "text"), ("Stampe", "n", "int"),
+                 ("Riuscite", "ok", "int"), ("Fallite", "ko", "int"), ("Annullate", "cancelled", "int"),
+                 ("Ore di stampa", "_hours", "num"), ("Filamento (g)", "grams", "num")],
+    "daily": [("Data", "day", "text"), ("Stampe", "n", "int"), ("Riuscite", "ok", "int"), ("Filamento (g)", "grams", "num")],
+}
+
+
+def build_csv(kind: str, rows: list[dict], lang: str = "it") -> bytes:
+    """CSV pronto per Excel/LibreOffice: in inglese virgola e punto decimale, nelle altre lingue
+    punto e virgola e virgola decimale (le impostazioni regionali di quei paesi)."""
+    import csv
+    sep, dec = (",", ".") if lang == "en" else (";", ",")
+    now = time.time()
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=sep, lineterminator="\r\n")
+    cols = CSV_COLUMNS[kind]
+    w.writerow([tr(lang, label) for label, _, _ in cols])
+    for r in rows:
+        r = dict(r)
+        if "started_at" in r:
+            r["_hours"] = ((r.get("ended_at") or now) - r["started_at"]) / 3600
+            r["_status"] = tr(lang, STATUS_IT.get(r.get("status"), r.get("status") or ""))
+            r["_filaments"] = "; ".join(f"{f.get('type', '')} {f.get('color', '')} {f.get('grams', 0)} g"
+                                        + (" ≈" if f.get("source") == "ams" else "") for f in r.get("filaments") or [])
+        elif "secs" in r:
+            r["_hours"] = (r.get("secs") or 0) / 3600
+        out = []
+        for _, key, kind_ in cols:
+            v = r.get(key)
+            if v is None or v == "":
+                out.append("")
+            elif kind_ == "datetime":
+                out.append(datetime.fromtimestamp(v).strftime("%Y-%m-%d %H:%M"))
+            elif kind_ == "num":
+                out.append(f"{float(v):.2f}".replace(".", dec))
+            elif kind_ == "int":
+                out.append(str(int(v)))
+            else:
+                out.append(str(v))
+        w.writerow(out)
+    return ("\ufeff" + buf.getvalue()).encode("utf-8")   # BOM: Excel riconosce gli accenti

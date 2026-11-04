@@ -132,10 +132,17 @@ def device(sn, p):
             "bed_temper": 60.0 if p["state"] == "RUNNING" else 25.0, "bed_target_temper": 60 if p["state"] == "RUNNING" else 0,
             "spd_lvl": 2, "wifi_signal": "-55dBm", "print_error": 0, "ams_status": 0, "nozzle_diameter": "0.4",
             "hms": [{"attr": 50336256, "code": 131073}] if p["state"] == "FINISH" and p["model"] == "P1S" else [],
-            "ams": {"ams_exist_bits": "1", "ams": [{"id": "0", "humidity": "3", "tray": p["ams"]}]},
+            # H2D: AMS A collegato all'ugello sinistro (info 0x0101), AMS HT collegato al destro (info 0x0004)
+            "ams": {"ams_exist_bits": "1", "ams": [{"id": "0", "humidity": "3", "humidity_raw": "28", "info": "0101", "tray": p["ams"]},
+                                                  {"id": "128", "humidity_raw": "15", "info": "0004",
+                                                   "tray": [tray(0, "PETG", "00AA55FF")]}]}
+                   if p["model"] == "H2D" else
+                   {"ams_exist_bits": "1", "ams": [{"id": "0", "humidity": "3", "humidity_raw": "31", "tray": p["ams"]}]},
+            "nozzle_type": "hardened_steel",
             "vt_tray": {"id": "255", "tray_type": "", "tray_color": "00000000"} if p["model"] != "H2D" else {},
             "vir_slot": [{"id": "255", "tray_type": "PLA", "tray_color": "00AA55FF"}, {"id": "254", "tray_type": ""}] if p["model"] == "H2D" else [],
             "device": {"extruder": {"info": [{"id": 0, "temp": (220 << 16) | 219}, {"id": 1, "temp": 35}]},
+                       "nozzle": {"info": [{"id": 0, "type": "HH01", "diameter": 0.4}, {"id": 1, "type": "HS00", "diameter": 0.6}]},
                        "ctc": {"info": {"temp": (45 << 16) | 38}}} if p["model"] == "H2D" else {},
         },
     }

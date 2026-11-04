@@ -244,7 +244,14 @@ async def my_password(request: Request, body: dict):
     problem = password_problem(str(body.get("new", "")))
     if problem:
         raise HTTPException(400, problem)
-    S().db.x("UPDATE users SET pw_hash=? WHERE id=?", (hash_password(body["new"]), u.id))
+    S().db.x("UPDATE users SET pw_hash=?, must_change_pw=0 WHERE id=?", (hash_password(body["new"]), u.id))
+    return {"ok": True}
+
+
+@app.post("/api/me/keep_password")
+async def my_keep_password(request: Request):
+    """L'utente sceglie di tenere la password ricevuta dall'amministratore."""
+    S().db.x("UPDATE users SET must_change_pw=0 WHERE id=?", (U(request).id,))
     return {"ok": True}
 
 
@@ -316,8 +323,8 @@ async def put_settings(request: Request, body: dict):
 @app.get("/api/users")
 async def users_list(request: Request):
     need_admin(U(request))
-    rows = S().db.q("SELECT id, username, first_name, last_name, role, active, language, created_at, last_login "
-                    "FROM users ORDER BY username")
+    rows = S().db.q("SELECT id, username, first_name, last_name, role, active, language, created_at, last_login, "
+                    "must_change_pw FROM users ORDER BY username")
     acc = S().db.q("SELECT * FROM access")
     for r in rows:
         mine = [a for a in acc if a["user_id"] == r["id"]]
@@ -333,6 +340,8 @@ async def users_add(request: Request, body: dict):
     uid = await asyncio.to_thread(auth.create_user, str(body.get("username", "")), str(body.get("password", "")),
                                   str(body.get("role", "operator")), normalize(body.get("language")) or current_lang.get(),
                                   str(body.get("first_name", "")), str(body.get("last_name", "")))
+    if body.get("must_change", True):
+        S().db.x("UPDATE users SET must_change_pw=1 WHERE id=?", (uid,))
     return {"id": uid}
 
 
@@ -367,6 +376,7 @@ async def users_edit(request: Request, uid: int, body: dict):
         S().db.x("UPDATE users SET pw_hash=? WHERE id=?", (hash_password(body["password"]), uid))
         if uid != me.id:
             auth.drop_sessions(uid)
+            S().db.x("UPDATE users SET must_change_pw=? WHERE id=?", (1 if body.get("must_change", True) else 0, uid))
     return {"ok": True}
 
 
@@ -867,9 +877,7 @@ async def stats_export(request: Request, days: int = 30, group: int | None = Non
                     headers={"Content-Disposition": f'attachment; filename="{fname}"', "Cache-Control": "no-store"})
 
 
-@app.get("/api/stats")
-async def stats(request: Request, days: int = 30, group: int | None = None):
-    u = U(request)
+def _stats_data(u: User, days: int, group: int | None) -> dict:
     db = S().db
     where, args = _stats_filter(u, days, group)
     tot = db.one(f"""SELECT COUNT(*) n, SUM(status='finished') ok, SUM(status='failed') ko,
@@ -877,13 +885,74 @@ async def stats(request: Request, days: int = 30, group: int | None = None):
                     COALESCE(SUM(COALESCE(ended_at, strftime('%s','now')) - started_at),0) secs
                     FROM jobs WHERE {where}""", args)
     per = db.q(f"""SELECT printer_sn, MAX(printer_name) name, COUNT(*) n, SUM(status='finished') ok,
-                  SUM(status='failed') ko, COALESCE(SUM(filament_g),0) grams,
+                  SUM(status='failed') ko, SUM(status='cancelled') cancelled, COALESCE(SUM(filament_g),0) grams,
                   COALESCE(SUM(COALESCE(ended_at, strftime('%s','now')) - started_at),0) secs
                   FROM jobs WHERE {where} GROUP BY printer_sn ORDER BY n DESC""", args)
     daily = db.q(f"""SELECT date(started_at,'unixepoch','localtime') day, COUNT(*) n,
                     SUM(status='finished') ok, COALESCE(SUM(filament_g),0) grams
                     FROM jobs WHERE {where} GROUP BY day ORDER BY day""", args)
     return {"days": days, "total": tot, "per_printer": per, "daily": daily, "filaments": filament_totals(where, args)}
+
+
+@app.get("/api/stats")
+async def stats(request: Request, days: int = 30, group: int | None = None):
+    return _stats_data(U(request), days, group)
+
+
+def _stats_jobs(u: User, days: int, group: int | None) -> list[dict]:
+    where, args = _stats_filter(u, days, group)
+    w = where.replace("started_at", "j.started_at").replace("printer_sn", "j.printer_sn")
+    rows = S().db.q(f"""SELECT j.*, us.username AS started_by_name FROM jobs j
+                        LEFT JOIN users us ON us.id=j.started_by WHERE {w} ORDER BY j.started_at""", args)
+    fil = job_filaments([r["id"] for r in rows])
+    for r in rows:
+        r["filaments"] = fil.get(r["id"], [])
+    return rows
+
+
+def _scope_label(u: User, group: int | None) -> str:
+    gname = S().db.one("SELECT name FROM printer_groups WHERE id=?", (group,)) if group else None
+    return (_("Gruppo {g}", g=gname["name"]) if gname else
+            (_("Tutte") if u.is_admin else _("Tutte quelle assegnate all'utente")))
+
+
+def _download(data: bytes, media: str, days: int, ext: str, kind: str = "") -> Response:
+    fname = f"fleetbuddy-stats{'-' + kind if kind else ''}-{time.strftime('%Y%m%d')}-{days}d.{ext}"
+    return Response(data, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"', "Cache-Control": "no-store"})
+
+
+@app.get("/api/stats/export.json")
+async def stats_export_json(request: Request, days: int = 30, group: int | None = None):
+    """Tutto in un unico file: riepilogo, per stampante, per giorno, filamenti e dettaglio delle stampe."""
+    u = U(request)
+    days = max(1, min(3650, days))
+    data = _stats_data(u, days, group)
+    jobs = _stats_jobs(u, days, group)
+    keep = ("id", "printer_sn", "printer_name", "task_name", "status", "progress", "started_at", "ended_at",
+            "filament_g", "error", "started_by_name", "filaments")
+    out = {"app": APP_NAME, "version": __version__, "generated_at": int(time.time()), "generated_by": u.username,
+           "period_days": days, "scope": _scope_label(u, group), **data,
+           "jobs": [{k: j.get(k) for k in keep} for j in jobs]}
+    return _download(json.dumps(out, ensure_ascii=False, indent=1).encode("utf-8"),
+                     "application/json; charset=utf-8", days, "json")
+
+
+@app.get("/api/stats/export.csv")
+async def stats_export_csv(request: Request, kind: str = "jobs", days: int = 30, group: int | None = None):
+    """CSV di una tabella: jobs (dettaglio stampe), filaments, printers, daily."""
+    from .export import build_csv
+    u = U(request)
+    days = max(1, min(3650, days))
+    if kind not in ("jobs", "filaments", "printers", "daily"):
+        raise HTTPException(400, _("Tipo di esportazione non valido"))
+    data = _stats_data(u, days, group)
+    lang = current_lang.get()
+    if kind == "jobs":
+        rows = _stats_jobs(u, days, group)
+    else:
+        rows = {"filaments": data["filaments"], "printers": data["per_printer"], "daily": data["daily"]}[kind]
+    return _download(build_csv(kind, rows, lang), "text/csv; charset=utf-8", days, "csv", kind)
 
 
 # ====================================================================== Hub (solo admin)

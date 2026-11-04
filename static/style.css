@@ -198,6 +198,32 @@ legend{font-size:13px;font-weight:700;color:var(--muted);padding:0 4px}
 .role.admin{background:var(--ink);color:var(--surface)}
 .muted{color:var(--muted)}
 
+/* sotto-schede della stampante: ugelli, piano, camera */
+.pbox{border:1px solid var(--line);border-radius:var(--radius-sm);overflow:hidden}
+.ptabs{display:flex;background:var(--sunk);border-bottom:1px solid var(--line);overflow-x:auto}
+.ptabs button{border:0;border-radius:0;background:none;flex:1;min-width:72px;padding:7px 8px;display:flex;flex-direction:column;align-items:center;gap:1px;
+  font-size:12px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent}
+.ptabs button b{font-size:15px;color:var(--ink)}
+.ptabs button.on{background:var(--surface);color:var(--ink);border-bottom-color:var(--run)}
+.ppanel{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
+.pdl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0;font-size:14px;align-items:baseline}
+.pdl dt{color:var(--muted);font-size:13px}
+.pdl dd{margin:0}
+.pdl dd.big{font-size:20px;font-weight:700;letter-spacing:-.01em}
+.unit{display:flex;flex-direction:column;gap:6px}
+.unit-h{display:flex;gap:10px;align-items:baseline;font-size:13px}
+.small{font-size:13px;margin:0}
+.pwrow{display:flex;gap:6px;flex-wrap:wrap}
+.pwrow input{flex:1;min-width:180px;font-family:ui-monospace,Menlo,Consolas,monospace}
+/* menu Scarica nelle statistiche */
+.dlmenu{position:relative}
+.dlmenu summary{list-style:none;cursor:pointer}
+.dlmenu summary::-webkit-details-marker{display:none}
+.dlmenu .menu{position:absolute;right:0;top:calc(100% + 4px);z-index:10;min-width:230px;background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius-sm);box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px;display:flex;flex-direction:column}
+.dlmenu .menu a{padding:8px 10px;color:var(--ink);text-decoration:none;border-radius:4px;font-size:14px}
+.dlmenu .menu a:hover{background:var(--sunk)}
+
 @media (max-width:760px){
   main{margin-left:0}
   .nav{position:fixed;bottom:0;top:auto;left:0;right:0;width:auto;height:auto;overflow-y:visible;flex-direction:row;overflow-x:auto;padding:6px calc(6px + env(safe-area-inset-left)) calc(6px + env(safe-area-inset-bottom));border-right:0;border-top:1px solid var(--line);z-index:20}
