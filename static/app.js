@@ -693,7 +693,7 @@ RENDER.history = async function renderHistory() {
 
 // ------------------------------------------------------------------ statistiche
 // Utilizzo delle stampanti: situazione attuale e andamento nel tempo (grafico SVG, nessuna libreria esterna)
-function utilization(ut, grp, range) {
+function utilization(ut, grp) {
   const g = GROUPS.find(x => String(x.id) === grp);
   const list = g ? S.printers.filter(p => g.printers.includes(p.sn)) : S.printers;
   const count = st => list.filter(p => p.online && st.includes(p.state)).length;
@@ -716,8 +716,7 @@ function utilization(ut, grp, range) {
   const valid = pts.map((b, i) => [i, b.pct]).filter(([, v]) => v != null);
   const line = valid.map(([i, v], k) => `${k ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
   const area = valid.length ? `${line}L${x(valid[valid.length - 1][0]).toFixed(1)},${y(0)}L${x(valid[0][0]).toFixed(1)},${y(0)}Z` : "";
-  const fmt = ts => new Date(ts * 1000).toLocaleString(LOCALES[LANG], ut.step >= 86400 ? {day: "2-digit", month: "2-digit"}
-    : ut.step >= 4 * 3600 ? {day: "2-digit", month: "2-digit", hour: "2-digit"} : {hour: "2-digit", minute: "2-digit"});
+  const fmt = ts => axisDate(ts, ut.step);
   const every = Math.max(1, Math.ceil(pts.length / 8));
   const grid = [0, .25, .5, .75, 1].map(f => { const v = Math.round(maxPct * f), yy = y(v).toFixed(1);
     return `<line class="gridl" x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/><text class="axis" x="${L - 6}" y="${(+yy + 4).toFixed(1)}" text-anchor="end">${v}%</text>`; }).join("");
@@ -726,10 +725,42 @@ function utilization(ut, grp, range) {
   return `${kpis}
     <div class="util"><div class="head" style="margin-bottom:6px"><div><h2 style="margin:0">${t("Tasso di utilizzo")}</h2>
       <p class="sub" style="margin:0">${t("Media del periodo: {p}% · {n} stampanti", {p: ut.average, n: ut.printers})}</p></div>
-      <select id="urange">${[["24h", t("Ultime 24 ore")], ["7d", t("Ultimi 7 giorni")], ["30d", t("Ultimi 30 giorni")]].map(([k, l]) => `<option value="${k}" ${k === range ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      </div>
       <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(t("Tasso di utilizzo"))}">${grid}<path class="area" d="${area}"/><path class="line" d="${line}"/>${dotsSvg}${xl}</svg>
       ${ut.per_printer.length ? `<div style="margin-top:12px">${ut.per_printer.map(p => `<div class="ubar"><span>${esc(p.name)}</span><span class="track"><i style="width:${Math.min(100, p.pct)}%"></i></span><b>${p.pct}%</b></div>`).join("")}</div>` : ""}
       <p class="sub" style="margin:8px 0 0">${t("Percentuale del tempo in cui le stampanti hanno stampato (pause comprese), calcolata dallo storico.")}</p></div>`;
+}
+function axisDate(ts, step) {
+  return new Date(ts * 1000).toLocaleString(LOCALES[LANG], step >= 86400 ? {day: "2-digit", month: "2-digit"}
+    : step >= 4 * 3600 ? {day: "2-digit", month: "2-digit", hour: "2-digit"} : {hour: "2-digit", minute: "2-digit"});
+}
+// Stampe nel tempo: barre sottili impilate (riuscite, non riuscite, in corso) con asse temporale
+function printsChart(series) {
+  const pts = (series && series.buckets) || [];
+  if (!pts.some(b => b.ok + b.ko + b.run)) return `<p class="sub">${t("Nessun dato nel periodo")}</p>`;
+  const W = 900, H = 200, L = 34, R = 12, T = 10, B = 28;
+  const max = Math.max(1, ...pts.map(b => b.ok + b.ko + b.run));
+  const top = max <= 4 ? max : Math.ceil(max / 4) * 4;
+  const slot = (W - L - R) / pts.length, bw = Math.max(2, Math.min(12, slot * 0.55));
+  const y = v => T + (H - T - B) * (1 - v / top);
+  const every = Math.max(1, Math.ceil(pts.length / 8));
+  const grid = [0, .5, 1].map(f => { const v = Math.round(top * f), yy = y(v).toFixed(1);
+    return `<line class="gridl" x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/><text class="axis" x="${L - 6}" y="${(+yy + 4).toFixed(1)}" text-anchor="end">${v}</text>`; }).join("");
+  const bars = pts.map((b, i) => {
+    const cx = L + slot * (i + .5), x0 = (cx - bw / 2).toFixed(1);
+    let acc = 0, out = "";
+    for (const [k, cls] of [["ok", "b-ok"], ["ko", "b-ko"], ["run", "b-run"]]) {
+      if (!b[k]) continue;
+      const y1 = y(acc + b[k]), y0 = y(acc);
+      out += `<rect class="${cls}" x="${x0}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, y0 - y1).toFixed(1)}" rx="1.5"/>`;
+      acc += b[k];
+    }
+    const label = i % every === 0 || i === pts.length - 1 ? `<text class="axis" x="${cx.toFixed(1)}" y="${H - 8}" text-anchor="middle">${axisDate(b.t, series.step)}</text>` : "";
+    const tip = `${axisDate(b.t, series.step)}: ${t("{n} riuscite", {n: b.ok})}, ${t("{n} non riuscite", {n: b.ko})}${b.run ? ", " + t("{n} in corso", {n: b.run}) : ""}`;
+    return `<g><title>${esc(tip)}</title><rect x="${(cx - slot / 2).toFixed(1)}" y="${T}" width="${slot.toFixed(1)}" height="${H - T - B}" fill="transparent"/>${out}</g>${label}`;
+  }).join("");
+  return `<div class="util"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(t("Stampe"))}">${grid}${bars}</svg>
+    <div class="legend"><span><i class="b-ok"></i>${t("Riuscite")}</span><span><i class="b-ko"></i>${t("Non riuscite")}</span><span><i class="b-run"></i>${t("In corso")}</span></div></div>`;
 }
 function downloadMenu(q) {
   const items = [[`/api/stats/export.json?${q}`, t("JSON (tutti i dati)")],
@@ -741,28 +772,31 @@ function downloadMenu(q) {
   return `<details class="dlmenu"><summary class="btn">${t("Scarica")} ▾</summary>
     <div class="menu">${items.map(([h, l]) => `<a href="${h}" download>${l}</a>`).join("")}</div></details>`;
 }
-RENDER.stats = async function renderStats(days) {
-  days = (typeof days === "number" && days) || +(localStorage.getItem("fb_days") || 30);
+// Un solo periodo per tutta la pagina: utilizzo, grafico delle stampe, riepilogo ed esportazioni
+const PERIOD_DAYS = {"24h": 1, "7d": 7, "30d": 30, "90d": 90, "365d": 365};
+const periodLabel = p => p === "24h" ? t("Ultime 24 ore") : t("Ultimi {n} giorni", {n: PERIOD_DAYS[p]});
+RENDER.stats = async function renderStats() {
+  let period = localStorage.getItem("fb_period");
+  if (!PERIOD_DAYS[period]) period = {7: "7d", 30: "30d", 90: "90d", 365: "365d"}[localStorage.getItem("fb_days")] || "30d";
+  const days = PERIOD_DAYS[period];
   const grp = localStorage.getItem("fb_stats_group") || "";
   const el = $("#v-stats");
-  const urange = localStorage.getItem("fb_util_range") || "24h";
   const [s, ut] = await Promise.all([
-    api(`/api/stats?days=${days}${grp ? "&group=" + grp : ""}`).catch(e => (toast(e.message, "error"), null)),
-    api(`/api/stats/utilization?range=${urange}${grp ? "&group=" + grp : ""}`).catch(() => null)]);
+    api(`/api/stats?days=${days}&period=${period}${grp ? "&group=" + grp : ""}`).catch(e => (toast(e.message, "error"), null)),
+    api(`/api/stats/utilization?range=${period}${grp ? "&group=" + grp : ""}`).catch(() => null)]);
   if (!s) return;
   const tot = s.total, rate = tot.n ? Math.round(100 * (tot.ok || 0) / tot.n) : 0;
-  const max = Math.max(1, ...s.daily.map(d => d.n));
-  el.innerHTML = `<div class="head"><div><h1>${t("Statistiche")}</h1><p class="sub">${t("Ultimi {n} giorni", {n: days})}</p></div>
+  el.innerHTML = `<div class="head"><div><h1>${t("Statistiche")}</h1><p class="sub">${periodLabel(period)}</p></div>
     <div class="row">${GROUPS.length ? `<select id="sgroup"><option value="">${t("Tutte le stampanti")}</option>${GROUPS.map(g => `<option value="${g.id}" ${String(g.id) === grp ? "selected" : ""}>${t("Gruppo {g}", {g: esc(g.name)})}</option>`).join("")}</select>` : ""}
-    <select id="days">${[7, 30, 90, 365].map(d => `<option ${d === days ? "selected" : ""} value="${d}">${t("{n} giorni", {n: d})}</option>`).join("")}</select>
+    <select id="period">${Object.keys(PERIOD_DAYS).map(k => `<option value="${k}" ${k === period ? "selected" : ""}>${periodLabel(k)}</option>`).join("")}</select>
     ${downloadMenu(`days=${days}${grp ? "&group=" + grp : ""}&lang=${LANG}`)}</div></div>
-    ${utilization(ut, grp, urange)}
+    ${utilization(ut, grp)}
     <h2>${t("Riepilogo del periodo")}</h2>
     <div class="kpis"><div class="kpi"><b>${tot.n}</b><span>${t("stampe")}</span></div><div class="kpi"><b>${rate}%</b><span>${t("riuscite")}</span></div>
       <div class="kpi"><b>${Math.round(tot.secs / 3600)} h</b><span>${t("di stampa")}</span></div><div class="kpi"><b>${(tot.grams / 1000).toFixed(2)} kg</b><span>${t("filamento")}</span></div>
       <div class="kpi"><b>${tot.ko || 0}</b><span>${t("fallite")}</span></div></div>
-    <h2>${t("Stampe al giorno")}</h2>
-    <div class="bars">${s.daily.length ? s.daily.map(d => `<div class="${d.ok < d.n ? "ko" : ""}" style="height:${100 * d.n / max}%" title="${esc(t("{day}: {n} stampe, {ok} riuscite, {g} g", {day: d.day, n: d.n, ok: d.ok, g: Math.round(d.grams)}))}"></div>`).join("") : `<span style="color:var(--muted)">${t("Nessun dato nel periodo")}</span>`}</div>
+    <h2>${t("Stampe")}</h2>
+    ${printsChart(s.series)}
     <h2>${t("Filamento consumato")}</h2>
     ${s.filaments && s.filaments.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Marca")}</th><th>${t("Colore")}</th><th>${t("Filamento (g)")}</th><th>${t("Metri")}</th><th>${t("Stampe")}</th></tr></thead><tbody>
     ${s.filaments.map(f => `<tr><td>${esc(f.type)}</td><td>${esc(f.brand || "—")}</td><td><span class="sw" style="--c:${esc(f.color)}"></span>${esc(f.color)}</td><td><b>${f.grams >= 1000 ? (f.grams / 1000).toFixed(2) + " kg" : Math.round(f.grams) + " g"}</b></td><td>${(f.meters || 0).toFixed(1)}</td><td>${f.prints}</td></tr>`).join("")}
@@ -772,9 +806,8 @@ RENDER.stats = async function renderStats(days) {
     <div class="tablewrap"><table><thead><tr><th>${t("Stampante")}</th><th>${t("Stampe")}</th><th>${t("Riuscite")}</th><th>${t("Fallite")}</th><th>${t("Ore")}</th><th>${t("Filamento")}</th></tr></thead><tbody>
     ${s.per_printer.map(p => `<tr><td>${esc(p.name)}</td><td>${p.n}</td><td>${p.ok || 0}</td><td>${p.ko || 0}</td><td>${(p.secs / 3600).toFixed(1)}</td><td>${Math.round(p.grams)} g</td></tr>`).join("") || `<tr><td colspan="6">${t("Nessun dato")}</td></tr>`}
     </tbody></table></div>`;
-  $("#days").onchange = e => { localStorage.setItem("fb_days", e.target.value); RENDER.stats(+e.target.value); };
-  if ($("#urange")) $("#urange").onchange = e => { localStorage.setItem("fb_util_range", e.target.value); RENDER.stats(days); };
-  if ($("#sgroup")) $("#sgroup").onchange = e => { localStorage.setItem("fb_stats_group", e.target.value); RENDER.stats(days); };
+  $("#period").onchange = e => { localStorage.setItem("fb_period", e.target.value); RENDER.stats(); };
+  if ($("#sgroup")) $("#sgroup").onchange = e => { localStorage.setItem("fb_stats_group", e.target.value); RENDER.stats(); };
 };
 
 // ------------------------------------------------------------------ hub

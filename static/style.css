@@ -301,6 +301,12 @@ legend{font-size:13px;font-weight:700;color:var(--muted);padding:0 4px}
 .chlog{background:var(--sunk);border-radius:var(--radius-sm);padding:10px;font-size:12px;max-height:240px;overflow:auto;white-space:pre-wrap;margin:0}
 .chlog:empty{display:none}
 
+.util .b-ok,.legend .b-ok{fill:var(--run);background:var(--run)}
+.util .b-ko,.legend .b-ko{fill:var(--err);background:var(--err)}
+.util .b-run,.legend .b-run{fill:var(--done);background:var(--done)}
+.legend{display:flex;gap:16px;font-size:13px;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+
 @media (max-width:760px){
   .statusbox .cam{flex-basis:104px}
   main{margin-left:0}

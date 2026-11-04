@@ -3,6 +3,19 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.6.1] – 2026-11-04
+
+### Novità
+- Statistiche: un solo selettore del periodo in alto (24 ore, 7, 30, 90 o 365 giorni) che vale per tutta la pagina:
+  utilizzo, grafico delle stampe, riepilogo ed esportazioni.
+- Grafico delle stampe con barre sottili e asse del tempo: ore per le ultime 24 ore, giorni fino a 90 giorni,
+  settimane per l'anno. Ogni barra è divisa in riuscite (verde acqua), non riuscite (rosso) e in corso (blu),
+  con il dettaglio passando sopra la barra.
+
+### Correzioni
+- Totali, grafico ed esportazioni contano esattamente le stesse stampe: il periodo parte dall'inizio del primo
+  giorno (o della prima ora) mostrato nel grafico.
+
 ## [0.6.0] – 2026-11-04
 
 ### Novità

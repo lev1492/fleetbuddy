@@ -865,7 +865,15 @@ def _stats_filter(u: User, days: int, group: int | None) -> tuple[str, list]:
     if group:
         members = auth.group_members().get(group, set())
         sns = members if sns is None else sns & members
-    where, args = "started_at>=?", [time.time() - days * 86400]
+    # stesso inizio delle barre del grafico (giorni di calendario o ore intere): totali, grafico ed
+    # esportazioni contano esattamente le stesse stampe
+    period = {1: "24h", 7: "7d", 30: "30d", 90: "90d", 365: "365d"}.get(days)
+    if period:
+        span, _s, step = PERIODS[period]
+        since = _bucket_edges(span, step)[0]
+    else:
+        since = time.time() - days * 86400
+    where, args = "started_at>=?", [since]
     if sns is not None:
         if not sns:
             sns = {"__nessuna__"}
@@ -911,7 +919,24 @@ def _stats_data(u: User, days: int, group: int | None) -> dict:
     return {"days": days, "total": tot, "per_printer": per, "daily": daily, "filaments": filament_totals(where, args)}
 
 
-UTIL_RANGES = {"24h": (24 * 3600, 3600), "7d": (7 * 86400, 4 * 3600), "30d": (30 * 86400, 86400)}
+# periodo → (durata, passo del grafico di utilizzo, passo del grafico delle stampe)
+PERIODS = {"24h": (86400, 3600, 3600), "7d": (7 * 86400, 4 * 3600, 86400), "30d": (30 * 86400, 86400, 86400),
+           "90d": (90 * 86400, 86400, 86400), "365d": (365 * 86400, 7 * 86400, 7 * 86400)}
+UTIL_RANGES = {k: (v[0], v[1]) for k, v in PERIODS.items()}
+PERIOD_DAYS_OF = {"24h": 1, "7d": 7, "30d": 30, "90d": 90, "365d": 365}
+
+
+def _bucket_edges(span: int, step: int) -> tuple[float, int]:
+    """Inizio e numero di intervalli che coprono il periodo fino ad adesso: ore intere, oppure giorni
+    (e settimane) che finiscono alla mezzanotte locale di oggi."""
+    now = time.time()
+    if step < 86400:
+        end = (int(now // step) + 1) * step
+    else:
+        lt = time.localtime(now)
+        end = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + 1, 0, 0, 0, 0, 0, -1))
+    count = max(1, int(span // step))
+    return end - count * step, count
 
 
 @app.get("/api/stats/utilization")
@@ -925,12 +950,9 @@ async def stats_utilization(request: Request, period: str = Query("24h", alias="
         members = auth.group_members().get(group, set())
         sns = {k: v for k, v in sns.items() if k in members}
     now = time.time()
-    end = (int(now // step) + 1) * step if step < 86400 else now
-    if step >= 86400:   # giorni interi nel fuso locale
-        lt = time.localtime(now)
-        end = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + 1, 0, 0, 0, 0, 0, -1))
-    start = end - span
-    buckets = [{"t": start + i * step, "busy": 0.0} for i in range(int(span // step))]
+    start, count = _bucket_edges(span, step)
+    end = start + count * step
+    buckets = [{"t": start + i * step, "busy": 0.0} for i in range(count)]
     per = {sn: 0.0 for sn in sns}
     if sns:
         rows = S().db.q(f"""SELECT printer_sn, started_at, COALESCE(ended_at, ?) AS ended_at FROM jobs
@@ -959,8 +981,21 @@ async def stats_utilization(request: Request, period: str = Query("24h", alias="
 
 
 @app.get("/api/stats")
-async def stats(request: Request, days: int = 30, group: int | None = None):
-    return _stats_data(U(request), days, group)
+async def stats(request: Request, days: int = 30, group: int | None = None, period: str | None = None):
+    u = U(request)
+    data = _stats_data(u, days, group)
+    if period in PERIODS:
+        span, _, step = PERIODS[period]
+        start, count = _bucket_edges(span, step)
+        series = [{"t": int(start + i * step), "ok": 0, "ko": 0, "run": 0} for i in range(count)]
+        where, args = _stats_filter(u, PERIOD_DAYS_OF[period], group)
+        for j in S().db.q(f"SELECT started_at, status FROM jobs WHERE {where} AND started_at>=?", (*args, start)):
+            i = int((j["started_at"] - start) // step)
+            if 0 <= i < count:
+                key = "ok" if j["status"] == "finished" else "run" if j["status"] == "running" else "ko"
+                series[i][key] += 1
+        data["series"] = {"step": step, "buckets": series}
+    return data
 
 
 def _stats_jobs(u: User, days: int, group: int | None) -> list[dict]:
