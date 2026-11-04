@@ -3,6 +3,13 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.5.1] – 2026-11-04
+
+### Correzioni
+- "Stampa ora" è disponibile solo se la stampante scelta è pronta (online e inattiva). Se è in stampa, in pausa,
+  con il piatto da liberare, offline o sta già ricevendo una stampa, il dialogo lo spiega e propone solo
+  "Aggiungi in coda" per quella stampante. Il controllo è fatto anche dal server.
+
 ## [0.5.0] – 2026-11-04
 
 ### Novità

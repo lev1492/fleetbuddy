@@ -560,6 +560,7 @@ async function printDialog(f, presetPrinter) {
       </select></label>
     </div><div class="muted small" id="plateinfo"></div></div></div>
     <div id="mapping"></div>
+    <div class="warn" id="busynote"></div>
     <div class="row">
       <label class="inline"><input type="checkbox" name="bed_leveling" checked> ${t("Livellamento piatto")}</label>
       <label class="inline"><input type="checkbox" name="flow_calibration" checked> ${t("Calibrazione flusso")}</label>
@@ -575,7 +576,14 @@ async function printDialog(f, presetPrinter) {
   const target = () => { const v = fm.dest.value; return {sn: v.startsWith("p:") ? v.slice(2) : null, gid: v.startsWith("g:") ? +v.slice(2) : null}; };
   async function remap() {
     const {sn, gid} = target(), pl = plateOf();
-    $("#printnow").disabled = !sn;
+    const pr0 = S.printers.find(x => x.sn === sn);
+    const ready = !!pr0 && pr0.online && pr0.mqtt === 2 && pr0.state === "IDLE" && !pr0.pending;
+    $("#printnow").disabled = !sn || !ready;
+    $("#toqueue").classList.toggle("primary", !!sn && !ready); $("#printnow").classList.toggle("primary", !sn || ready);
+    $("#busynote").innerHTML = !sn || ready ? "" : !pr0.online ? t("{p} è offline: puoi solo aggiungere la stampa alla sua coda.", {p: esc(pr0.name)})
+      : pr0.state === "FINISH" || pr0.state === "FAILED" ? t("{p} ha il piatto da liberare: la stampa partirà dalla coda dopo la conferma.", {p: esc(pr0.name)})
+      : pr0.pending ? t("{p} sta già ricevendo una stampa: puoi solo aggiungerla alla sua coda.", {p: esc(pr0.name)})
+      : t("{p} è occupata ({s}): puoi solo aggiungere la stampa alla sua coda.", {p: esc(pr0.name), s: stateName(pr0.state)});
     if (!sn) { slots = null; $("#mapping").innerHTML = `<p class="sub" style="margin:0">${t("Filamenti richiesti: {list}.", {list: pl.filaments.map(x => esc(x.type)).join(", ")})} ${dots(pl.filaments)} ${gid ? t("La coda sceglierà la prima stampante libera del gruppo che li ha caricati.") : t("La coda sceglierà la prima stampante libera che li ha caricati.")}</p>`; return; }
     const r = await act(() => api(`/api/files/${f.id}/automap`, {method: "POST", body: {printer_sn: sn, plate: pl.index}}));
     if (!r) return;

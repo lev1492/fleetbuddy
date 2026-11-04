@@ -20,7 +20,7 @@ from .auth import ROLES, Auth, User, password_problem
 from .config import BASE_DIR, load_config
 from .i18n import LANGS, _, current_lang, from_accept_language, normalize
 from .hub_client import HubError
-from .printers import FILAMENT_PRESETS, auto_map, firmware_below_min
+from .printers import FILAMENT_PRESETS, auto_map, firmware_below_min, is_ready
 from .service import Service, qmsg
 from .threemf import md5_file, parse_3mf, thumbnail
 
@@ -706,7 +706,9 @@ async def print_now(request: Request, body: dict):
     u = U(request)
     need_operator(u)
     file_for(u, int(body["file_id"]))
-    printer_for(u, body["printer_sn"])
+    p = printer_for(u, body["printer_sn"])
+    if not is_ready(p):
+        raise HTTPException(409, _("{p} non è pronta per una nuova stampa: aggiungila alla sua coda", p=p["name"]))
     return await S().start_print(int(body["file_id"]), int(body.get("plate", 1)), body["printer_sn"],
                                  body.get("slots"), body.get("options") or {}, user_id=u.id)
 
