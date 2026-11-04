@@ -130,7 +130,7 @@ def device(sn, p):
             "task_id": str(p.get("task_id", 0)), "subtask_id": str(p.get("task_id", 0)),
             "nozzle_temper": 220.0 if p["state"] == "RUNNING" else 28.5, "nozzle_target_temper": 220 if p["state"] == "RUNNING" else 0,
             "bed_temper": 60.0 if p["state"] == "RUNNING" else 25.0, "bed_target_temper": 60 if p["state"] == "RUNNING" else 0,
-            "spd_lvl": 2, "wifi_signal": "-55dBm", "print_error": 0, "ams_status": 0, "nozzle_diameter": "0.4",
+            "spd_lvl": 2, "wifi_signal": "-55dBm", "cooling_fan_speed": "15" if p["state"] == "RUNNING" else "0", "big_fan1_speed": "10", "big_fan2_speed": "0", "print_error": 0, "ams_status": 0, "nozzle_diameter": "0.4",
             "hms": [{"attr": 50336256, "code": 131073}] if p["state"] == "FINISH" and p["model"] == "P1S" else [],
             # H2D: AMS A collegato all'ugello sinistro (info 0x0101), AMS HT collegato al destro (info 0x0004)
             "ams": {"ams_exist_bits": "1", "ams": [{"id": "0", "humidity": "3", "humidity_raw": "28", "info": "0101", "tray": p["ams"]},

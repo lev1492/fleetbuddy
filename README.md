@@ -25,7 +25,7 @@ ma passando **esclusivamente dal Bambu Fleet Hub** (HTTP API v1.0.0) invece che 
 | Storico | registra **tutte** le stampe viste dal Hub (anche quelle lanciate da Bambu Studio), con foto finale |
 | Consumo filamento | per ogni stampa, grammi e metri per tipo, marca e colore: dal file del 3MF quando è in archivio (anche se la stampa è partita da Bambu Studio), altrimenti stimati dal calo del residuo delle bobine AMS (segnati con ≈) |
 | Residuo bobine | percentuale e grammi rimasti, per le bobine di cui la stampante li comunica (tipicamente Bambu con RFID) |
-| Ugelli, piano e camera | sotto-schede nella scheda della stampante: temperatura, diametro, tipo di hotend e materiale per ogni ugello, con gli AMS e le bobine esterne collegati |
+| Scheda stampante | tutto in vista: stato con miniatura della camera, prossima stampa in coda, temperature di ugelli, piano e camera, tipo di hotend (diametro, flusso, materiale), ventole, comandi e filamenti per AMS con lato L/R e residuo |
 | Statistiche | stampe, tasso di successo, ore, filamento per tipo e colore, per giorno e per stampante; esportazione in JSON, CSV ed Excel |
 | Errori HMS | decodifica `attr/code` e descrizione tramite `/v1/hub/hms` e `/v1/hub/device_error`, con cache locale |
 | Notifiche | ntfy, Telegram (con foto), webhook generico |

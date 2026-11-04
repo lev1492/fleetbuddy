@@ -2,6 +2,8 @@
 e calcola la mappatura automatica filamento -> slot (sezione 5.3 del PDF)."""
 from __future__ import annotations
 
+import re
+
 from .i18n import _
 
 ACTIVE_STATES = {"PREPARE", "RUNNING", "PAUSE", "PAUSED", "SLICING"}
@@ -161,10 +163,11 @@ def nozzle_kind(code: str | None) -> dict:
     """Decodifica device.nozzle.info.type (API par. 4.1.2), formato H[Byte1][Byte2-3]:
     "HS00" = hotend, flusso standard, acciaio inox; "HH01" = alto flusso, acciaio temprato; ecc.
     Accetta anche i valori testuali delle stampanti a ugello singolo ("hardened_steel")."""
-    code = (code or "").strip()
+    code = str(code or "").strip()
     up = code.upper()
-    if len(up) == 4 and up[0] == "H":
-        return {"code": code, "flow": NOZZLE_FLOW.get(up[1]), "material": NOZZLE_MATERIAL.get(up[2:4])}
+    m = re.match(r"^H([A-Z])(\d{2})", up)      # tollera suffissi (es. "HH01-0.4") e minuscole
+    if m:
+        return {"code": code, "flow": NOZZLE_FLOW.get(m.group(1)), "material": NOZZLE_MATERIAL.get(m.group(2))}
     return {"code": code, "flow": None, "material": LEGACY_MATERIAL.get(code.lower())}
 
 
@@ -191,17 +194,20 @@ def nozzles(rs: dict, model: str, ex: list[dict]) -> list[dict]:
     temps = {e["id"]: e for e in ex}
     dual = model in DUAL_NOZZLE or len(ex) > 1 or len(dev_noz) > 1
     out = []
+    # valori generali di report_status: usati quando il singolo ugello non comunica tipo o diametro
+    gen_type, gen_diam = rs.get("nozzle_type"), _num(rs.get("nozzle_diameter")) or None
     if dev_noz:
         for n in dev_noz:
             nid = int(_num(n.get("id")))
             t = temps.get(nid, {})
+            code = n.get("type") or n.get("nozzle_type") or gen_type
             out.append({"id": nid, "side": ("right" if nid == 0 else "left") if dual else "main",
                         "temp": t.get("temp"), "target": t.get("target"),
-                        "diameter": _num(n.get("diameter")) or None, **nozzle_kind(n.get("type"))})
+                        "diameter": _num(n.get("diameter")) or gen_diam, **nozzle_kind(code)})
     elif ex:
         for e in ex:
             out.append({"id": e["id"], "side": ("right" if e["id"] == 0 else "left") if dual else "main",
-                        "temp": e["temp"], "target": e["target"], "diameter": None, **nozzle_kind(None)})
+                        "temp": e["temp"], "target": e["target"], "diameter": gen_diam, **nozzle_kind(gen_type)})
     else:   # stampanti a ugello singolo (P1, A1, X1): valori classici di report_status
         out.append({"id": 0, "side": "main", "temp": round(_num(rs.get("nozzle_temper")), 1),
                     "target": round(_num(rs.get("nozzle_target_temper")), 1),
@@ -234,6 +240,14 @@ def external_nozzle(ams_id: int, noz: list[dict]) -> int | None:
     if len(noz) == 1:
         return noz[0]["id"]
     return 0 if ams_id == 255 else 1 if ams_id == 254 else None
+
+
+def fan_pct(v) -> int | None:
+    """Velocità ventola: le stampanti Bambu usano una scala 0–15; valori maggiori sono già percentuali."""
+    if v in (None, ""):
+        return None
+    n = _num(v)
+    return int(min(100, round(n / 15 * 100 / 10) * 10 if n <= 15 else n))
 
 
 def extruders(rs: dict) -> list[dict]:
@@ -288,6 +302,8 @@ def normalize(d: dict) -> dict:
         "trays": tr,
         "nozzles": noz,
         "ams_units": ams_units(rs, model, noz),
+        "fans": {"part": fan_pct(rs.get("cooling_fan_speed")), "aux": fan_pct(rs.get("big_fan1_speed")),
+                 "chamber": fan_pct(rs.get("big_fan2_speed"))},
         "hms": [hms_code(h) for h in rs.get("hms") or []],
         "print_error": print_error_code(rs.get("print_error")),
         "firmware": up.get("current_ver", ""),

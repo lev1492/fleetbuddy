@@ -213,88 +213,114 @@ function snapAge(p) {
   return t("Foto delle {time}", {time: d.toLocaleString(LOCALES[LANG], today ? {timeStyle: "short"} : {dateStyle: "short", timeStyle: "short"})});
 }
 function activeColor(p) { const l = p.trays.filter(x => x.loaded); return l.length === 1 ? l[0].color : ""; }
-function cardTop(p) {
-  return `<div><div class="pc-name">${esc(p.name)}</div>
-    <div class="pc-model">${esc(p.model)} · ${esc(p.sn)}${p.firmware ? " · fw " + esc(p.firmware) : ""}</div></div>
-    <span class="pill ${p.state}">${p.online ? stateName(p.state) : t("Offline")}</span>`;
-}
 const FLOW = {standard: "Flusso standard", high: "Alto flusso", tpu: "TPU alto flusso"};
 const MATERIAL = {stainless: "Acciaio inox", hardened: "Acciaio temprato", tungsten: "Carburo di tungsteno"};
-const TAB = {};   // sotto-scheda scelta per ogni stampante (resta selezionata tra un aggiornamento e l'altro)
-const deg = (v, target) => v == null ? "—" : `${Math.round(v)}°${target ? ` <span class="muted">/ ${Math.round(target)}°</span>` : ""}`;
-const nozzleLabel = n => n.side === "left" ? t("Ugello sx") : n.side === "right" ? t("Ugello dx") : t("Ugello");
+const deg = (v, target) => v == null ? "—" : `${Math.round(v)}°${target ? `<small>/${Math.round(target)}°</small>` : ""}`;
+const sideLetter = side => side === "left" ? "L" : side === "right" ? "R" : "";
 function nozzleType(n) {
-  const parts = [n.diameter ? `${n.diameter} mm` : "", n.flow ? t(FLOW[n.flow]) : "", n.material ? t(MATERIAL[n.material]) : ""].filter(Boolean);
-  return parts.length ? parts.join(" · ") : (n.code ? esc(n.code) : `<span class="muted">${t("non comunicato")}</span>`);
+  const parts = [n.flow ? t(FLOW[n.flow]) : "", n.material ? t(MATERIAL[n.material]) : ""].filter(Boolean);
+  if (parts.length) return parts.join(" · ") + (n.code && /^H/i.test(n.code) ? ` <span class="muted">(${esc(n.code)})</span>` : "");
+  return n.code ? esc(n.code) : `<span class="muted">${t("non comunicato")}</span>`;
 }
-function spoolBtn(x) {
-  return `<button class="sp ${x.loaded ? "" : "empty"} ${x.rfid ? "rfid" : ""}" data-ams="${x.ams_id}" data-slot="${x.slot_id}"
-    title="${esc(trayLabel(x.label))} ${esc(x.type)} ${esc(x.sub_brand)}${x.rfid ? " (RFID)" : ""}${x.remain != null ? " · " + esc(t("residuo {p}%", {p: x.remain})) + (x.remain_g ? ` (~${x.remain_g} g)` : "") : ""}">
-    <span class="dot" style="--c:${x.color || "transparent"}"></span>${esc(trayLabel(x.label))}${x.remain != null ? `<span class="pct">${x.remain}%</span>` : ""}</button>`;
+function cardTop(p) {
+  const n0 = p.nozzles[0] || {};
+  const diam = p.nozzles.length > 1 ? p.nozzles.map(n => n.diameter ? `${sideLetter(n.side)} ${n.diameter}` : "").filter(Boolean).join(" · ")
+    : (n0.diameter ? `${n0.diameter} mm` : "");
+  const alerts = (p.print_error ? 1 : 0) + p.hms.length;
+  const badges = [
+    `<span class="bdg ${p.online ? "ok" : "off"}">${p.online ? t("Connessa") : t("Offline")}</span>`,
+    p.wifi ? `<span class="bdg">${esc(p.wifi)}</span>` : "",
+    `<span class="bdg ${alerts ? "err" : "ok"}">${alerts ? t("{n} avvisi", {n: alerts}) : t("Nessun errore")}</span>`,
+    p.firmware ? `<span class="bdg ${p.fw_min ? "warn" : ""}" title="${p.fw_min ? esc(t("Firmware {v} inferiore al minimo supportato dal Hub ({min}).", {v: p.firmware, min: p.fw_min})) : ""}">fw ${esc(p.firmware)}</span>` : "",
+  ].join("");
+  return `<div class="pc-title"><div class="pc-name">${esc(p.name)}</div>
+      <div class="pc-model">${esc(p.model)}${diam ? " · " + esc(diam) : ""} · ${esc(p.sn)}</div></div>
+    <div class="bdgs">${badges}</div>`;
 }
-function unitBlock(p, u) {
-  const spools = p.trays.filter(x => x.kind === "ams" && x.ams_id === u.ams_id);
-  return `<div class="unit"><div class="unit-h"><b>${esc(u.kind)} ${esc(u.letter)}</b>${u.humidity != null ? `<span class="muted">${t("umidità {h}%", {h: u.humidity})}</span>` : ""}</div>
-    <div class="spools">${spools.map(spoolBtn).join("")}</div></div>`;
+function statusInfo(p) {
+  const done = p.state === "FINISH" || p.state === "FAILED";
+  const chip = done ? `<span class="chipst warn">${t("Piatto da liberare")}</span>`
+    : p.state === "IDLE" && p.online ? `<span class="chipst ok">${t("Pronta")}</span>` : "";
+  const fc = activeColor(p);
+  const showJob = p.active || done;
+  const next = p.next_job ? `<div class="nextq"><span class="muted">${t("Prossima in coda")}</span>
+      <b title="${esc(p.next_job.filename)}">${esc(p.next_job.filename || "—")}</b>${p.next_job.more ? `<span class="bdg">+${p.next_job.more}</span>` : ""}</div>` : "";
+  return `<div class="st-line"><b>${p.online ? stateName(p.state) : t("Offline")}</b>${chip}</div>
+    <div class="task" title="${esc(p.task_name)}">${showJob ? esc(p.task_name || t("Stampa")) : `<span class="muted">${t("Nessun lavoro in corso")}</span>`}</div>
+    <div class="progrow"><div class="strand" style="${fc ? "--fc:" + fc : ""}"><i style="width:${showJob ? p.progress : 0}%"></i></div><b>${showJob ? p.progress + "%" : "—"}</b></div>
+    <div class="muted small">${p.active ? t("mancano {d}", {d: fmtDur(p.remaining_min * 60)}) + " · " + t("strato {a}/{b}", {a: p.layer, b: p.total_layers})
+      : p.online ? (done ? t("Conferma che il piatto è libero per la prossima stampa") : t("Pronta per una nuova stampa")) : t("Non raggiungibile dal Hub")}</div>
+    <div class="muted small camage">${snapAge(p)}</div>${next}`;
 }
-function panel(p) {
-  const tabs = p.nozzles.map(n => ({key: "n" + n.id, label: nozzleLabel(n), temp: n.temp, target: n.target, n}));
-  tabs.push({key: "bed", label: t("Piatto|letto"), temp: p.bed, target: p.bed_target});
-  if (p.chamber != null) tabs.push({key: "chamber", label: t("Camera"), temp: p.chamber, target: p.chamber_target});
-  const unlinked = p.nozzles.length > 1 ? p.ams_units.filter(u => u.nozzle == null) : [];
-  if (unlinked.length) tabs.push({key: "ams", label: "AMS"});
-  const sel = tabs.find(x => x.key === TAB[p.sn]) || tabs[0];
-  const bar = `<div class="ptabs" role="tablist">${tabs.map(x => `<button type="button" role="tab" data-tab="${x.key}" aria-selected="${x === sel}" class="${x === sel ? "on" : ""}">
-    <span>${x.label}</span>${x.temp != null ? `<b>${Math.round(x.temp)}°</b>` : ""}</button>`).join("")}</div>`;
-  let body;
-  if (sel.n) {
-    const n = sel.n, single = p.nozzles.length === 1;
-    const units = p.ams_units.filter(u => single || u.nozzle === n.id);
-    const ext = p.trays.filter(x => x.kind === "external" && (single || x.nozzle === n.id));
-    body = `<dl class="pdl"><dt>${t("Temperatura")}</dt><dd class="big">${deg(n.temp, n.target)}</dd>
-      <dt>${t("Tipo")}</dt><dd>${nozzleType(n)}</dd></dl>
-      ${units.map(u => unitBlock(p, u)).join("")}
-      ${ext.length ? `<div class="unit"><div class="unit-h"><b>${t("Bobina esterna")}</b></div><div class="spools">${ext.map(spoolBtn).join("")}</div></div>` : ""}
-      ${!units.length && !ext.length ? `<p class="muted small">${t("Nessun AMS o bobina collegati")}</p>` : ""}`;
-  } else if (sel.key === "ams") {
-    body = `<p class="muted small">${t("La stampante non comunica a quale ugello sono collegati questi AMS.")}</p>${unlinked.map(u => unitBlock(p, u)).join("")}`;
-  } else {
-    body = `<dl class="pdl"><dt>${t("Temperatura")}</dt><dd class="big">${deg(sel.temp, sel.target)}</dd></dl>`;
-  }
-  return `<div class="pbox">${bar}<div class="ppanel" role="tabpanel">${body}</div></div>`;
+function slotBtn(x, num) {
+  const pct = x.remain != null && x.remain >= 0 ? x.remain : null;
+  return `<button class="sp slot ${x.loaded ? "" : "empty"}" data-ams="${x.ams_id}" data-slot="${x.slot_id}"
+    title="${esc(trayLabel(x.label))}${x.loaded ? " · " + esc([x.type, x.sub_brand].filter(Boolean).join(" ")) : ""}${x.rfid ? " (RFID)" : ""}${pct != null ? " · " + esc(t("residuo {p}%", {p: pct})) + (x.remain_g ? ` (~${x.remain_g} g)` : "") : ""}">
+    <span class="num" style="--c:${x.loaded ? x.color || "#888" : "transparent"}">${num}</span>
+    <span class="ty">${x.loaded ? esc(x.type) : t("Vuoto")}</span>
+    <span class="bar"><i style="width:${pct ?? 0}%;${pct != null && pct < 15 ? "background:var(--pause)" : ""}"></i></span></button>`;
+}
+function filamentCards(p) {
+  const dual = p.nozzles.length > 1;
+  const sideOf = id => { const n = p.nozzles.find(x => x.id === id); return n ? sideLetter(n.side) : ""; };
+  const cards = p.ams_units.map(u => {
+    const spools = p.trays.filter(x => x.kind === "ams" && x.ams_id === u.ams_id);
+    const side = dual && u.nozzle != null ? sideOf(u.nozzle) : "";
+    return `<div class="fcard"><div class="fcard-h"><b>${esc(u.kind)} ${esc(u.letter)}</b>${side ? `<span class="side">${side}</span>` : ""}
+        <span class="fcard-m">${u.humidity != null ? `<span>💧 ${u.humidity}%</span>` : ""}${u.temp ? `<span>🌡 ${u.temp}°C</span>` : ""}</span></div>
+      <div class="slots">${spools.map((x, i) => slotBtn(x, i + 1)).join("")}</div></div>`;
+  });
+  const ext = p.trays.filter(x => x.kind === "external").sort((a, b) => (b.nozzle ?? 0) - (a.nozzle ?? 0));   // sinistra (1) prima
+  if (ext.length) cards.push(`<div class="fcard"><div class="fcard-h"><b>${t("Bobina esterna")}</b></div>
+    <div class="slots">${ext.map(x => slotBtn(x, dual ? sideLetter(x.nozzle === 1 ? "left" : "right") : "E")).join("")}</div></div>`);
+  return cards.length ? `<div class="fcards">${cards.join("")}</div>` : `<p class="muted small">${t("Nessun AMS o bobina collegati")}</p>`;
 }
 function cardBody(p) {
-  const alerts = [...(p.print_error ? [p.print_error] : []), ...p.hms]
-    .map(c => `<div class="alert">${c} ${esc(hmsDesc[p.model + c] || "")}</div>`).join("");
+  const done = p.state === "FINISH" || p.state === "FAILED";
+  const dual = p.nozzles.length > 1;
+  const tiles = [];
+  if (dual) {
+    const L = p.nozzles.find(n => n.side === "left") || p.nozzles[0], R = p.nozzles.find(n => n.side === "right") || p.nozzles[1];
+    tiles.push(`<div class="tile"><span>${t("Ugelli")} L / R</span><b>${deg(L.temp, L.target)} / ${deg(R.temp, R.target)}</b></div>`);
+  } else {
+    const n = p.nozzles[0] || {temp: p.nozzle, target: p.nozzle_target};
+    tiles.push(`<div class="tile"><span>${t("Ugello")}</span><b>${deg(n.temp, n.target)}</b></div>`);
+  }
+  tiles.push(`<div class="tile"><span>${t("Piatto|letto")}</span><b>${deg(p.bed, p.bed_target)}</b></div>`);
+  if (p.chamber != null) tiles.push(`<div class="tile"><span>${t("Camera")}</span><b>${deg(p.chamber, p.chamber_target)}</b></div>`);
+  tiles.push(`<div class="tile wide"><span>${t("Hotend")}</span>${p.nozzles.map(n => `<div class="hot">${dual ? `<b class="side">${sideLetter(n.side)}</b>` : ""}<b>${n.diameter ? n.diameter + " mm" : "—"}</b> <small>${nozzleType(n)}</small></div>`).join("")}</div>`);
+  const f = p.fans || {};
+  const fans = [["part", t("Ventola pezzo")], ["aux", t("Ventola ausiliaria")], ["chamber", t("Ventola camera")]].filter(([k]) => f[k] != null);
   const btns = [];
   if (canOperate()) {
     if (p.state === "RUNNING") btns.push(`<button data-opt="pause">${t("Pausa")}</button>`);
     if (p.state === "PAUSE" || p.state === "PAUSED") btns.push(`<button data-opt="resume" class="primary">${t("Riprendi")}</button>`);
     if (["RUNNING", "PAUSE", "PAUSED", "PREPARE"].includes(p.state)) btns.push(`<button data-opt="stop" class="danger">${t("Interrompi")}</button>`);
-    if (p.state === "FINISH" || p.state === "FAILED") btns.push(`<button data-opt="bed_clean" class="primary">${t("Piatto liberato")}</button>`);
   }
-  const fc = activeColor(p);
+  const alerts = [...(p.print_error ? [p.print_error] : []), ...p.hms]
+    .map(c => `<div class="alert">${c} ${esc(hmsDesc[p.model + c] || "")}</div>`).join("");
   const groups = GROUPS.filter(g => g.printers.includes(p.sn));
-  return `${p.active || p.state === "FINISH" || p.state === "FAILED" ? `
-      <div class="task" title="${esc(p.task_name)}">${esc(p.task_name || t("Stampa"))}</div>
-      <div class="strand" style="${fc ? "--fc:" + fc : ""}"><i style="width:${p.progress}%"></i></div>
-      <div class="prog"><span><b>${p.progress}%</b> · ${t("strato {a}/{b}", {a: p.layer, b: p.total_layers})}</span>
-        <span>${p.active ? t("mancano {d}", {d: fmtDur(p.remaining_min * 60)}) : ""}</span></div>`
-      : `<div class="task" style="color:var(--muted)">${p.online ? t("Pronta per una nuova stampa") : t("Non raggiungibile dal Hub")}</div>`}
-    <div class="temps"><span>${t("Velocità")} <b>${esc(t(SPEEDS[p.speed_lvl] || "—"))}</b></span></div>
-    ${panel(p)}
+  return `<div class="tiles">${tiles.join("")}</div>
+    ${fans.length ? `<div class="fans">${fans.map(([k, l]) => `<span>${l} <b>${f[k]}%</b></span>`).join("")}</div>` : ""}
+    ${done && canOperate() ? `<button class="platebtn" data-opt="bed_clean">${t("Segna il piatto come liberato")}</button>` : ""}
+    <div class="sec">${t("Comandi")}</div>
+    <div class="ctrls"><span class="bdg">${t("Velocità")} · ${esc(t(SPEEDS[p.speed_lvl] || "—"))}</span><span class="grow"></span>${btns.join("") || `<span class="muted small">${t("Nessun comando disponibile in questo stato")}</span>`}</div>
+    <div class="sec">${t("Filamenti")}</div>
+    ${filamentCards(p)}
     ${alerts ? `<div class="alerts">${alerts}</div>` : ""}
-    ${p.fw_min ? `<div class="warn">${t("Firmware {v} inferiore al minimo supportato dal Hub ({min}).", {v: esc(p.firmware), min: p.fw_min})}</div>` : ""}
     ${p.last_cmd_error ? `<div class="warn">${t("Ultimo invio fallito: {e}", {e: esc(p.last_cmd_error)})}</div>` : ""}
-    ${groups.length ? `<div>${groups.map(g => `<span class="tag" style="--c:${esc(g.color)}"><i></i>${esc(g.name)}</span>`).join(" ")}</div>` : ""}
-    <div class="actions">${btns.join("")}</div>`;
+    ${groups.length ? `<div>${groups.map(g => `<span class="tag" style="--c:${esc(g.color)}"><i></i>${esc(g.name)}</span>`).join(" ")}</div>` : ""}`;
 }
 function createCard(p) {
   const a = document.createElement("article");
   a.className = "pc"; a.dataset.sn = p.sn;
   a.innerHTML = `<div class="pc-top"></div>
-    <div class="cam"><img alt="${esc(t("Camera di {name}", {name: p.name}))}" hidden><span class="camph">${t("Caricamento immagine…")}</span></div>
-    <div class="camage"></div><div class="pc-body"></div>`;
+    <div class="sec">${t("Stato")}</div>
+    <div class="statusbox">
+      <button type="button" class="cam" data-camzoom title="${esc(t("Ingrandisci"))}"><img alt="${esc(t("Camera di {name}", {name: p.name}))}" hidden><span class="camph">${t("Caricamento immagine…")}</span></button>
+      <div class="st-info"></div>
+    </div>
+    <div class="pc-body"></div>`;
   if (isAdmin()) {   // menu "altre azioni" in alto a destra della scheda
     a.classList.add("has-menu");
     a.insertAdjacentHTML("afterbegin", `<div class="pc-menu">
@@ -329,8 +355,8 @@ RENDER.printers = function renderPrinters() {
     if (grid.children[i] !== card) grid.insertBefore(card, grid.children[i] || null);
     card.classList.toggle("offline", !p.online);
     setHTML($(".pc-top", card), cardTop(p));
+    setHTML($(".st-info", card), statusInfo(p));
     setHTML($(".pc-body", card), cardBody(p));
-    setHTML($(".camage", card), snapAge(p));
     [...(p.print_error ? [p.print_error] : []), ...p.hms].forEach(c => loadHms(p.model, c));
   });
   setHTML($("#pempty"), list.length ? "" : `<div class="empty">${!S.hub_ok ? t("In attesa del Hub…") : S.printers.length ? t("Nessuna stampante in questo gruppo.") : isAdmin() ? t("Nessuna stampante collegata al Hub. Aggiungile da Amministrazione → Fleet Hub.") : t("Nessuna stampante assegnata al tuo utente. Chiedi all'amministratore.")}</div>`);
@@ -379,8 +405,9 @@ $("#v-printers").addEventListener("click", async e => {
     if (ask[b.dataset.opt] && !confirm(ask[b.dataset.opt])) return;
     b.disabled = true;
     await act(() => api(`/api/printers/${sn}/opt`, {method: "POST", body: {opt: b.dataset.opt}}), t("Comando inviato (lo stato si aggiorna in ~10 s)"));
-  } else if (b.dataset.tab) {
-    TAB[sn] = b.dataset.tab; RENDER.printers();
+  } else if (b.hasAttribute("data-camzoom")) {
+    const img = $(".cam img", card);
+    if (!img.hidden) openDialog(`<img src="${img.src}" alt="" style="width:100%;border-radius:8px"><p class="sub" style="margin:0">${esc(snapAge(p))}</p><div class="dlgfoot"><button value="cancel">${t("Chiudi")}</button></div>`);
   } else if (b.classList.contains("dots")) {
     const open = b.getAttribute("aria-expanded") === "true";
     closeMenus();

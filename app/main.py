@@ -152,7 +152,7 @@ def queue_visible(u: User, row: dict) -> bool:
 
 def state_for(u: User) -> dict:
     st = S().snapshot_state()
-    st["printers"] = [p for p in st["printers"] if u.sees_printer(p["sn"])]
+    st["printers"] = [dict(p) for p in st["printers"] if u.sees_printer(p["sn"])]   # copie: i dati aggiunti sono per utente
     if not u.is_admin:
         rows = S().db.q("SELECT q.printer_sn, q.group_id, f.project_id FROM queue q LEFT JOIN files f "
                         "ON f.id=q.file_id WHERE q.status='queued'")
@@ -162,6 +162,15 @@ def state_for(u: User) -> dict:
     elif not st["hub_ok"] and S().hub_error_obj is not None:
         st["hub_error"] = S().hub_error_obj.localized(current_lang.get())
     st["settings"] = settings()
+    rows = S().db.q("""SELECT q.id, q.printer_sn, q.group_id, q.copies, f.filename, f.project_id
+                       FROM queue q LEFT JOIN files f ON f.id=q.file_id WHERE q.status='queued'
+                       ORDER BY q.position, q.id""")
+    members = auth.group_members()
+    for p in st["printers"]:
+        mine = [r for r in rows if queue_visible(u, r) and (r["printer_sn"] == p["sn"] or
+                (r["group_id"] and p["sn"] in members.get(r["group_id"], set())) or
+                (not r["printer_sn"] and not r["group_id"]))]
+        p["next_job"] = {"filename": mine[0]["filename"], "more": len(mine) - 1} if mine else None
     return st
 
 

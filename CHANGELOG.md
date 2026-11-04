@@ -3,6 +3,19 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.4.0] – 2026-11-04
+
+### Novità
+- Nuova scheda della stampante, tutta visibile senza sotto-schede: intestazione con indicatori (connessione, Wi-Fi,
+  avvisi, firmware), stato con miniatura della camera (clic per ingrandire), lavoro, avanzamento e prossima stampa
+  in coda; riquadri di ugelli, piano, camera e hotend; ventole; comandi; sezione Filamenti con un riquadro per ogni AMS
+  (con L/R per l'ugello collegato, umidità e temperatura) e per le bobine esterne, con numero, colore, tipo e residuo.
+- Pulsante evidente "Segna il piatto come liberato" a fine stampa.
+
+### Correzioni
+- Tipo di hotend: se il singolo ugello non lo comunica si usa il valore generale della stampante (`nozzle_type`),
+  la decodifica accetta anche codici con suffisso o in minuscolo, e il codice originale resta visibile accanto alla descrizione.
+
 ## [0.3.0] – 2026-11-04
 
 ### Novità
