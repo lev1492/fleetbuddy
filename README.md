@@ -136,6 +136,10 @@ installazione di codice e librerie; riavvio; verifica che FleetBuddy risponda co
 Se non risponde, **torna da solo alla versione precedente**. Configurazione, certificati, database e archivio
 non sono nel repository, quindi non vengono mai toccati.
 
+**Dal browser:** in *Amministrazione → Informazioni*, "Cerca aggiornamenti" controlla subito GitHub e mostra le novità;
+"Installa" avvia l'aggiornamento con le stesse garanzie (backup, verifica, ripristino) e la pagina si ricarica da sola
+alla fine. Per abilitarlo basta eseguire una volta `bash deploy/install.sh` sul Pi dopo essere passati alla 0.6.0.
+
 Ogni notte un timer controlla se c'è una nuova versione e la segnala agli amministratori
 (pallino su *Amministrazione* e riquadro *Informazioni*). Per installarla anche in automatico:
 ```toml

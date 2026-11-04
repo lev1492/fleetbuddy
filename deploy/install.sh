@@ -26,10 +26,12 @@ sed -e "s#__DIR__#$DIR#g" -e "s#__USER__#$USER#g" deploy/fleetbuddy.service | su
 sudo rm -f /usr/local/bin/fleetbuddy-update
 printf '#!/bin/sh\nexec /bin/bash "%s/tools/update.sh" "$@"\n' "$DIR" | sudo tee /usr/local/bin/fleetbuddy-update >/dev/null
 sudo chmod 755 /usr/local/bin/fleetbuddy-update
-for unit in fleetbuddy-update.service fleetbuddy-update.timer; do
+for unit in fleetbuddy-update.service fleetbuddy-update.timer fleetbuddy-update-now.service; do
   sed -e "s#__DIR__#$DIR#g" -e "s#__USER__#$USER#g" "deploy/$unit" | sudo tee "/etc/systemd/system/$unit" >/dev/null
 done
-echo "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart fleetbuddy" | sudo tee /etc/sudoers.d/fleetbuddy >/dev/null
+# riavvio del servizio e aggiornamento avviato dal browser (solo questi due comandi, senza password)
+printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl restart fleetbuddy\n%s ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block fleetbuddy-update-now.service\n' \
+  "$USER" "$USER" | sudo tee /etc/sudoers.d/fleetbuddy >/dev/null
 sudo chmod 440 /etc/sudoers.d/fleetbuddy
 sudo visudo -cf /etc/sudoers.d/fleetbuddy >/dev/null || { sudo rm -f /etc/sudoers.d/fleetbuddy; echo "Regola sudo non valida, rimossa"; }
 sudo systemctl daemon-reload

@@ -36,7 +36,7 @@ const langOptions = () => Object.entries(LANGS).map(([k, v]) => `<option value="
 const STATES = {IDLE: "Inattiva", PREPARE: "Preparazione", RUNNING: "In stampa", PAUSE: "In pausa", PAUSED: "In pausa",
   FINISH: "Completata", FAILED: "Fallita", UNKNOWN: "Sconosciuto", SLICING: "Preparazione"};
 const JOBS = {finished: "Completata", failed: "Fallita", cancelled: "Annullata", running: "In corso", unknown: "Interrotta",
-  queued: "In attesa", started: "Inviata", error: "Errore"};
+  queued: "In attesa", sent: "In partenza", error: "Errore"};
 const ROLES = {admin: "Amministratore", operator: "Operatore", viewer: "Osservatore"};
 const SPEEDS = {1: "Silenziosa", 2: "Normale", 3: "Sport", 4: "Ludicrous"};
 const stateName = s => t(STATES[s] || s);
@@ -650,7 +650,7 @@ RENDER.queue = async function renderQueue() {
   const el = $("#v-queue");
   const items = await api("/api/queue").catch(e => (toast(e.message, "error"), []));
   const dest = q => q.printer_sn ? esc(printerName(q.printer_sn)) : q.group_name ? t("gruppo {g}", {g: esc(q.group_name)}) : t("qualsiasi stampante");
-  el.innerHTML = `<div class="head"><div><h1>${t("Coda di stampa")}</h1><p class="sub">${t("Le stampe partono da sole quando una stampante è inattiva. Dopo ogni stampa conferma \"Piatto liberato\" sulla scheda della stampante.")}</p></div>
+  el.innerHTML = `<div class="head"><div><h1>${t("Coda di stampa")}</h1><p class="sub">${t("Le stampe partono da sole quando la stampante è inattiva ed escono dalla coda appena iniziano (restano nello storico). Dopo ogni stampa conferma \"Segna il piatto come liberato\" sulla scheda della stampante.")}</p></div>
     <button id="qpause" class="admin-only ${S.queue_paused ? "primary" : ""}">${S.queue_paused ? t("Riprendi la coda") : t("Metti in pausa la coda")}</button></div>
     <div class="list">${items.length ? items.map(q => `<div class="item" data-id="${q.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${q.file_id}/thumb/${q.plate}">
@@ -910,9 +910,7 @@ RENDER.admin = async function renderAdmin() {
 
     <h2>${t("Informazioni")}</h2>
     <div class="box"><dl><dt>${t("Applicazione")}</dt><dd>${esc(APP.name)} v${esc(APP.version)}</dd>
-      <dt>${t("Aggiornamenti")}</dt><dd>${!UPDATE ? `<span class="muted">${t("Mai controllati: esegui fleetbuddy-update sul Raspberry Pi")}</span>`
-        : UPDATE.available ? `<b>${t("Disponibile la versione {v}", {v: esc(UPDATE.latest)})}</b><br><span class="muted">${t("Per installarla, sul Raspberry Pi esegui: {cmd}", {cmd: "<code>fleetbuddy-update</code>"})}</span>`
-        : t("FleetBuddy è aggiornato")}${UPDATE ? `<br><small class="muted">${t("Ultimo controllo: {d}", {d: fmtDate(UPDATE.checked_at)})}</small>` : ""}</dd>
+      <dt>${t("Aggiornamenti")}</dt><dd id="updbox">${updateBox(UPDATE)}</dd>
       ${APP.repo ? `<dt>${t("Repository")}</dt><dd><a href="${esc(APP.repo)}" target="_blank" rel="noopener">${esc(APP.repo)}</a></dd>` : ""}
       <dt>${t("Utenti")}</dt><dd>${users.length}</dd><dt>${t("Stampanti collegate")}</dt><dd>${S.printers.length}</dd></dl></div>`;
 
@@ -920,6 +918,7 @@ RENDER.admin = async function renderAdmin() {
   $("#gadd").onclick = () => groupDialog();
   const saveSetting = async body => { const r = await act(() => api("/api/settings", {method: "PUT", body}), t("Impostazione salvata")); if (r) { S.settings = r; startCamTimer(); } };
   $("#camref").onchange = e => saveSetting({camera_refresh_s: +e.target.value});
+  wireUpdateBox();
   $("#notlang").onchange = e => saveSetting({notify_lang: e.target.value});
   el.querySelector("table").onclick = async e => {
     const tr = e.target.closest("tr[data-id]"); if (!tr) return; const u = users.find(x => x.id === +tr.dataset.id);
@@ -946,6 +945,66 @@ function generatePassword(len = 14) {
   while (out.length < len) out.push(all[rnd(all.length)]);
   for (let i = out.length - 1; i > 0; i--) { const j = rnd(i + 1); [out[i], out[j]] = [out[j], out[i]]; }
   return out.join("");
+}
+// ---------------------------------------------------------------- aggiornamenti dal browser
+function updateBox(st) {
+  const when = st ? `<br><small class="muted">${t("Ultimo controllo: {d}", {d: fmtDate(st.checked_at)})}</small>` : "";
+  const msg = !st ? `<span class="muted">${t("Non ancora controllati")}</span>`
+    : st.available ? `<b>${t("Disponibile la versione {v}", {v: esc(st.latest)})}</b>`
+    : `${t("FleetBuddy è aggiornato")} <span class="muted">(${t("ultima versione pubblicata: {v}", {v: esc(st.latest || APP.version)})})</span>`;
+  return `${msg}${when}<div class="row" style="margin-top:8px"><button type="button" id="updcheck">${t("Cerca aggiornamenti")}</button>
+    ${st && st.available ? `<button type="button" class="primary" id="updinstall">${t("Installa la versione {v}", {v: esc(st.latest)})}</button>` : ""}</div>`;
+}
+function wireUpdateBox(changelog) {
+  const box = $("#updbox"); if (!box) return;
+  $("#updcheck").onclick = async ev => {
+    ev.target.disabled = true; ev.target.textContent = t("Controllo in corso…");
+    const r = await act(() => api("/api/admin/update/check", {method: "POST"}));
+    if (r) { UPDATE = r.status; showVersion(); box.innerHTML = updateBox(r.status); wireUpdateBox(r.changelog);
+      toast(r.status && r.status.available ? t("Disponibile la versione {v}", {v: r.status.latest}) : t("FleetBuddy è aggiornato"), "ok"); }
+    else { ev.target.disabled = false; ev.target.textContent = t("Cerca aggiornamenti"); }
+  };
+  if ($("#updinstall")) $("#updinstall").onclick = () => installDialog(UPDATE.latest, changelog);
+}
+function installDialog(version, changelog) {
+  openDialog(`<h3>${t("Installa la versione {v}", {v: esc(version)})}</h3>
+    ${changelog ? `<pre class="chlog">${esc(changelog)}</pre>` : ""}
+    <p class="sub" style="margin:0">${t("Prima dell'installazione viene fatto un backup. FleetBuddy si riavvierà per circa un minuto (le stampe in corso continuano); se la nuova versione non parte, si torna da soli a quella attuale.")}</p>
+    <div class="dlgfoot"><button value="cancel">${t("Annulla")}</button><button class="primary" id="doinstall">${t("Installa ora")}</button></div>`);
+  $("#doinstall").onclick = async ev => {
+    ev.preventDefault();
+    if (!await act(() => api("/api/admin/update/install", {method: "POST"}))) return;
+    progressDialog(version);
+  };
+}
+// Segue l'aggiornamento: durante il riavvio il server non risponde per qualche secondo, quindi si riprova
+function progressDialog(version) {
+  openDialog(`<h3>${t("Aggiornamento in corso…")}</h3>
+    <p class="sub" style="margin:0" id="updstate">${t("Backup e download della nuova versione…")}</p>
+    <pre class="chlog" id="updlog"></pre>
+    <div class="dlgfoot"><button value="cancel" id="updclose" disabled>${t("Chiudi")}</button></div>`);
+  const started = Date.now();
+  const timer = setInterval(async () => {
+    let info = null, ver = null;
+    try { info = await api("/api/admin/update"); ver = info.version; } catch { /* riavvio in corso */ }
+    if (info) $("#updlog").textContent = info.log || "";
+    const failed = info && /ripristino|ERRORE/.test(info.log || "") && !info.running;
+    if (ver === version) {
+      clearInterval(timer);
+      $("#updstate").textContent = t("FleetBuddy aggiornato alla versione {v}. La pagina si ricarica…", {v: version});
+      setTimeout(() => location.reload(), 2500);
+    } else if (failed) {
+      clearInterval(timer);
+      $("#updstate").innerHTML = `<span class="warn">${t("Aggiornamento non riuscito: la versione precedente è stata ripristinata. Dettagli qui sotto.")}</span>`;
+      $("#updclose").disabled = false;
+    } else if (!info) {
+      $("#updstate").textContent = t("Riavvio di FleetBuddy…");
+    } else if (Date.now() - started > 6 * 60 * 1000) {
+      clearInterval(timer);
+      $("#updstate").textContent = t("L'aggiornamento sta impiegando più del previsto: controlla sul Raspberry Pi con journalctl -u fleetbuddy-update-now");
+      $("#updclose").disabled = false;
+    }
+  }, 3000);
 }
 function userDialog(u) {
   openDialog(`<h3>${u ? t("Modifica {u}", {u: esc(u.username)}) : t("Nuovo utente")}</h3>

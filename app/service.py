@@ -96,6 +96,7 @@ class Service:
         self.last_poll = 0.0
         self._subscribers: set[asyncio.Queue] = set()
         self._open_jobs = self.db.open_jobs()
+        self.db.x("DELETE FROM queue WHERE status='started'")   # vecchio stato "inviata", sostituito da 'sent'
         self.raw: dict[str, dict] = {}          # ultima risposta grezza del Hub per stampante (diagnostica)
         self._cooldown: dict[str, float] = {}   # sn -> non inviare altro fino a ...
         self.stopped_by_user: set[str] = set()   # interruzioni chieste da qui -> 'annullata', non 'fallita'
@@ -201,6 +202,26 @@ class Service:
                        "error", sn=p["sn"], printer=p["name"])
         data["warned"] = True
         self.db.x("UPDATE pending_prints SET data=? WHERE printer_sn=?", (json.dumps(data), p["sn"]))
+        q = data.get("queue") or {}
+        if q.get("id"):
+            why = qmsg("non partita su {printer}: {e}", printer=p["name"], e=reason) if reason else \
+                qmsg("non partita su {printer} entro 2 minuti", printer=p["name"])
+            if q.get("copy"):   # una delle copie: si restituisce alla voce ancora in coda
+                self.db.x("UPDATE queue SET copies=copies+1, message=? WHERE id=? AND status='queued'", (why, q["id"]))
+            else:
+                self.db.x("UPDATE queue SET status='error', message=? WHERE id=? AND status='sent'", (why, q["id"]))
+
+    def has_pending(self, sn: str) -> bool:
+        """La stampante sta ancora ricevendo una stampa (inviata da meno di 30 minuti, non ancora partita
+        e non già segnalata come fallita): non le si manda altro finché non parte o non si capisce che non partirà."""
+        r = self.db.one("SELECT data, at FROM pending_prints WHERE printer_sn=?", (sn,))
+        return bool(r) and time.time() - r["at"] < 1800 and not json.loads(r["data"]).get("warned")
+
+    def _queue_started(self, pend: dict | None):
+        """La stampa inviata dalla coda è partita: la voce esce dalla coda (resta nello storico)."""
+        q = (pend or {}).get("queue") or {}
+        if q.get("id") and not q.get("copy"):
+            self.db.x("DELETE FROM queue WHERE id=? AND status='sent'", (q["id"],))
 
     def _set_pending(self, sn: str, data: dict):
         self.db.x("INSERT OR REPLACE INTO pending_prints(printer_sn, data, at) VALUES(?,?,?)",
@@ -249,7 +270,9 @@ class Service:
                 await self._close_job(job, p, "unknown")
                 job = None
             if not job:
-                info = self._plan_for_job(self._take_pending(sn), p["task_name"])
+                pend = self._take_pending(sn)
+                self._queue_started(pend)
+                info = self._plan_for_job(pend, p["task_name"])
                 jid = self.db.start_job(
                     printer_sn=sn, printer_name=p["name"], task_id=key,
                     task_name=info.get("task_name") or p["task_name"],
@@ -263,6 +286,7 @@ class Service:
                 if not job.get("file_id"):
                     # il comando di stampa può arrivare al Hub dopo che la stampante ha già iniziato
                     late = self._take_pending(sn)
+                    self._queue_started(late)
                     if late:
                         upd.update(file_id=late.get("file_id"), plate=late.get("plate"),
                                    planned_g=late.get("planned_g", 0), started_by=late.get("user_id"),
@@ -430,7 +454,7 @@ class Service:
         }
 
     async def start_print(self, file_id: int, plate: int, sn: str, slots: list[dict] | None,
-                          options: dict | None = None, user_id: int | None = None) -> dict:
+                          options: dict | None = None, user_id: int | None = None, queue: dict | None = None) -> dict:
         f = self.db.file(file_id)
         if not f:
             raise HubError(key="File non trovato nell'archivio")
@@ -450,7 +474,8 @@ class Service:
         plan = filament_plan(pl, slots, p)
         # registrata prima dell'invio: la stampante può iniziare prima che il Hub risponda
         self._set_pending(sn, {"file_id": file_id, "plate": plate, "task_name": task, "user_id": user_id,
-                               "planned_g": round(sum(x["grams"] for x in plan), 1) or pl["weight_g"], "plan": plan})
+                               "planned_g": round(sum(x["grams"] for x in plan), 1) or pl["weight_g"], "plan": plan,
+                               "queue": queue})
 
         cached = False
         try:
@@ -498,7 +523,8 @@ class Service:
                 targets = sorted(self.printers)
             for sn in targets:
                 p = self.printers.get(sn)
-                if not p or sn in busy or not is_ready(p) or self._cooldown.get(sn, 0) > time.time():
+                if not p or sn in busy or not is_ready(p) or self._cooldown.get(sn, 0) > time.time() \
+                        or self.has_pending(sn):
                     continue
                 slots = json.loads(it["mapping"]) if it["mapping"] else None
                 if slots is None:
@@ -507,15 +533,18 @@ class Service:
                         continue   # questa stampante non ha i filamenti: prova la prossima
                 busy.add(sn)
                 try:
-                    await self.start_print(it["file_id"], it["plate"], sn, slots, json.loads(it["options"] or "{}"),
-                                           user_id=it.get("created_by"))
                     left = (it["copies"] or 1) - 1
+                    await self.start_print(it["file_id"], it["plate"], sn, slots, json.loads(it["options"] or "{}"),
+                                           user_id=it.get("created_by"),
+                                           queue={"id": it["id"], "copy": left > 0})
                     if left > 0:
                         self.db.x("UPDATE queue SET copies=?, message=? WHERE id=?",
                                   (left, qmsg("ultima copia inviata a {printer}", printer=p["name"]), it["id"]))
                     else:
-                        self.db.x("UPDATE queue SET status='started', started_at=?, printer_sn=?, message=? "
-                                  "WHERE id=?", (time.time(), sn, qmsg("inviata a {printer}", printer=p["name"]), it["id"]))
+                        # resta in coda come "in attesa di partire" finché la stampante non inizia davvero
+                        self.db.x("UPDATE queue SET status='sent', started_at=?, printer_sn=?, message=? "
+                                  "WHERE id=?", (time.time(), sn, qmsg("inviata a {printer}, in attesa che parta",
+                                                                       printer=p["name"]), it["id"]))
                     self.toast("Coda: {file} inviata a {printer}", "ok", sn=sn, file=f["filename"], printer=p["name"])
                     if self.cfg.notify.on_queue_start:
                         await self._notify("queue", f"▶️ {p['name']}", self.nt("Avviata dalla coda: {file}", file=f["filename"]),

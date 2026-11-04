@@ -107,6 +107,9 @@ async def login(req: Request):
 
 def advance():
     for p in PRINTERS.values():
+        if p.get("start_at") and time.time() >= p["start_at"]:
+            p.update(state="PREPARE", pct=0, t0=time.time(), task=p.pop("next_task"), task_id=random.randint(1, 10**6))
+            p.pop("start_at")
         if p["state"] in ("RUNNING", "PREPARE"):
             old = p["pct"]
             p["pct"] = min(100, int(100 * (time.time() - p["t0"]) / p["dur"]))
@@ -150,6 +153,14 @@ def device(sn, p):
 
 
 FAIL_NEXT: dict[str, str] = {}
+DELAY_NEXT: dict[str, int] = {}
+
+
+@app.post("/mock/delay/{sn}")
+def mock_delay_next(sn: str, s: int = 60):
+    """Solo per i test: la prossima stampa resta "inattiva" per s secondi (download del file) prima di partire."""
+    DELAY_NEXT[sn] = s
+    return ok()
 
 
 @app.post("/mock/fail/{sn}")
@@ -215,6 +226,12 @@ async def do_print(req: Request):
             continue
         if p["state"] != "IDLE":
             return err(1051, "device busy")
+        if p.get("start_at"):   # sta già scaricando un'altra stampa: il comando viene ignorato, come fa la stampante
+            print("comando ignorato: stampante occupata a scaricare", sn)
+            continue
+        if sn in DELAY_NEXT:
+            p.update(start_at=time.time() + DELAY_NEXT.pop(sn), next_task=cmd["task_name"])
+            continue
         p.update(state="PREPARE", pct=0, t0=time.time(), task=cmd["task_name"], task_id=random.randint(1, 10**6))
     print("print_cmd:", cmd)
     await asyncio.sleep(float(os.environ.get("MOCK_PRINT_DELAY", "0")))

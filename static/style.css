@@ -298,6 +298,9 @@ legend{font-size:13px;font-weight:700;color:var(--muted);padding:0 4px}
 .ubar .track i{display:block;height:100%;background:var(--run)}
 .kpi.big b{color:var(--run)}
 
+.chlog{background:var(--sunk);border-radius:var(--radius-sm);padding:10px;font-size:12px;max-height:240px;overflow:auto;white-space:pre-wrap;margin:0}
+.chlog:empty{display:none}
+
 @media (max-width:760px){
   .statusbox .cam{flex-basis:104px}
   main{margin-left:0}

@@ -707,7 +707,7 @@ async def print_now(request: Request, body: dict):
     need_operator(u)
     file_for(u, int(body["file_id"]))
     p = printer_for(u, body["printer_sn"])
-    if not is_ready(p):
+    if not is_ready(p) or S().has_pending(p["sn"]):
         raise HTTPException(409, _("{p} non è pronta per una nuova stampa: aggiungila alla sua coda", p=p["name"]))
     return await S().start_print(int(body["file_id"]), int(body.get("plate", 1)), body["printer_sn"],
                                  body.get("slots"), body.get("options") or {}, user_id=u.id)
@@ -720,8 +720,8 @@ async def queue_list(request: Request):
     rows = S().db.q("""SELECT q.*, f.filename, f.meta, f.project_id, g.name AS group_name, us.username AS created_by_name
                        FROM queue q LEFT JOIN files f ON f.id=q.file_id
                        LEFT JOIN printer_groups g ON g.id=q.group_id LEFT JOIN users us ON us.id=q.created_by
-                       WHERE q.status IN ('queued','error') OR q.started_at > ?
-                       ORDER BY CASE q.status WHEN 'queued' THEN 0 WHEN 'error' THEN 1 ELSE 2 END,
+                       WHERE q.status IN ('queued','sent','error') AND (? > 0)
+                       ORDER BY CASE q.status WHEN 'sent' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
                                 q.position, q.id""", (time.time() - 86400,))
     out = []
     for r in rows:
@@ -1024,6 +1024,81 @@ def _admin(request: Request):
     need_admin(U(request))
 
 
+# ====================================================================== aggiornamenti (solo admin)
+async def _run(*cmd: str, timeout: float = 90) -> tuple[int, str]:
+    proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(BASE_DIR), stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.STDOUT)
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return 124, "timeout"
+    return proc.returncode, out.decode("utf-8", "replace")
+
+
+async def _update_info() -> dict:
+    """Stato degli aggiornamenti per la pagina Amministrazione."""
+    _, load = await _run("systemctl", "show", "-p", "LoadState", "--value", "fleetbuddy-update-now.service", timeout=10)
+    _, active = await _run("systemctl", "is-active", "fleetbuddy-update-now.service", timeout=10)
+    log_path = cfg.data_path / "update.log"
+    try:
+        log_tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-40:])
+    except OSError:
+        log_tail = ""
+    return {"status": update_status(), "version": __version__, "git": (BASE_DIR / ".git").is_dir(),
+            "web_install": load.strip() == "loaded", "running": active.strip() in ("active", "activating"),
+            "log": log_tail}
+
+
+@app.get("/api/admin/update")
+async def admin_update_info(request: Request):
+    _admin(request)
+    return await _update_info()
+
+
+@app.post("/api/admin/update/check")
+async def admin_update_check(request: Request):
+    """Controlla subito su GitHub (stesso controllo del timer notturno) e restituisce le novità."""
+    _admin(request)
+    if not (BASE_DIR / ".git").is_dir():
+        raise HTTPException(409, _("FleetBuddy non è installato da GitHub: segui \"Passare all'installazione da GitHub\" nel README"))
+    code, out = await _run("/bin/bash", "tools/update.sh", "--check")
+    info = await _update_info()
+    info["output"] = out.strip()
+    if code not in (0, 10):
+        raise HTTPException(502, out.strip().splitlines()[-1] if out.strip() else _("Controllo non riuscito"))
+    st = info["status"] or {}
+    if st.get("available") and st.get("latest"):
+        _, ch = await _run("git", "show", f"v{st['latest']}:CHANGELOG.md", timeout=15)
+        section, inside = [], False
+        for line in ch.splitlines():
+            if line.startswith("## ["):
+                if inside:
+                    break
+                inside = True
+            if inside:
+                section.append(line)
+        info["changelog"] = "\n".join(section).strip()
+    return info
+
+
+@app.post("/api/admin/update/install")
+async def admin_update_install(request: Request):
+    """Avvia l'aggiornamento in un servizio separato: FleetBuddy verrà riavviato da quel servizio."""
+    _admin(request)
+    info = await _update_info()
+    if not info["web_install"]:
+        raise HTTPException(409, _("Per aggiornare dal browser esegui una volta sul Raspberry Pi: bash deploy/install.sh"))
+    if info["running"]:
+        raise HTTPException(409, _("Un aggiornamento è già in corso"))
+    code, out = await _run("sudo", "-n", "systemctl", "start", "--no-block", "fleetbuddy-update-now.service", timeout=20)
+    if code != 0:
+        log.warning("Avvio dell'aggiornamento non riuscito: %s", out)
+        raise HTTPException(502, _("Impossibile avviare l'aggiornamento: esegui una volta sul Raspberry Pi bash deploy/install.sh"))
+    log.info("Aggiornamento avviato dal browser da %s", U(request).username)
+    return {"ok": True}
+
+
 @app.get("/api/hub")
 async def hub_info(request: Request):
     _admin(request)
@@ -1153,4 +1228,8 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 @app.get("/")
 async def index():
-    return FileResponse(BASE_DIR / "static" / "index.html", headers={"Cache-Control": "no-cache"})
+    # versione nei link di script e stili: dopo un aggiornamento il browser carica sempre i file nuovi
+    html = (BASE_DIR / "static" / "index.html").read_text(encoding="utf-8")
+    for asset in ("/static/app.js", "/static/style.css"):
+        html = html.replace(f'"{asset}"', f'"{asset}?v={__version__}"')
+    return Response(html, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-cache"})

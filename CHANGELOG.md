@@ -3,6 +3,29 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.6.0] – 2026-11-04
+
+### Novità
+- Aggiornamento dal browser: in Amministrazione → Informazioni, "Cerca aggiornamenti" controlla subito GitHub e mostra
+  le novità; "Installa" avvia l'aggiornamento (con backup e ripristino automatico) e ne segue l'avanzamento fino al
+  ricaricamento della pagina. Richiede di eseguire una volta `bash deploy/install.sh` sul Raspberry Pi.
+
+### Correzioni
+- Dopo un aggiornamento il browser carica sempre i file nuovi dell'interfaccia (prima poteva usare quelli in cache).
+- `fleetbuddy-update` si ferma con un messaggio chiaro se un tag contiene una versione diversa dal suo nome
+  (es. tag v0.6.0 creato senza aggiornare `__version__`).
+
+## [0.5.2] – 2026-11-04
+
+### Correzioni
+- Coda: non invia più una stampa a una stampante che sta ancora ricevendo quella precedente. Mentre la stampante
+  scarica il file resta "inattiva": prima, dopo 45 secondi, la coda le mandava la stampa successiva, che veniva
+  ignorata e risultava comunque "inviata".
+- Una voce della coda resta visibile come "In partenza" finché la stampante non inizia davvero, poi esce dalla coda
+  (la stampa resta nello storico). Se la stampante non parte entro 2 minuti, la voce torna in "Errore" con il motivo
+  e si può riprovare; per le copie multiple la copia non partita viene restituita alla voce.
+- Anche "Stampa ora" è bloccata mentre la stampante sta ricevendo un'altra stampa.
+
 ## [0.5.1] – 2026-11-04
 
 ### Correzioni

@@ -12,14 +12,19 @@
 # viene fatto un backup; se dopo il riavvio FleetBuddy non risponde, si torna alla versione precedente.
 set -euo pipefail
 
-DIR="${FB_UPDATE_DIR:-$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)}"
-# lo script si aggiorna da solo durante l'installazione: lo eseguiamo da una copia temporanea
-if [ -z "${FB_UPDATE_DIR:-}" ]; then
+# Lo script si aggiorna da solo durante l'installazione: lo eseguiamo da una copia temporanea.
+# FB_UPDATE_SELF identifica quella copia; solo lei viene cancellata alla fine (mai l'originale).
+SELF="$(readlink -f "$0")"
+if [ "${FB_UPDATE_SELF:-}" != "$SELF" ]; then
+  DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
   tmp="$(mktemp /tmp/fleetbuddy-update.XXXXXX)"
-  cp "$(readlink -f "$0")" "$tmp"
-  FB_UPDATE_DIR="$DIR" exec bash "$tmp" "$@"
+  cp "$SELF" "$tmp"
+  FB_UPDATE_DIR="$DIR" FB_UPDATE_SELF="$tmp" exec bash "$tmp" "$@"
 fi
-trap 'rm -f "$0"' EXIT
+DIR="$FB_UPDATE_DIR"
+case "$SELF" in /tmp/fleetbuddy-update.*) trap 'rm -f "$SELF"' EXIT ;; esac
+# i processi avviati da qui (es. il riavvio del servizio) non devono ereditare queste variabili
+unset FB_UPDATE_SELF FB_UPDATE_DIR
 cd "$DIR"
 MODE=install; CHANNEL=release; YES=0
 for a in "$@"; do
@@ -65,6 +70,7 @@ if [ "$available" = false ]; then
   exit 0
 fi
 say "Disponibile la versione $latest (installata: $current)."
+say "Ultima versione pubblicata su GitHub: $target"
 [ "$MODE" = check ] && exit 10
 
 if [ "$MODE" = auto ]; then
@@ -96,6 +102,13 @@ if [ "$YES" != 1 ]; then
   echo
   read -r -p "Installare la versione $latest? [s/N] " ans
   case "$ans" in s|S|si|SI|y|Y|yes) ;; *) say "Annullato."; exit 0 ;; esac
+fi
+
+if [ "$CHANNEL" = release ]; then
+  inside="$(git show "$target:app/__init__.py" | version_of)"
+  if [ "$inside" != "$latest" ]; then
+    die "il tag $target contiene la versione $inside invece di $latest: aggiorna __version__ in app/__init__.py, crea un nuovo tag e riprova"
+  fi
 fi
 
 prev="$(git rev-parse HEAD)"
