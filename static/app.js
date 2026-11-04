@@ -250,6 +250,8 @@ function statusInfo(p) {
     <div class="progrow"><div class="strand" style="${fc ? "--fc:" + fc : ""}"><i style="width:${showJob ? p.progress : 0}%"></i></div><b>${showJob ? p.progress + "%" : "—"}</b></div>
     <div class="muted small">${p.active ? t("mancano {d}", {d: fmtDur(p.remaining_min * 60)}) + " · " + t("strato {a}/{b}", {a: p.layer, b: p.total_layers})
       : p.online ? (done ? t("Conferma che il piatto è libero per la prossima stampa") : t("Pronta per una nuova stampa")) : t("Non raggiungibile dal Hub")}</div>
+    ${p.pending ? `<div class="small ${p.pending.warned ? "warn" : "muted"}">${p.pending.warned ? t("La stampa {f} non è partita: controlla la stampante", {f: esc(p.pending.task)})
+      : t("Comando inviato: in attesa che la stampante scarichi {f} e parta…", {f: esc(p.pending.task)})}</div>` : ""}
     <div class="muted small camage">${snapAge(p)}</div>${next}`;
 }
 function slotBtn(x, num) {
@@ -301,7 +303,7 @@ function cardBody(p) {
     .map(c => `<div class="alert">${c} ${esc(hmsDesc[p.model + c] || "")}</div>`).join("");
   const groups = GROUPS.filter(g => g.printers.includes(p.sn));
   return `<div class="tiles">${tiles.join("")}</div>
-    ${fans.length ? `<div class="fans">${fans.map(([k, l]) => `<span>${l} <b>${f[k]}%</b></span>`).join("")}</div>` : ""}
+    ${fans.length ? `<div class="tiles fans">${fans.map(([k, l]) => `<div class="tile"><span>${l}</span><b>${f[k]}%</b></div>`).join("")}</div>` : ""}
     ${done && canOperate() ? `<button class="platebtn" data-opt="bed_clean">${t("Segna il piatto come liberato")}</button>` : ""}
     <div class="sec">${t("Comandi")}</div>
     <div class="ctrls"><span class="bdg">${t("Velocità")} · ${esc(t(SPEEDS[p.speed_lvl] || "—"))}</span><span class="grow"></span>${btns.join("") || `<span class="muted small">${t("Nessun comando disponibile in questo stato")}</span>`}</div>
@@ -548,14 +550,15 @@ async function printDialog(f, presetPrinter) {
   const online = S.printers.filter(p => p.online);
   const myGroups = GROUPS.filter(g => isAdmin() || (g.printers.length && g.printers.every(sn => S.printers.some(p => p.sn === sn))));
   openDialog(`<h3>${t("Stampa {f}", {f: esc(f.filename)})}</h3>
-    <div class="row">
+    <div class="printhead"><img class="platethumb" id="platethumb" alt="${esc(t("Anteprima del piatto"))}" src="/api/files/${f.id}/thumb/${plates[0].index}">
+    <div class="printinfo"><div class="row">
       ${plates.length > 1 ? `<label>${t("Piatto")}<select name="plate">${plates.map(p => `<option value="${p.index}">${t("Piatto {n}", {n: p.index})} · ${fmtDur(p.prediction_s)}</option>`).join("")}</select></label>` : `<input type="hidden" name="plate" value="${plates[0].index}">`}
       <label>${t("Destinazione")}<select name="dest">
         ${isAdmin() ? `<option value="">${t("Qualsiasi stampante libera (solo coda)")}</option>` : ""}
         ${myGroups.length ? `<optgroup label="${esc(t("Gruppi (solo coda)"))}">${myGroups.map(g => `<option value="g:${g.id}">${t("Gruppo {g}", {g: esc(g.name)})}</option>`).join("")}</optgroup>` : ""}
         <optgroup label="${esc(t("Stampanti"))}">${online.map(p => `<option value="p:${p.sn}" ${p.sn === presetPrinter ? "selected" : ""}>${esc(p.name)} – ${stateName(p.state)}</option>`).join("")}</optgroup>
       </select></label>
-    </div>
+    </div><div class="muted small" id="plateinfo"></div></div></div>
     <div id="mapping"></div>
     <div class="row">
       <label class="inline"><input type="checkbox" name="bed_leveling" checked> ${t("Livellamento piatto")}</label>
@@ -578,19 +581,43 @@ async function printDialog(f, presetPrinter) {
     if (!r) return;
     slots = r.slots ? [...r.slots] : pl.filaments.map(() => ({ams_id: 255, slot_id: 255}));
     const loaded = r.trays.filter(x => x.loaded);
+    const pr = S.printers.find(x => x.sn === sn) || {nozzles: [], ams_units: []};
+    const dual = (pr.nozzles || []).length > 1;
+    const sideOfTray = x => {   // L/R dell'ugello a cui è collegata la bobina (doppio estrusore)
+      if (!dual) return "";
+      const nid = x.kind === "external" ? x.nozzle : ((pr.ams_units || []).find(u => u.ams_id === x.ams_id) || {}).nozzle;
+      const n = (pr.nozzles || []).find(z => z.id === nid);
+      return n ? sideLetter(n.side) : "";
+    };
+    const optHtml = x => `<span class="sw" style="--c:${esc(x.color || "#888")}"></span><b>${esc(trayLabel(x.label))}</b> ${esc(x.type)}${x.sub_brand ? ` <span class="muted">${esc(x.sub_brand)}</span>` : ""}${sideOfTray(x) ? ` <span class="side">${sideOfTray(x)}</span>` : ""}`;
+    const findTray = c => loaded.find(x => x.ams_id === c.ams_id && x.slot_id === c.slot_id);
     $("#mapping").innerHTML = `<div class="maprow">${r.filaments.map(fl => {
-        const cur = slots[fl.id - 1] || {};
-        return `<div class="fl"><i style="--c:${esc(fl.color)}"></i>${fl.id}. ${esc(fl.type)} · ${fl.used_g} g${fl.extruder ? " · " + (fl.extruder === 1 ? t("sx") : t("dx")) : ""}</div>
-        <select data-fid="${fl.id}"><option value="">${t("— scegli uno slot —")}</option>${loaded.map(x =>
-          `<option value="${x.ams_id}:${x.slot_id}" ${x.ams_id === cur.ams_id && x.slot_id === cur.slot_id ? "selected" : ""}>${esc(trayLabel(x.label))} · ${esc(x.type)} ${esc(x.color)}</option>`).join("")}</select>`;
+        const cur = findTray(slots[fl.id - 1] || {});
+        return `<div class="fl"><i style="--c:${esc(fl.color)}"></i>${fl.id}. ${esc(fl.type)} · ${fl.used_g} g${fl.extruder ? ` <span class="side">${fl.extruder === 1 ? "L" : "R"}</span>` : ""}</div>
+        <div class="slotpick" data-fid="${fl.id}"><button type="button" class="spk-cur">${cur ? optHtml(cur) : `<span class="muted">${t("— scegli uno slot —")}</span>`}<span class="spk-arrow">▾</span></button>
+          <div class="spk-list" role="listbox" hidden>${loaded.map(x => `<button type="button" role="option" data-v="${x.ams_id}:${x.slot_id}">${optHtml(x)}</button>`).join("")}</div></div>`;
       }).join("")}</div>${r.warnings.map(w => `<div class="warn">${esc(w)}</div>`).join("")}`;
-    $$("#mapping select").forEach(s => s.onchange = () => {
-      const [a, b] = s.value.split(":").map(Number);
-      while (slots.length < +s.dataset.fid) slots.push({ams_id: 255, slot_id: 255});
-      slots[+s.dataset.fid - 1] = s.value ? {ams_id: a, slot_id: b} : {ams_id: 255, slot_id: 255};
+    $$("#mapping .slotpick").forEach(box => {
+      const list = $(".spk-list", box);
+      $(".spk-cur", box).onclick = () => { const open = list.hidden; $$("#mapping .spk-list").forEach(l => l.hidden = true); list.hidden = !open; };
+      list.onclick = e => {
+        const o = e.target.closest("[data-v]"); if (!o) return;
+        const [a, b] = o.dataset.v.split(":").map(Number);
+        while (slots.length < +box.dataset.fid) slots.push({ams_id: 255, slot_id: 255});
+        slots[+box.dataset.fid - 1] = {ams_id: a, slot_id: b};
+        $(".spk-cur", box).innerHTML = optHtml(findTray({ams_id: a, slot_id: b})) + `<span class="spk-arrow">▾</span>`;
+        list.hidden = true;
+      };
     });
   }
-  fm.dest.onchange = remap; if (fm.plate.tagName === "SELECT") fm.plate.onchange = remap;
+  const showPlate = () => {
+    const pl = plateOf();
+    $("#platethumb").src = `/api/files/${f.id}/thumb/${pl.index}`;
+    $("#plateinfo").innerHTML = `${fmtDur(pl.prediction_s)} · ${pl.weight_g || 0} g ${dots(pl.filaments)}`;
+  };
+  showPlate();
+  fm.dest.onchange = remap;
+  if (fm.plate.tagName === "SELECT") fm.plate.onchange = () => { showPlate(); remap(); };
   remap();
   const opts = () => ({bed_leveling: fm.bed_leveling.checked, flow_calibration: fm.flow_calibration.checked, timelapse: fm.timelapse.checked});
   const valid = () => !slots || plateOf().filaments.every(fl => slots[fl.id - 1] && slots[fl.id - 1].slot_id !== 255) || (toast(t("Assegna uno slot a ogni filamento"), "error"), false);
@@ -657,6 +684,45 @@ RENDER.history = async function renderHistory() {
 };
 
 // ------------------------------------------------------------------ statistiche
+// Utilizzo delle stampanti: situazione attuale e andamento nel tempo (grafico SVG, nessuna libreria esterna)
+function utilization(ut, grp, range) {
+  const g = GROUPS.find(x => String(x.id) === grp);
+  const list = g ? S.printers.filter(p => g.printers.includes(p.sn)) : S.printers;
+  const count = st => list.filter(p => p.online && st.includes(p.state)).length;
+  const printing = count(["RUNNING", "PREPARE", "SLICING"]), paused = count(["PAUSE", "PAUSED"]);
+  const finished = count(["FINISH", "FAILED"]), idle = count(["IDLE"]), offline = list.filter(p => !p.online).length;
+  const live = list.length ? Math.round(100 * (printing + paused) / list.length) : 0;
+  const kpis = `<div class="kpis">
+    <div class="kpi big"><b>${live}%</b><span>${t("Utilizzo in tempo reale")}</span></div>
+    <div class="kpi"><b>${printing}</b><span>${t("In stampa")}</span></div>
+    <div class="kpi"><b>${paused}</b><span>${t("In pausa")}</span></div>
+    <div class="kpi"><b>${finished}</b><span>${t("Stampa terminata")}</span></div>
+    <div class="kpi"><b>${idle}</b><span>${t("Inattive")}</span></div>
+    ${offline ? `<div class="kpi"><b>${offline}</b><span>${t("Offline")}</span></div>` : ""}
+    <div class="kpi"><b>${list.length}</b><span>${t("Stampanti totali")}</span></div></div>`;
+  if (!ut) return kpis;
+  const W = 900, H = 260, L = 44, R = 12, T = 14, B = 30, pts = ut.buckets;
+  const maxPct = Math.max(20, Math.ceil(Math.max(...pts.map(b => b.pct || 0)) / 10) * 10);
+  const x = i => L + (W - L - R) * (pts.length > 1 ? i / (pts.length - 1) : 0);
+  const y = v => T + (H - T - B) * (1 - v / maxPct);
+  const valid = pts.map((b, i) => [i, b.pct]).filter(([, v]) => v != null);
+  const line = valid.map(([i, v], k) => `${k ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  const area = valid.length ? `${line}L${x(valid[valid.length - 1][0]).toFixed(1)},${y(0)}L${x(valid[0][0]).toFixed(1)},${y(0)}Z` : "";
+  const fmt = ts => new Date(ts * 1000).toLocaleString(LOCALES[LANG], ut.step >= 86400 ? {day: "2-digit", month: "2-digit"}
+    : ut.step >= 4 * 3600 ? {day: "2-digit", month: "2-digit", hour: "2-digit"} : {hour: "2-digit", minute: "2-digit"});
+  const every = Math.max(1, Math.ceil(pts.length / 8));
+  const grid = [0, .25, .5, .75, 1].map(f => { const v = Math.round(maxPct * f), yy = y(v).toFixed(1);
+    return `<line class="gridl" x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/><text class="axis" x="${L - 6}" y="${(+yy + 4).toFixed(1)}" text-anchor="end">${v}%</text>`; }).join("");
+  const xl = pts.map((b, i) => i % every === 0 || i === pts.length - 1 ? `<text class="axis" x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${fmt(b.t)}</text>` : "").join("");
+  const dotsSvg = valid.map(([i, v]) => `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="9" fill="transparent"><title>${fmt(pts[i].t)}: ${v}%</title></circle>`).join("");
+  return `${kpis}
+    <div class="util"><div class="head" style="margin-bottom:6px"><div><h2 style="margin:0">${t("Tasso di utilizzo")}</h2>
+      <p class="sub" style="margin:0">${t("Media del periodo: {p}% · {n} stampanti", {p: ut.average, n: ut.printers})}</p></div>
+      <select id="urange">${[["24h", t("Ultime 24 ore")], ["7d", t("Ultimi 7 giorni")], ["30d", t("Ultimi 30 giorni")]].map(([k, l]) => `<option value="${k}" ${k === range ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(t("Tasso di utilizzo"))}">${grid}<path class="area" d="${area}"/><path class="line" d="${line}"/>${dotsSvg}${xl}</svg>
+      ${ut.per_printer.length ? `<div style="margin-top:12px">${ut.per_printer.map(p => `<div class="ubar"><span>${esc(p.name)}</span><span class="track"><i style="width:${Math.min(100, p.pct)}%"></i></span><b>${p.pct}%</b></div>`).join("")}</div>` : ""}
+      <p class="sub" style="margin:8px 0 0">${t("Percentuale del tempo in cui le stampanti hanno stampato (pause comprese), calcolata dallo storico.")}</p></div>`;
+}
 function downloadMenu(q) {
   const items = [[`/api/stats/export.json?${q}`, t("JSON (tutti i dati)")],
     [`/api/stats/export.csv?kind=jobs&${q}`, t("CSV – dettaglio stampe")],
@@ -671,7 +737,10 @@ RENDER.stats = async function renderStats(days) {
   days = (typeof days === "number" && days) || +(localStorage.getItem("fb_days") || 30);
   const grp = localStorage.getItem("fb_stats_group") || "";
   const el = $("#v-stats");
-  const s = await api(`/api/stats?days=${days}${grp ? "&group=" + grp : ""}`).catch(e => (toast(e.message, "error"), null));
+  const urange = localStorage.getItem("fb_util_range") || "24h";
+  const [s, ut] = await Promise.all([
+    api(`/api/stats?days=${days}${grp ? "&group=" + grp : ""}`).catch(e => (toast(e.message, "error"), null)),
+    api(`/api/stats/utilization?range=${urange}${grp ? "&group=" + grp : ""}`).catch(() => null)]);
   if (!s) return;
   const tot = s.total, rate = tot.n ? Math.round(100 * (tot.ok || 0) / tot.n) : 0;
   const max = Math.max(1, ...s.daily.map(d => d.n));
@@ -679,6 +748,8 @@ RENDER.stats = async function renderStats(days) {
     <div class="row">${GROUPS.length ? `<select id="sgroup"><option value="">${t("Tutte le stampanti")}</option>${GROUPS.map(g => `<option value="${g.id}" ${String(g.id) === grp ? "selected" : ""}>${t("Gruppo {g}", {g: esc(g.name)})}</option>`).join("")}</select>` : ""}
     <select id="days">${[7, 30, 90, 365].map(d => `<option ${d === days ? "selected" : ""} value="${d}">${t("{n} giorni", {n: d})}</option>`).join("")}</select>
     ${downloadMenu(`days=${days}${grp ? "&group=" + grp : ""}&lang=${LANG}`)}</div></div>
+    ${utilization(ut, grp, urange)}
+    <h2>${t("Riepilogo del periodo")}</h2>
     <div class="kpis"><div class="kpi"><b>${tot.n}</b><span>${t("stampe")}</span></div><div class="kpi"><b>${rate}%</b><span>${t("riuscite")}</span></div>
       <div class="kpi"><b>${Math.round(tot.secs / 3600)} h</b><span>${t("di stampa")}</span></div><div class="kpi"><b>${(tot.grams / 1000).toFixed(2)} kg</b><span>${t("filamento")}</span></div>
       <div class="kpi"><b>${tot.ko || 0}</b><span>${t("fallite")}</span></div></div>
@@ -694,6 +765,7 @@ RENDER.stats = async function renderStats(days) {
     ${s.per_printer.map(p => `<tr><td>${esc(p.name)}</td><td>${p.n}</td><td>${p.ok || 0}</td><td>${p.ko || 0}</td><td>${(p.secs / 3600).toFixed(1)}</td><td>${Math.round(p.grams)} g</td></tr>`).join("") || `<tr><td colspan="6">${t("Nessun dato")}</td></tr>`}
     </tbody></table></div>`;
   $("#days").onchange = e => { localStorage.setItem("fb_days", e.target.value); RENDER.stats(+e.target.value); };
+  if ($("#urange")) $("#urange").onchange = e => { localStorage.setItem("fb_util_range", e.target.value); RENDER.stats(days); };
   if ($("#sgroup")) $("#sgroup").onchange = e => { localStorage.setItem("fb_stats_group", e.target.value); RENDER.stats(days); };
 };
 
@@ -880,7 +952,7 @@ function userDialog(u) {
     </div>
     <label>${u ? t("Nuova password (lascia vuoto per non cambiarla)") : t("Password")}
       <span class="pwrow"><input name="password" type="password" autocomplete="new-password">
-      <button type="button" id="pwgen">${t("Genera password")}</button><button type="button" id="pwcopy" hidden>${t("Copia")}</button></span></label>
+      <button type="button" id="pwgen">${t("Genera password")}</button><button type="button" id="pwcopy" hidden>${t("Copia credenziali")}</button></span></label>
     ${u && u.id === ME.id ? "" : `<label class="inline"><input type="checkbox" name="must_change" checked> ${t("Proponi di cambiarla al primo accesso")}</label>`}
     ${u && u.id !== ME.id ? `<label class="inline"><input type="checkbox" name="active" ${u.active ? "checked" : ""}> ${t("Utente attivo (se disattivato non può accedere)")}</label>` : ""}
     <p class="sub" style="margin:0">${t("Password: almeno 8 caratteri, con lettere e numeri.")}${u ? "" : " " + t("Dopo la creazione assegna i permessi con il pulsante \"Permessi\".")}</p>
@@ -891,8 +963,9 @@ function userDialog(u) {
     $("#pwcopy").hidden = false;
   };
   $("#pwcopy").onclick = async () => {
-    const v = $("#dlgbody").password.value;
-    try { await navigator.clipboard.writeText(v); toast(t("Password copiata"), "ok"); }
+    const fm2 = $("#dlgbody");
+    const v = `${t("Nome utente")}: ${u ? u.username : fm2.username.value}\n${t("Password")}: ${fm2.password.value}`;
+    try { await navigator.clipboard.writeText(v); toast(t("Nome utente e password copiati"), "ok"); }
     catch { $("#dlgbody").password.select(); toast(t("Selezionata: copiala con Ctrl+C"), "info"); }
   };
   $("#uok").onclick = async ev => {

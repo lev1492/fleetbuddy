@@ -11,7 +11,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -166,7 +166,13 @@ def state_for(u: User) -> dict:
                        FROM queue q LEFT JOIN files f ON f.id=q.file_id WHERE q.status='queued'
                        ORDER BY q.position, q.id""")
     members = auth.group_members()
+    pend = {r["printer_sn"]: r for r in S().db.q("SELECT printer_sn, data, at FROM pending_prints")}
     for p in st["printers"]:
+        pr = pend.get(p["sn"])
+        p["pending"] = None
+        if pr and not p["active"] and time.time() - pr["at"] < 1800:
+            d = json.loads(pr["data"])
+            p["pending"] = {"task": d.get("task_name"), "at": pr["at"], "warned": bool(d.get("warned"))}
         mine = [r for r in rows if queue_visible(u, r) and (r["printer_sn"] == p["sn"] or
                 (r["group_id"] and p["sn"] in members.get(r["group_id"], set())) or
                 (not r["printer_sn"] and not r["group_id"]))]
@@ -901,6 +907,53 @@ def _stats_data(u: User, days: int, group: int | None) -> dict:
                     SUM(status='finished') ok, COALESCE(SUM(filament_g),0) grams
                     FROM jobs WHERE {where} GROUP BY day ORDER BY day""", args)
     return {"days": days, "total": tot, "per_printer": per, "daily": daily, "filaments": filament_totals(where, args)}
+
+
+UTIL_RANGES = {"24h": (24 * 3600, 3600), "7d": (7 * 86400, 4 * 3600), "30d": (30 * 86400, 86400)}
+
+
+@app.get("/api/stats/utilization")
+async def stats_utilization(request: Request, period: str = Query("24h", alias="range"), group: int | None = None):
+    """Tasso di utilizzo: per ogni intervallo, il tempo di stampa diviso per il tempo disponibile
+    di tutte le stampanti considerate (stampanti visibili all'utente, eventualmente di un gruppo)."""
+    u = U(request)
+    span, step = UTIL_RANGES.get(period, UTIL_RANGES["24h"])
+    sns = {p["sn"]: p["name"] for p in S().printers.values() if u.sees_printer(p["sn"])}
+    if group:
+        members = auth.group_members().get(group, set())
+        sns = {k: v for k, v in sns.items() if k in members}
+    now = time.time()
+    end = (int(now // step) + 1) * step if step < 86400 else now
+    if step >= 86400:   # giorni interi nel fuso locale
+        lt = time.localtime(now)
+        end = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + 1, 0, 0, 0, 0, 0, -1))
+    start = end - span
+    buckets = [{"t": start + i * step, "busy": 0.0} for i in range(int(span // step))]
+    per = {sn: 0.0 for sn in sns}
+    if sns:
+        rows = S().db.q(f"""SELECT printer_sn, started_at, COALESCE(ended_at, ?) AS ended_at FROM jobs
+                            WHERE printer_sn IN ({','.join('?' * len(sns))}) AND COALESCE(ended_at, ?) > ? AND started_at < ?""",
+                        (now, *sns, now, start, end))
+        for r in rows:
+            s0, e0 = max(r["started_at"], start), min(r["ended_at"], end, now)
+            if e0 <= s0:
+                continue
+            per[r["printer_sn"]] += e0 - s0
+            i = int((s0 - start) // step)
+            while i < len(buckets) and buckets[i]["t"] < e0:
+                b0, b1 = buckets[i]["t"], buckets[i]["t"] + step
+                buckets[i]["busy"] += max(0.0, min(e0, b1) - max(s0, b0))
+                i += 1
+    n = len(sns) or 1
+    out = []
+    for b in buckets:
+        avail = (min(b["t"] + step, now) - b["t"]) * n
+        out.append({"t": int(b["t"]), "pct": round(100 * b["busy"] / avail, 1) if avail > 0 else None})
+    elapsed = (min(end, now) - start)
+    return {"range": period, "step": step, "printers": len(sns), "buckets": out,
+            "average": round(100 * sum(per.values()) / (elapsed * n), 1) if elapsed > 0 else 0,
+            "per_printer": sorted([{"sn": k, "name": sns[k], "pct": round(100 * v / elapsed, 1) if elapsed > 0 else 0}
+                                   for k, v in per.items()], key=lambda x: -x["pct"])}
 
 
 @app.get("/api/stats")

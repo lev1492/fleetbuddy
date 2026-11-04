@@ -123,6 +123,7 @@ def device(sn, p):
     return {
         "dev_sn": sn, "dev_model": p["model"], "dev_ip": "10.0.0." + sn[-1], "name": p["name"], "online": True,
         "mqtt_status": 2, "liveview_time": "2026-11-02T10:00:00Z",
+        "latest_print_cmd_send_fail_reason": p.get("fail_reason", ""), "print_cmd_send_retry_cnt": 3 if p.get("fail_reason") else 0,
         "upgrade_info": {"current_ver": "01.08.00.00", "upgrade_state": "IDLE"},
         "report_status": {
             "gcode_state": p["state"], "mc_percent": p["pct"], "mc_remaining_time": int(p["dur"] * (100 - p["pct"]) / 6000),
@@ -146,6 +147,16 @@ def device(sn, p):
                        "ctc": {"info": {"temp": (45 << 16) | 38}}} if p["model"] == "H2D" else {},
         },
     }
+
+
+FAIL_NEXT: dict[str, str] = {}
+
+
+@app.post("/mock/fail/{sn}")
+def mock_fail_next(sn: str, reason: str = "download failed"):
+    """Solo per i test: il prossimo comando di stampa viene accettato dal Hub ma la stampante non parte."""
+    FAIL_NEXT[sn] = reason
+    return ok()
 
 
 @app.post("/mock/start/{sn}")
@@ -196,8 +207,12 @@ async def do_print(req: Request):
         CACHE[hashlib.md5(data).hexdigest()] = time.time()
     elif form.get("file_hash") not in CACHE:
         return err(12, "3mf not exist")
+    print("print_option:", cmd.get("print_option"))
     for sn in form.getlist("dev_sns"):
         p = PRINTERS[sn]
+        if sn in FAIL_NEXT:
+            p["fail_reason"] = FAIL_NEXT.pop(sn)
+            continue
         if p["state"] != "IDLE":
             return err(1051, "device busy")
         p.update(state="PREPARE", pct=0, t0=time.time(), task=cmd["task_name"], task_id=random.randint(1, 10**6))

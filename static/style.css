@@ -256,9 +256,6 @@ legend{font-size:13px;font-weight:700;color:var(--muted);padding:0 4px}
 .tile.wide{grid-column:1/-1;align-items:stretch;text-align:left}
 .hot{display:flex;align-items:baseline;gap:6px;font-size:14px;flex-wrap:wrap}
 .side{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 4px;border-radius:4px;font-size:11px;font-weight:800;background:color-mix(in srgb,var(--run) 22%,transparent);color:var(--run)}
-.fans{display:flex;gap:8px;flex-wrap:wrap}
-.fans span{flex:1;min-width:110px;background:var(--sunk);border-radius:var(--radius-sm);padding:5px 8px;font-size:12px;color:var(--muted);text-align:center}
-.fans b{color:var(--ink)}
 .platebtn{width:100%;justify-content:center;background:color-mix(in srgb,var(--pause) 18%,var(--surface));border-color:var(--pause);color:var(--pause)}
 .ctrls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .ctrls .grow{flex:1}
@@ -275,6 +272,31 @@ legend{font-size:13px;font-weight:700;color:var(--muted);padding:0 4px}
 .sp.slot.empty .ty{color:var(--muted);font-weight:500}
 .sp.slot .bar{width:85%;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
 .sp.slot .bar i{display:block;height:100%;background:var(--run)}
+
+/* dialogo di stampa: anteprima del piatto e scelta degli slot con il colore */
+.printhead{display:flex;gap:14px;align-items:flex-start}
+.platethumb{width:110px;height:110px;object-fit:contain;background:var(--sunk);border-radius:var(--radius-sm);flex:0 0 auto}
+.printinfo{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.slotpick{position:relative;min-width:0}
+.spk-cur{width:100%;justify-content:flex-start;gap:8px;text-align:left}
+.spk-arrow{margin-left:auto;color:var(--muted)}
+.spk-list{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:20;max-height:260px;overflow:auto;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--radius-sm);box-shadow:0 8px 24px rgba(0,0,0,.25);padding:4px;display:flex;flex-direction:column}
+.spk-list[hidden]{display:none}
+.spk-list button{border:0;background:none;justify-content:flex-start;gap:8px;padding:7px 8px;font-weight:500}
+.spk-list button:hover{background:var(--sunk)}
+.sw{display:inline-block;width:16px;height:16px;border-radius:50%;background:var(--c);border:1px solid var(--line);flex:0 0 auto;vertical-align:middle}
+/* utilizzo delle stampanti */
+.util{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:16px}
+.util svg{width:100%;height:auto;display:block}
+.util .axis{font-size:11px;fill:var(--muted)}
+.util .gridl{stroke:var(--line);stroke-dasharray:3 4}
+.util .line{fill:none;stroke:var(--run);stroke-width:2.5}
+.util .area{fill:color-mix(in srgb,var(--run) 14%,transparent)}
+.ubar{display:grid;grid-template-columns:minmax(90px,180px) 1fr 52px;gap:10px;align-items:center;font-size:14px;padding:3px 0}
+.ubar .track{height:10px;background:var(--sunk);border-radius:5px;overflow:hidden}
+.ubar .track i{display:block;height:100%;background:var(--run)}
+.kpi.big b{color:var(--run)}
 
 @media (max-width:760px){
   .statusbox .cam{flex-basis:104px}

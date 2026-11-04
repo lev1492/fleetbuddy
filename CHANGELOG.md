@@ -3,6 +3,24 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.5.0] – 2026-11-04
+
+### Novità
+- Statistiche: utilizzo delle stampanti in tempo reale (in stampa, in pausa, terminate, inattive, totali) e grafico
+  del tasso di utilizzo nelle ultime 24 ore, 7 giorni o 30 giorni, con la percentuale per ogni stampante;
+  rispetta il filtro per gruppo.
+- Dialogo di stampa: anteprima del piatto scelto, con tempo e grammi; scelta dello slot con il colore reale
+  della bobina (e il lato L/R sulle doppio estrusore) al posto del codice esadecimale.
+- Ventole mostrate come gli altri riquadri, con la percentuale a capo.
+- Creazione utente: "Copia credenziali" copia insieme nome utente e password.
+
+### Correzioni
+- Comando di stampa: vengono inviate solo le opzioni della famiglia della stampante (P1/A1/X1 oppure H2/P2/X2),
+  come indicato dalle API; prima le due serie di opzioni erano inviate insieme.
+- Se la stampante non parte entro 2 minuti dall'invio, FleetBuddy lo segnala con il motivo comunicato dal Hub;
+  la scheda mostra "comando inviato, in attesa" mentre la stampante scarica il file.
+- Il comando inviato e la risposta del Hub sono scritti nel log, per la diagnosi.
+
 ## [0.4.0] – 2026-11-04
 
 ### Novità

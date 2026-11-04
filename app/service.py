@@ -180,6 +180,28 @@ class Service:
             await asyncio.sleep(max(1.0, self.cfg.app.poll_interval - (time.time() - t0)))
 
     # ------------------------------------------------------------------ stampe in arrivo
+    def _watch_pending(self, p: dict):
+        """Il Hub accetta il comando subito, ma è la stampante a scaricare il file e partire.
+        Se dopo 2 minuti non è partita, si avvisa con il motivo comunicato dal Hub, se c'è."""
+        if p["active"]:
+            return
+        r = self.db.one("SELECT data, at FROM pending_prints WHERE printer_sn=?", (p["sn"],))
+        if not r or time.time() - r["at"] < 120:
+            return
+        data = json.loads(r["data"])
+        if data.get("warned"):
+            return
+        reason = p.get("last_cmd_error") or ", ".join(([p["print_error"]] if p["print_error"] else []) + p["hms"])
+        log.warning("%s non ha avviato la stampa %s dopo 2 minuti (motivo dal Hub: %s, tentativi: %s)",
+                    p["sn"], data.get("task_name"), reason or "nessuno", p.get("cmd_retry"))
+        if reason:
+            self.toast("{printer}: la stampa non è partita – {e}", "error", sn=p["sn"], printer=p["name"], e=reason)
+        else:
+            self.toast("{printer}: la stampa non è partita entro 2 minuti. Controlla la stampante e ⋮ → Dati tecnici.",
+                       "error", sn=p["sn"], printer=p["name"])
+        data["warned"] = True
+        self.db.x("UPDATE pending_prints SET data=? WHERE printer_sn=?", (json.dumps(data), p["sn"]))
+
     def _set_pending(self, sn: str, data: dict):
         self.db.x("INSERT OR REPLACE INTO pending_prints(printer_sn, data, at) VALUES(?,?,?)",
                   (sn, json.dumps(data), time.time()))
@@ -256,6 +278,8 @@ class Service:
                 await self._close_job(job, p, "finished" if job.get("progress", 0) >= 99 else "cancelled")
             elif not p["online"] and prev and prev["online"]:
                 pass  # resta aperto: potrebbe tornare online e continuare
+
+        self._watch_pending(p)
 
         # errori / HMS nuovi
         codes = set(p["hms"]) | ({p["print_error"]} if p["print_error"] else set())
@@ -383,20 +407,25 @@ class Service:
         return img
 
     # ------------------------------------------------------------------ stampa
-    def build_print_cmd(self, task_name: str, plate: int, slots: list[dict], options: dict) -> dict:
+    def build_print_cmd(self, task_name: str, plate: int, slots: list[dict], options: dict,
+                        printer: dict | None = None) -> dict:
+        """Comando di stampa (API par. 4.6.2). Le opzioni cambiano con la famiglia della stampante:
+        auto_bed_leveling / flow_dynamic_calibration solo per P1/A1/X1, i *_mode solo per H2/P2/X2:
+        si inviano solo quelle della famiglia giusta, perché quelle dell'altra possono far rifiutare il comando."""
         lvl = bool(options.get("bed_leveling", True))
         flow = bool(options.get("flow_calibration", True))
+        model = ((printer or {}).get("model") or "").upper()
+        opt = {"timelapse": bool(options.get("timelapse", False))}
+        if model.startswith(("H2", "P2", "X2")):
+            opt.update(bed_leveling_mode=2 if lvl else 0, flow_dynamic_cali_mode=2 if flow else 0)
+            if (printer or {}).get("dual_nozzle"):
+                opt["nozzle_offset_cali_mode"] = 2
+        else:
+            opt.update(auto_bed_leveling=lvl, flow_dynamic_calibration=flow)
         return {
             "task_name": task_name.encode("utf-8")[:120].decode("utf-8", "ignore"),
             "plate": f"Metadata/plate_{plate}.gcode",
-            "print_option": {
-                "auto_bed_leveling": lvl,
-                "flow_dynamic_calibration": flow,
-                "timelapse": bool(options.get("timelapse", False)),
-                "bed_leveling_mode": 2 if lvl else 0,
-                "flow_dynamic_cali_mode": 2 if flow else 0,
-                "nozzle_offset_cali_mode": 2,
-            },
+            "print_option": opt,
             "filament_slot": slots,
         }
 
@@ -417,7 +446,7 @@ class Service:
             if slots is None:
                 raise HubError(key="Mappatura automatica impossibile: {w}", params={"w": "; ".join(warnings)})
         task = task_name_for(f["filename"], plate, len(f["meta"]["plates"]))
-        cmd = self.build_print_cmd(task, plate, slots, options or {})
+        cmd = self.build_print_cmd(task, plate, slots, options or {}, p)
         plan = filament_plan(pl, slots, p)
         # registrata prima dell'invio: la stampante può iniziare prima che il Hub risponda
         self._set_pending(sn, {"file_id": file_id, "plate": plate, "task_name": task, "user_id": user_id,
@@ -444,6 +473,8 @@ class Service:
             self.db.x("DELETE FROM pending_prints WHERE printer_sn=?", (sn,))
             raise
         self._cooldown[sn] = time.time() + 45
+        log.info("Stampa inviata a %s (%s, file %s): print_cmd=%s risposta Hub=%s", sn, p["model"],
+                 "dalla cache" if cached else "caricato", json.dumps(cmd, ensure_ascii=False), res)
         return {"ok": True, "cached": cached, "warnings": warnings, "print_cmd": cmd, "hub": res}
 
     # ------------------------------------------------------------------ coda

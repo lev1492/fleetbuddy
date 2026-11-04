@@ -311,6 +311,7 @@ def normalize(d: dict) -> dict:
         "liveview_time": d.get("liveview_time", ""),
         "dual_nozzle": model in DUAL_NOZZLE or len(ex) > 1,
         "last_cmd_error": d.get("latest_print_cmd_send_fail_reason", ""),
+        "cmd_retry": int(_num(d.get("print_cmd_send_retry_cnt"))),
         "fw_min": firmware_below_min(model, up.get("current_ver", "")),
     }
 
