@@ -77,6 +77,17 @@ class PrusaLinkClient(DirectClient):
                 "mode": "API " + str(ver.get("api", "")), "status": ((raw.get("status") or {}).get("printer") or {}).get("state", "").lower(),
                 "tools": 1}
 
+    def job_thumbnail(self, raw: dict | None) -> bytes | None:
+        """PrusaLink indica la miniatura del file in stampa in job.file.refs.thumbnail."""
+        ref = ((((raw or {}).get("job") or {}).get("file") or {}).get("refs") or {}).get("thumbnail")
+        if not ref:
+            return None
+        try:
+            r = self.request("GET", ref)
+            return r.content if r.content[:8] == b"\x89PNG\r\n\x1a\n" else None
+        except HubError:
+            return None
+
     def _job_id(self) -> int:
         jid = ((self.model().get("status") or {}).get("job") or {}).get("id")
         if not jid:
@@ -101,7 +112,7 @@ class PrusaLinkClient(DirectClient):
             self._storage = (usable[0].get("path") or "/usb").strip("/")
         return self._storage
 
-    def start(self, local_path: str, name: str):
+    def start(self, local_path: str, name: str, options: dict | None = None):
         with open(local_path, "rb") as fh:
             data = fh.read()
         path = f"/api/v1/files/{self._storage_path()}/{urllib.parse.quote(name)}"

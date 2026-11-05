@@ -589,10 +589,12 @@ async def printer_name(request: Request, sn: str, body: dict):
 @app.get("/api/printers/{sn}/snapshot")
 async def printer_snapshot(request: Request, sn: str):
     printer_for(U(request), sn)
-    img = await S().get_snapshot(sn, max_age=10)
+    img, kind = await S().get_image(sn)
     if not img:
         raise HTTPException(404, _("Istantanea non disponibile"))
-    return Response(img, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+    media = "image/png" if img[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
+    return Response(img, media_type=media, headers={"Cache-Control": "no-store", "X-Image-Kind": kind,
+                                                    "Access-Control-Expose-Headers": "X-Image-Kind"})
 
 
 @app.get("/api/printers/{sn}/raw")

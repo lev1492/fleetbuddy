@@ -127,6 +127,7 @@ class Service:
         self.stopped_by_user: set[str] = set()   # interruzioni chieste da qui -> 'annullata', non 'fallita'
         self._hms_seen: dict[str, set] = {}
         self._snap_cache: dict[str, tuple[float, bytes]] = {}
+        self._thumb_cache: dict[str, tuple[float, bytes | None]] = {}
         self._task: asyncio.Task | None = None
         for sub in ("archive", "snapshots", "tmp"):
             (cfg.data_path / sub).mkdir(exist_ok=True)
@@ -525,6 +526,40 @@ class Service:
             self.db.x("INSERT OR REPLACE INTO hms_cache(key, description) VALUES(?,?)", (key, desc))
         return desc
 
+    async def get_image(self, sn: str) -> tuple[bytes | None, str]:
+        """Immagine per la scheda: la camera se c'è, altrimenti l'anteprima della stampa in corso
+        (dalla stampante, se la fornisce, oppure dal file in archivio)."""
+        img = await self.get_snapshot(sn, max_age=10)
+        if img:
+            return img, "camera"
+        p = self.printers.get(sn) or {}
+        key = f"{sn}:{p.get('task_id') or p.get('task_name')}"
+        hit = self._thumb_cache.get(key)
+        if hit and time.time() - hit[0] < 120:
+            return hit[1], "thumbnail" if hit[1] else ""
+        thumb = None
+        c = self.direct.get(sn)
+        if c and p.get("task_name"):
+            try:
+                thumb = await asyncio.to_thread(c.job_thumbnail, self.raw.get(sn))
+            except Exception:  # noqa: BLE001
+                thumb = None
+        if not thumb:
+            job = self._open_jobs.get(sn)
+            fid = (job or {}).get("file_id")
+            if not fid:
+                pend = self._take_pending(sn, consume=False)
+                fid = (pend or {}).get("file_id")
+            f = self.db.file(fid) if fid else None
+            if f:
+                from .gcodemeta import thumbnail_png
+                from .threemf import thumbnail
+                path = self.cfg.path(f["path"])
+                plate = (job or {}).get("plate") or 1
+                thumb = await asyncio.to_thread(thumbnail_png if f["meta"].get("kind") == "gcode" else (lambda x: thumbnail(x, plate)), path)
+        self._thumb_cache[key] = (time.time(), thumb)
+        return thumb, "thumbnail" if thumb else ""
+
     async def get_snapshot(self, sn: str, max_age: float = 5) -> bytes | None:
         hit = self._snap_cache.get(sn)
         if hit and time.time() - hit[0] < max_age:
@@ -561,7 +596,8 @@ class Service:
             "filament_slot": slots,
         }
 
-    async def _start_direct(self, f: dict, pl: dict, sn: str, user_id: int | None, queue: dict | None) -> dict:
+    async def _start_direct(self, f: dict, pl: dict, sn: str, user_id: int | None, queue: dict | None,
+                            options: dict | None = None) -> dict:
         """Carica il .gcode sulla stampante diretta e lo avvia."""
         task = task_name_for(f["filename"], 1, 1)
         plan = [{"type": x["type"], "brand": "", "color": x["color"], "tray_info_idx": "", "grams": x["used_g"],
@@ -569,7 +605,7 @@ class Service:
         self._set_pending(sn, {"file_id": f["id"], "plate": 1, "task_name": task, "user_id": user_id,
                                "planned_g": pl["weight_g"], "plan": plan, "queue": queue})
         try:
-            await asyncio.to_thread(self.direct[sn].start, str(self.cfg.path(f["path"])), Path(f["filename"]).name)
+            await asyncio.to_thread(self.direct[sn].start, str(self.cfg.path(f["path"])), Path(f["filename"]).name, options or {})
         except Exception:
             self.db.x("DELETE FROM pending_prints WHERE printer_sn=?", (sn,))
             raise
@@ -592,7 +628,7 @@ class Service:
         if gcode_file != (sn in self.direct):
             raise HubError(key="Questo file non è adatto a questa stampante: i .gcode.3mf vanno alle Bambu, i .gcode alle altre")
         if gcode_file:
-            return await self._start_direct(f, pl, sn, user_id, queue)
+            return await self._start_direct(f, pl, sn, user_id, queue, options)
         warnings: list[str] = []
         slots, warnings = resolve_slots(slots, pl["filaments"], p)
         if slots is None:

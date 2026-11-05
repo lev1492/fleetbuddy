@@ -97,7 +97,7 @@ class RepetierClient(DirectClient):
     def stop(self):
         self._api("stopJob", {})
 
-    def start(self, local_path: str, name: str):
+    def start(self, local_path: str, name: str, options: dict | None = None):
         if not self.slug:
             self.model()
         with open(local_path, "rb") as fh:

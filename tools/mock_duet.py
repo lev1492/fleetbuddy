@@ -14,7 +14,21 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 app = FastAPI()
-CFG = {"password": "reprap", "sbc": False}
+CFG = {"password": "reprap", "sbc": False, "rrf37": False}
+
+
+def _thumb() -> str:
+    import base64, sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from app.imgutil import rgba_to_qoi
+    px = bytearray()
+    for y in range(8):
+        for x in range(8):
+            px += bytes((220, 120 + x * 10, 40 + y * 20, 255))
+    return base64.b64encode(rgba_to_qoi(8, 8, px)).decode()
+
+
+THUMB = _thumb()
 SESSIONS: set[str] = set()
 FILES: dict[str, int] = {}
 M = {"status": "idle", "file": None, "t0": 0, "dur": 40, "paused_pos": None, "speed": 1.0, "last": None,
@@ -35,18 +49,26 @@ def model() -> dict:
         frac = (M["paused_pos"] if M["status"] == "paused" else min(1, (time.time() - M["t0"]) / M["dur"]))
         pos = int(FILES.get(M["file"], 1000) * frac)
     heat = [{"current": round(t[0], 1), "active": t[1], "state": "active" if t[1] else "off"} for t in M["temps"]]
+    if CFG["rrf37"]:   # come sulla Elemento: sensore di T1 scollegato
+        heat[3] = {"current": 2000, "active": 0, "state": "fault"}
     return {
         "boards": [{"name": "Duet 3 MB6HC", "shortName": "MB6HC", "firmwareVersion": "3.5.1"}],
-        "state": {"status": M["status"]},
-        "job": {"file": {"fileName": M["file"], "size": FILES.get(M["file"], 0), "numLayers": 120, "printTime": M["dur"]} if M["file"] else {},
+        "job": {"file": {"fileName": M["file"], "size": FILES.get(M["file"], 0), "numLayers": 120, "printTime": M["dur"],
+                         "thumbnails": [{"format": "qoi", "width": 8, "height": 8, "offset": 100, "data": THUMB if CFG["sbc"] else None}]} if M["file"] else {},
                 "filePosition": pos, "layer": int(120 * pos / max(1, FILES.get(M["file"], 1))) if M["file"] else 0,
                 "timesLeft": {"slicer": max(0, int(M["dur"] - (time.time() - M["t0"]))) if M["file"] else None},
                 "lastFileName": M["last"], "lastFileCancelled": bool(M.get("cancelled")), "lastFileAborted": False},
-        "heat": {"heaters": heat, "bedHeaters": [1, -1], "chamberHeaters": [2]},
+        "heat": ({"heaters": heat, "bedHeaterMapping": [[1]], "chamberHeaterMapping": [[2]]} if CFG["rrf37"]
+                 else {"heaters": heat, "bedHeaters": [1, -1], "chamberHeaters": [2]}),
         "tools": [{"number": 0, "name": "T0", "heaters": [0], "fans": [0]}, {"number": 1, "name": "T1", "heaters": [3], "fans": [0]}],
         "fans": [{"actualValue": 0.6 if M["status"] == "processing" else 0.0}],
         "move": {"speedFactor": M["speed"]},
-        "network": {"name": "Elemento-sim"},
+        "network": {"name": "Elemento-sim", "interfaces": [{"state": "active", "rssi": -48, "actualIP": "127.0.0.1"}]},
+        "global": {"fxToolNozzle": [0.6, 0.8], "fxNozzleTypes": ["Normale", "HS"], "fxToolNozzleType": [0, 1],
+                   "fxNozzleTypeAbrasive": [False, True], "fxToolHotSeconds": [49737, 50915], "fxPauseDetail": ""},
+        "sensors": {"filamentMonitors": [{"enableMode": 1, "filamentPresent": True, "status": "ok"},
+                                         {"enableMode": 1, "filamentPresent": False, "status": "noFilament"}]},
+        "state": {"status": M["status"], "currentTool": 0, "displayMessage": "Printing..." if M["file"] else ""},
     }
 
 
@@ -94,6 +116,11 @@ def rr_model(req: Request):
     if not authed(req):
         return JSONResponse({"err": 1}, 401)
     return {"key": "", "flags": "d99vno", "result": model()}
+
+
+@app.get("/rr_thumbnail")
+def rr_thumbnail(name: str, offset: int):
+    return {"fileName": name, "offset": offset, "data": THUMB, "next": 0, "err": 0}
 
 
 @app.get("/rr_gcode")
@@ -149,7 +176,8 @@ if __name__ == "__main__":
     ap.add_argument("--sbc", action="store_true")
     ap.add_argument("--password", default="reprap")
     ap.add_argument("--duration", type=int, default=40)
+    ap.add_argument("--rrf37", action="store_true", help="risposte come RRF 3.7 (Elemento): mappature dei riscaldatori, T1 guasto")
     a = ap.parse_args()
-    CFG.update(password=a.password, sbc=a.sbc)
+    CFG.update(password=a.password, sbc=a.sbc, rrf37=a.rrf37)
     M["dur"] = a.duration
     uvicorn.run(app, host="127.0.0.1", port=a.port, log_level="warning")

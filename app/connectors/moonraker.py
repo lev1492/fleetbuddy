@@ -12,7 +12,7 @@ from __future__ import annotations
 import urllib.parse
 
 from ..hub_client import HubError
-from .base import DirectClient, base_state, nozzle
+from .base import DirectClient, base_state, bed, nozzle
 
 STATE = {"printing": "RUNNING", "paused": "PAUSE", "standby": "IDLE", "complete": "IDLE", "cancelled": "IDLE", "error": "IDLE"}
 RESULT = {"complete": "finished", "cancelled": "cancelled", "error": "failed"}
@@ -30,6 +30,8 @@ class MoonrakerClient(DirectClient):
             self._s.headers["X-Api-Key"] = self.api_key
         self._objects: list[str] | None = None
         self._chamber = ""            # oggetto Klipper della camera (heater_generic / temperature_sensor)
+        self._beds: list[str] = []    # piani riscaldati: heater_bed più eventuali heater_generic "…bed…" (piani a zone)
+        self._thumb: tuple[str, bytes | None] = ("", None)
 
     def _discover(self):
         objs = self.request("GET", "/printer/objects/list").json()["result"]["objects"]
@@ -38,6 +40,8 @@ class MoonrakerClient(DirectClient):
             if "chamber" in o.lower() and o.split(" ", 1)[0] in ("heater_generic", "temperature_sensor", "temperature_fan"):
                 self._chamber = o
                 break
+        self._beds = (["heater_bed"] if "heater_bed" in objs else []) + sorted(
+            o for o in objs if o.startswith("heater_generic ") and "bed" in o.lower())
         try:
             cams = self.request("GET", "/server/webcams/list").json()["result"]["webcams"]
             if cams and cams[0].get("snapshot_url"):
@@ -51,7 +55,7 @@ class MoonrakerClient(DirectClient):
             return {"info": info, "status": {}}
         if self._objects is None:
             self._discover()
-        want = ["print_stats", "virtual_sdcard", "display_status", "heater_bed", "gcode_move", "fan"]
+        want = ["print_stats", "virtual_sdcard", "display_status", "gcode_move", "fan"] + self._beds
         want += [o for o in self._objects if o == "extruder" or (o.startswith("extruder") and o[8:].isdigit())]
         if self._chamber:
             want.append(self._chamber)
@@ -85,7 +89,9 @@ class MoonrakerClient(DirectClient):
         return base_state(
             self, True, error, state=state, task_name=task if state in ("RUNNING", "PAUSE") or kstate in RESULT else "",
             progress=int(progress * 100), remaining_min=int(remaining // 60), layer=layer, total_layers=total,
-            nozzles=noz, bed=(s.get("heater_bed") or {}).get("temperature"), bed_target=(s.get("heater_bed") or {}).get("target"),
+            nozzles=noz, beds=[bed(i, f"{i + 1}" if len(self._beds) > 1 else "", (s.get(o) or {}).get("temperature"),
+                                   (s.get(o) or {}).get("target"), key="bed" if i == 0 else f"bed:{i}")
+                               for i, o in enumerate(self._beds)],
             chamber=ch.get("temperature"), chamber_target=ch.get("target") or 0,
             speed_pct=round(100 * ((s.get("gcode_move") or {}).get("speed_factor") or 1)),
             fans={"part": round(fan * 100) if fan is not None else None, "aux": None, "chamber": None},
@@ -96,6 +102,26 @@ class MoonrakerClient(DirectClient):
         st = self.normalize(raw)
         return {"board": f"Klipper ({(raw.get('info') or {}).get('hostname', '')})", "firmware": st["firmware"],
                 "mode": None, "status": (raw.get("info") or {}).get("state"), "tools": len(st["nozzles"])}
+
+    def job_thumbnail(self, raw: dict | None) -> bytes | None:
+        """Miniatura più grande tra quelle che Moonraker estrae dal file in stampa (metadati del G-code)."""
+        fname = (((raw or {}).get("status") or {}).get("print_stats") or {}).get("filename") or ""
+        if not fname:
+            return None
+        if self._thumb[0] == fname:
+            return self._thumb[1]
+        img = None
+        try:
+            meta = self.request("GET", "/server/files/metadata", params={"filename": fname}).json()["result"]
+            thumbs = sorted(meta.get("thumbnails") or [], key=lambda t: (t.get("width") or 0) * (t.get("height") or 0))
+            if thumbs:
+                folder = fname.rsplit("/", 1)[0] + "/" if "/" in fname else ""
+                path = urllib.parse.quote(folder + thumbs[-1]["relative_path"])
+                img = self.request("GET", f"/server/files/gcodes/{path}").content
+        except (HubError, KeyError, ValueError):
+            img = None
+        self._thumb = (fname, img)
+        return img
 
     def _gcode(self, script: str):
         self.request("POST", "/printer/gcode/script", params={"script": script}, timeout=30)
@@ -109,15 +135,18 @@ class MoonrakerClient(DirectClient):
     def stop(self):
         self.request("POST", "/printer/print/cancel")
 
-    def start(self, local_path: str, name: str):
+    def start(self, local_path: str, name: str, options: dict | None = None):
         with open(local_path, "rb") as fh:
             self.request("POST", "/server/files/upload", files={"file": (name, fh, "application/octet-stream")},
                          data={"root": "gcodes", "print": "true"}, timeout=600)
 
     def set_temperature(self, target: str, value: float):
         v = max(0, min(400, float(value)))
-        if target == "bed":
-            heater = "heater_bed"
+        if target == "bed" or target.startswith("bed:"):
+            i = int(target[4:]) if target.startswith("bed:") else 0
+            if i >= len(self._beds):
+                raise HubError(key="Riscaldatore non valido")
+            heater = self._beds[i].split(" ", 1)[-1] if self._beds[i] != "heater_bed" else "heater_bed"
         elif target == "chamber":
             if not self._chamber.startswith("heater_generic"):
                 raise HubError(key="Questa stampante non ha un riscaldatore della camera")

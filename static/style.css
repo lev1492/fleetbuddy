@@ -321,6 +321,8 @@ button.tile.edit:hover{border-color:var(--run)}
 button.bdg.edit{cursor:pointer;font:inherit;font-size:12px;font-weight:600}
 button.bdg.edit:hover:not(:disabled){border-color:var(--run);color:var(--ink)}
 
+.pc.thumbimg .cam img{object-fit:contain;background:var(--sunk)}
+
 @media (max-width:760px){
   .statusbox .cam{flex-basis:104px}
   main{margin-left:0}

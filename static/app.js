@@ -206,10 +206,12 @@ function connect() {
 // Le schede vengono create una volta e poi aggiornate sul posto: l'immagine della camera
 // non viene mai ricreata, quindi non sparisce né lampeggia quando arriva un nuovo stato.
 const hmsDesc = {};
+const IMGKIND = {};   // per stampante: "camera" oppure "thumbnail" (anteprima della stampa, quando manca la camera)
 function snapAge(p) {
+  if (IMGKIND[p.sn] === "thumbnail") return t("Anteprima della stampa (nessuna camera)");
   // solo l'orario della foto: il testo cambia quando arriva una foto nuova, non ogni minuto
   const ts = Date.parse(p.liveview_time || "");
-  if (!ts || ts < Date.UTC(2000, 0, 1)) return t("Nessuna istantanea dal Hub");
+  if (!ts || ts < Date.UTC(2000, 0, 1)) return p.direct ? t("Nessuna camera: durante la stampa compare l'anteprima") : t("Nessuna istantanea dal Hub");
   const d = new Date(ts), today = new Date().toDateString() === d.toDateString();
   return t("Foto delle {time}", {time: d.toLocaleString(LOCALES[LANG], today ? {timeStyle: "short"} : {dateStyle: "short", timeStyle: "short"})});
 }
@@ -247,7 +249,7 @@ function statusInfo(p) {
   const showJob = p.active || done;
   const next = p.next_job ? `<div class="nextq"><span class="muted">${t("Prossima in coda")}</span>
       <b title="${esc(p.next_job.filename)}">${esc(p.next_job.filename || "—")}</b>${p.next_job.more ? `<span class="bdg">+${p.next_job.more}</span>` : ""}</div>` : "";
-  return `<div class="st-line"><b>${p.online ? stateName(p.state) : t("Offline")}</b>${chip}</div>
+  return `<div class="st-line"><b>${p.online ? stateName(p.state) : t("Offline")}</b>${chip}${p.status_text ? `<span class="muted small">${esc(p.status_text)}</span>` : ""}</div>
     <div class="task" title="${esc(p.task_name)}">${showJob ? esc(p.task_name || t("Stampa")) : `<span class="muted">${t("Nessun lavoro in corso")}</span>`}</div>
     <div class="progrow"><div class="strand" style="${fc ? "--fc:" + fc : ""}"><i style="width:${showJob ? p.progress : 0}%"></i></div><b>${showJob ? p.progress + "%" : "—"}</b></div>
     <div class="muted small">${p.active ? t("mancano {d}", {d: fmtDur(p.remaining_min * 60)}) + " · " + t("strato {a}/{b}", {a: p.layer, b: p.total_layers})
@@ -284,13 +286,23 @@ function cardBody(p) {
   const dual = p.nozzles.length > 1;
   const direct = !!p.direct, caps = p.caps || {}, editT = direct && caps.temperature && canOperate() && p.online;
   const tiles = [];
-  const tile = (label, v, tgt, key) => editT && !(key === "chamber" && caps.chamber_heater === false)
-    ? `<button type="button" class="tile edit" data-temp="${key}" data-label="${esc(label)}" data-target="${tgt || 0}" title="${esc(t("Clicca per impostare la temperatura"))}"><span>${label} ✎</span><b>${deg(v, tgt)}</b></button>`
-    : `<div class="tile"><span>${label}</span><b>${deg(v, tgt)}</b></div>`;
+  const tile = (label, v, tgt, key, fault) => {
+    const val = fault ? `<span class="warn" title="${esc(t("Sensore di temperatura guasto o scollegato"))}">⚠ ${t("sensore")}</span>` : deg(v, tgt);
+    return editT && !fault && !(key === "chamber" && caps.chamber_heater === false)
+      ? `<button type="button" class="tile edit" data-temp="${key}" data-label="${esc(label)}" data-target="${tgt || 0}" title="${esc(t("Clicca per impostare la temperatura"))}"><span>${label} ✎</span><b>${val}</b></button>`
+      : `<div class="tile"><span>${label}</span><b>${val}</b></div>`;
+  };
   if (direct) {
-    p.nozzles.forEach(n => tiles.push(tile(esc(n.label || t("Ugello")), n.temp, n.target, `tool:${n.id}`)));
-    tiles.push(tile(t("Piatto|letto"), p.bed, p.bed_target, "bed"));
+    p.nozzles.forEach(n => tiles.push(tile(esc(n.label || t("Ugello")) + (n.active && p.nozzles.length > 1 ? " ●" : ""), n.temp, n.target, `tool:${n.id}`, n.fault)));
+    if ((p.beds || []).length > 1) p.beds.forEach(b => tiles.push(tile(`${t("Piatto|letto")} ${esc(b.label)}`, b.temp, b.target, b.key, b.fault)));
+    else tiles.push(tile(t("Piatto|letto"), p.bed, p.bed_target, "bed", p.beds && p.beds[0] && p.beds[0].fault));
     if (p.chamber != null) tiles.push(tile(t("Camera"), p.chamber, p.chamber_target, "chamber"));
+    // dati dell'ugello per utensile, quando la stampante li comunica (es. variabili FabbrixOS sulla Duet)
+    if (p.nozzles.some(n => n.diameter || n.type_name || n.filament_sensor))
+      tiles.push(`<div class="tile wide"><span>${t("Utensili")}</span>${p.nozzles.map(n => `<div class="hot"><b class="side">${esc(n.label)}</b>
+        ${n.diameter ? `<b>${n.diameter} mm</b>` : ""} <small>${[n.type_name ? esc(n.type_name) : "", n.abrasive ? t("per abrasivi") : "",
+          n.filament_sensor ? (n.filament_sensor === "ok" ? t("filamento presente") : `<span class="warn">${t("filamento assente")}</span>`) : "",
+          n.hot_hours != null ? t("{h} h di riscaldamento", {h: n.hot_hours}) : "", n.present === false ? `<span class="warn">${t("utensile non montato")}</span>` : ""].filter(Boolean).join(" · ")}</small></div>`).join("")}</div>`);
   } else if (dual) {
     const L = p.nozzles.find(n => n.side === "left") || p.nozzles[0], R = p.nozzles.find(n => n.side === "right") || p.nozzles[1];
     tiles.push(`<div class="tile"><span>${t("Ugelli")} ${sideLetter("left")} / ${sideLetter("right")}</span><b>${deg(L.temp, L.target)} / ${deg(R.temp, R.target)}</b></div>`);
@@ -312,7 +324,8 @@ function cardBody(p) {
     if (["RUNNING", "PAUSE", "PAUSED", "PREPARE"].includes(p.state)) btns.push(`<button data-opt="stop" class="danger">${t("Interrompi")}</button>`);
   }
   const alerts = [...(p.print_error ? [p.print_error] : []), ...p.hms]
-    .map(c => `<div class="alert">${c} ${esc(hmsDesc[p.model + c] || "")}</div>`).join("");
+    .map(c => `<div class="alert">${c} ${esc(hmsDesc[p.model + c] || "")}</div>`).join("")
+    + (p.alerts || []).map(a => `<div class="alert">${esc(a.msg ? t(a.msg, a.params || {}) : a.text)}</div>`).join("");
   const groups = GROUPS.filter(g => g.printers.includes(p.sn));
   return `<div class="tiles">${tiles.join("")}</div>
     ${fans.length ? `<div class="tiles fans">${fans.map(([k, l]) => `<div class="tile"><span>${l}</span><b>${f[k]}%</b></div>`).join("")}</div>` : ""}
@@ -412,6 +425,9 @@ async function refreshCam(card) {
   try {
     const r = await fetch(`/api/printers/${encodeURIComponent(card.dataset.sn)}/snapshot?t=${Date.now()}`, {credentials: "same-origin"});
     if (!r.ok) { if (img.hidden) ph.textContent = t("Nessuna immagine disponibile"); return; }
+    const kind = r.headers.get("X-Image-Kind") || "camera";
+    if (IMGKIND[card.dataset.sn] !== kind) { IMGKIND[card.dataset.sn] = kind; card.querySelector(".st-info")._html = null; }
+    card.classList.toggle("thumbimg", kind === "thumbnail");
     const url = URL.createObjectURL(await r.blob());
     const pre = new Image();
     pre.onload = () => { const old = img._url; img.src = url; img._url = url; img.hidden = false; if (old) setTimeout(() => URL.revokeObjectURL(old), 1000); };
@@ -604,9 +620,7 @@ async function printDialog(f, presetPrinter) {
     <div id="mapping"></div>
     <div class="warn" id="busynote"></div>
     <div class="row">
-      <label class="inline"><input type="checkbox" name="bed_leveling" checked> ${t("Livellamento piatto")}</label>
-      <label class="inline"><input type="checkbox" name="flow_calibration" checked> ${t("Calibrazione flusso")}</label>
-      <label class="inline"><input type="checkbox" name="timelapse"> ${t("Timelapse")}</label>
+      <span id="popts" class="row"></span>
     </div>
     <div class="dlgfoot">
       <label class="inline">${t("Copie")} <input type="number" name="copies" value="1" min="1" max="99" style="width:70px"></label>
@@ -672,16 +686,26 @@ async function printDialog(f, presetPrinter) {
       };
     });
   }
+  const opts = () => Object.fromEntries($$("#popts input").map(i => [i.name, i.checked]));
+  // opzioni proposte solo se la stampante (o il tipo di file, per gruppi e "qualsiasi") le supporta
+  const OPT_LABELS = {bed_leveling: [t("Livellamento piatto"), true], flow_calibration: [t("Calibrazione flusso"), true], timelapse: [t("Timelapse"), false]};
+  const showOptions = () => {
+    const sn = target().sn, pr = sn ? S.printers.find(x => x.sn === sn) : null;
+    const list = pr ? ((pr.caps || {}).print_options || []) : (isG ? [] : ["bed_leveling", "flow_calibration", "timelapse"]);
+    const prev = opts();
+    $("#popts").innerHTML = list.length ? list.map(k => `<label class="inline"><input type="checkbox" name="${k}" ${(k in prev ? prev[k] : OPT_LABELS[k][1]) ? "checked" : ""}> ${OPT_LABELS[k][0]}</label>`).join("")
+      : `<span class="muted small">${t("Nessuna opzione di stampa per questa stampante: valgono le impostazioni del file.")}</span>`;
+  };
   const showPlate = () => {
     const pl = plateOf();
     $("#platethumb").src = `/api/files/${f.id}/thumb/${pl.index}`;
     $("#plateinfo").innerHTML = `${fmtDur(pl.prediction_s)} · ${pl.weight_g || 0} g ${dots(pl.filaments)}`;
   };
   showPlate();
-  fm.dest.onchange = remap;
+  fm.dest.onchange = () => { showOptions(); remap(); };
+  showOptions();
   if (fm.plate.tagName === "SELECT") fm.plate.onchange = () => { showPlate(); remap(); };
   remap();
-  const opts = () => ({bed_leveling: fm.bed_leveling.checked, flow_calibration: fm.flow_calibration.checked, timelapse: fm.timelapse.checked});
   const valid = () => !slots || plateOf().filaments.every(fl => slots[fl.id - 1] && (slots[fl.id - 1].auto || slots[fl.id - 1].slot_id !== 255)) || (toast(t("Assegna uno slot a ogni filamento"), "error"), false);
   $("#printnow").onclick = async ev => {
     ev.preventDefault(); if (!valid()) return;
@@ -981,6 +1005,7 @@ const DIRECT_KINDS = {
   prusalink: {label: "PrusaLink", fields: ["user", "pass", "api"], host: "192.168.1.70"},
   duet: {label: "Duet / RepRapFirmware 3", fields: ["pass"], host: "192.168.1.179"},
   repetier: {label: "Repetier-Server", fields: ["api!", "slug"], host: "192.168.1.80:3344"},
+  elegoo: {label: "Elegoo (SDCP)", fields: [], host: "192.168.1.90"},
 };
 // suggerimenti mostrati nel modulo (frasi del catalogo traduzioni)
 const DIRECT_HINTS = {
@@ -989,6 +1014,7 @@ const DIRECT_HINTS = {
   prusalink: "Utente maker e password mostrati sulla stampante (Impostazioni → Rete → PrusaLink). Firmware 5 o successivo.",
   duet: "Lo stesso indirizzo di Duet Web Control; password solo se impostata con M551.",
   repetier: "Chiave API: Repetier-Server → Impostazioni globali → Connettività. Stampante: lo slug, se il server ne gestisce più di una.",
+  elegoo: "Centauri Carbon e resine Elegoo recenti (protocollo SDCP): basta l'indirizzo IP. Le porte 3000 (UDP) e 3030 devono essere raggiungibili.",
 };
 RENDER.direct = async function renderDirect() {
   const el = $("#v-direct");
@@ -1007,10 +1033,10 @@ RENDER.direct = async function renderDirect() {
     <div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Stato")}</th><th>${t("Pausa / stop")}</th><th>${t("Invio file")}</th><th>${t("Temperature")}</th><th>${t("Velocità")}</th><th>${t("Camera")}</th></tr></thead><tbody>
       ${[["OctoPrint", 1, 1, ".gcode", 1, 1, t("automatica")], ["Klipper (Moonraker)", 1, 1, ".gcode", 1, 1, t("automatica")],
          ["PrusaLink", 1, 1, ".bgcode / .gcode", 0, 0, t("manuale")], ["Duet / RepRapFirmware 3", 1, 1, ".gcode", 1, 1, t("manuale")],
-         ["Repetier-Server", 1, 1, ".gcode", 1, 1, t("manuale")]].map(([n, a, b, c, d, e2, f]) =>
+         ["Repetier-Server", 1, 1, ".gcode", 1, 1, t("manuale")], ["Elegoo (SDCP)", 1, 1, ".gcode", 0, 0, t("automatica")]].map(([n, a, b, c, d, e2, f]) =>
         `<tr><td><b>${n}</b></td><td>${a ? "✓" : "—"}</td><td>${b ? "✓" : "—"}</td><td>${c}</td><td>${d ? "✓" : "—"}</td><td>${e2 ? "✓" : "—"}</td><td>${f}</td></tr>`).join("")}
     </tbody></table></div>
-    <p class="sub" style="margin-top:8px">${t("PrusaLink non accetta comandi G-code dalla rete, quindi temperature e velocità si cambiano dalla stampante. \"Automatica\": l'indirizzo della webcam viene letto dalla stampante; \"manuale\": va indicato nel modulo.")}</p>`;
+    <p class="sub" style="margin-top:8px">${t("PrusaLink e SDCP (Elegoo) non hanno comandi di rete per temperature e velocità: si cambiano dalla stampante. \"Automatica\": l'indirizzo della webcam viene letto dalla stampante; \"manuale\": va indicato nel modulo. Senza camera, la scheda mostra l'anteprima della stampa.")}</p>`;
   $("#dadd").onclick = () => directDialog();
   const tb = el.querySelector("table");
   if (tb) tb.onclick = async e => {

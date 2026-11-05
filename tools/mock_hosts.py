@@ -13,8 +13,11 @@ import re
 import secrets
 import time
 
+import socket
+import threading
+
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 app = FastAPI()
@@ -66,6 +69,8 @@ def gcode(cmd: str):
             P["tool"][1] = float(m.group(1))
         elif m := re.match(r"M140 S([\d.]+)", c) or re.match(r"SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=([\d.]+)", c):
             P["bed"][1] = float(m.group(1))
+        elif m := re.match(r"SET_HEATER_TEMPERATURE HEATER=heater_bed(\d) TARGET=([\d.]+)", c):
+            P[f"bed{m.group(1)}"] = float(m.group(2))
         elif m := re.match(r"M141 S([\d.]+)", c) or re.match(r"SET_HEATER_TEMPERATURE HEATER=chamber TARGET=([\d.]+)", c):
             P["chamber"][1] = float(m.group(1))
         elif m := re.match(r"M220 S(\d+)", c):
@@ -163,7 +168,18 @@ def m_info():
 @app.get("/printer/objects/list")
 def m_objects():
     return {"result": {"objects": ["print_stats", "virtual_sdcard", "display_status", "heater_bed", "extruder",
-                                   "gcode_move", "fan", "heater_generic chamber"]}}
+                                   "gcode_move", "fan", "heater_generic chamber", "heater_generic heater_bed1",
+                                   "heater_generic heater_bed2", "heater_generic heater_bed3"]}}
+
+
+@app.get("/server/files/metadata")
+def m_meta(filename: str):
+    return {"result": {"filename": filename, "thumbnails": [{"width": 32, "height": 32, "relative_path": ".thumbs/x-32x32.png"}]}}
+
+
+@app.get("/server/files/gcodes/{path:path}")
+def m_thumb(path: str):
+    return Response(PNG, media_type="image/png")
 
 
 @app.get("/server/webcams/list")
@@ -182,6 +198,7 @@ def m_query():
         "extruder": {"temperature": round(P["tool"][0], 1), "target": P["tool"][1]},
         "heater_bed": {"temperature": round(P["bed"][0], 1), "target": P["bed"][1]},
         "heater_generic chamber": {"temperature": round(P["chamber"][0], 1), "target": P["chamber"][1]},
+        **{f"heater_generic heater_bed{i}": {"temperature": round(P["bed"][0] - i, 1), "target": P.get(f"bed{i}", 0)} for i in (1, 2, 3)},
         "gcode_move": {"speed_factor": P["speed"] / 100}, "fan": {"speed": 0.5 if P["state"] == "printing" else 0}}}}
 
 
@@ -322,11 +339,97 @@ async def r_upload(slug: str, req: Request):
     return {}
 
 
+# ------------------------------------------------------------------ Elegoo SDCP (Centauri Carbon)
+MAINBOARD = "c0ffee00c0ffee00"
+
+
+def sdcp_status() -> dict:
+    tick()
+    code = {"printing": 13, "paused": 6}.get(P["state"]) or {"complete": 9, "cancelled": 8}.get(P["result"], 0)
+    return {"Status": {"CurrentStatus": [1] if P["state"] in ("printing", "paused") else [0],
+                       "TempOfNozzle": round(P["tool"][0], 1), "TempTargetNozzle": P["tool"][1],
+                       "TempOfHotbed": round(P["bed"][0], 1), "TempTargetHotbed": P["bed"][1],
+                       "TempOfBox": round(P["chamber"][0], 1), "TempTargetBox": 0,
+                       "CurrentFanSpeed": {"ModelFan": 100 if P["state"] == "printing" else 0, "AuxiliaryFan": 0, "BoxFan": 30},
+                       "PrintInfo": {"Status": code, "CurrentLayer": int(progress() * 120), "TotalLayer": 120,
+                                     "CurrentTicks": int(progress() * K["dur"]), "TotalTicks": K["dur"],
+                                     "Filename": P["file"] or "", "TaskId": f"task{P['jobid']}", "PrintSpeedPct": 100,
+                                     "Progress": int(progress() * 100)}},
+            "MainboardID": MAINBOARD, "TimeStamp": int(time.time()), "Topic": f"sdcp/status/{MAINBOARD}"}
+
+
+@app.websocket("/websocket")
+async def sdcp_ws(ws: WebSocket):
+    await ws.accept()
+    try:
+        while True:
+            msg = json.loads(await ws.receive_text())
+            d = msg["Data"]
+            cmd, ack, extra = d["Cmd"], 0, {}
+            if cmd == 128:
+                fname = d["Data"]["Filename"].rsplit("/", 1)[-1]
+                if fname not in UPLOADS:
+                    ack = 1
+                else:
+                    start(fname)
+                    print("SDCP avvio:", d["Data"])
+            elif cmd == 129:
+                pause()
+            elif cmd == 131:
+                resume()
+            elif cmd == 130:
+                cancel()
+            elif cmd == 386:
+                extra = {"VideoUrl": f"127.0.0.1:{K['port']}/video"}
+            await ws.send_text(json.dumps({"Id": "x", "Topic": f"sdcp/response/{MAINBOARD}",
+                                           "Data": {"Cmd": cmd, "RequestID": d["RequestID"], "MainboardID": MAINBOARD,
+                                                    "Data": {"Ack": ack, **extra}}}))
+            await ws.send_text(json.dumps(sdcp_status()))
+    except WebSocketDisconnect:
+        pass
+
+
+UPLOADS: dict[str, int] = {}
+
+
+@app.post("/uploadFile/upload")
+async def sdcp_upload(req: Request):
+    form = await req.form()
+    data = await form["File"].read()
+    UPLOADS[form["File"].filename] = UPLOADS.get(form["File"].filename, 0) + len(data)
+    return {"code": "000000", "success": True, "messages": None}
+
+
+@app.get("/video")
+def sdcp_video():
+    frame = b"\xff\xd8\xff\xe0" + b"mjpegframe" * 20 + b"\xff\xd9"
+    body = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+    return Response(body * 3, media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+def udp_discovery(port: int):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", port))
+    while True:
+        data, addr = s.recvfrom(1024)
+        if data.strip() == b"M99999":
+            s.sendto(json.dumps({"Id": "x", "Data": {"Name": "Centauri", "MachineName": "Centauri Carbon", "BrandName": "ELEGOO",
+                                                     "MainboardIP": "127.0.0.1", "MainboardID": MAINBOARD,
+                                                     "ProtocolVersion": "V3.0.0", "FirmwareVersion": "V1.1.29"}}).encode(), addr)
+
+
+PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+                    "1f15c4890000000d49444154789c63f8cfc0f00f0004850180848a8c210000000049454e44ae426082")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kind", required=True, choices=["octoprint", "moonraker", "prusalink", "repetier"])
+    ap.add_argument("--kind", required=True, choices=["octoprint", "moonraker", "prusalink", "repetier", "elegoo"])
+    ap.add_argument("--udp-port", type=int, default=3000)
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--duration", type=int, default=30)
     a = ap.parse_args()
-    K.update(kind=a.kind, dur=a.duration)
+    K.update(kind=a.kind, dur=a.duration, port=a.port)
+    if a.kind == "elegoo":
+        threading.Thread(target=udp_discovery, args=(a.udp_port,), daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=a.port, log_level="warning")

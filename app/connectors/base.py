@@ -21,7 +21,8 @@ class DirectClient:
     kind = ""
     label = ""
     default_port: int | None = None
-    caps = {"temperature": False, "speed": False, "filament": False, "bed_clean": False}
+    # print_options: opzioni proposte nel dialogo di stampa (es. "bed_leveling", "timelapse"); vuoto = nessuna
+    caps = {"temperature": False, "speed": False, "filament": False, "bed_clean": False, "print_options": []}
 
     def __init__(self, row: dict):
         self.id = row["id"]
@@ -62,8 +63,12 @@ class DirectClient:
     def stop(self):
         raise HubError(key="Comando non disponibile per questa stampante")
 
-    def start(self, local_path: str, name: str):
+    def start(self, local_path: str, name: str, options: dict | None = None):
         raise HubError(key="Comando non disponibile per questa stampante")
+
+    def job_thumbnail(self, raw: dict | None) -> bytes | None:
+        """Miniatura PNG della stampa in corso fornita dalla stampante, se l'API la espone."""
+        return None
 
     def set_temperature(self, target: str, value: float):
         raise HubError(key="Comando non disponibile per questa stampante")
@@ -102,9 +107,15 @@ class DirectClient:
         return bool(self.snapshot_url or self.auto_snapshot_url)
 
 
-def nozzle(i: int, label: str, temp, target) -> dict:
+def nozzle(i: int, label: str, temp, target, **extra) -> dict:
     return {"id": i, "side": "tool", "label": label, "temp": temp, "target": target or 0, "diameter": None,
-            "flow": None, "material": None, "code": ""}
+            "flow": None, "material": None, "code": "", "fault": False, **extra}
+
+
+def bed(i: int, label: str, temp, target, key: str = "", fault: bool = False) -> dict:
+    """Un piano riscaldato: le stampanti grandi (es. Elegoo OrangeStorm Giga) ne hanno più di uno."""
+    return {"id": i, "label": label, "temp": temp, "target": target or 0, "key": key or (f"bed:{i}" if i else "bed"),
+            "fault": fault}
 
 
 def base_state(client: DirectClient, online: bool, error: str = "", **kw) -> dict:
@@ -118,7 +129,8 @@ def base_state(client: DirectClient, online: bool, error: str = "", **kw) -> dic
         "active": online and state in ("PREPARE", "RUNNING", "PAUSE") and bool(task),
         "progress": 0, "remaining_min": 0, "prepare_percent": 0, "layer": 0, "total_layers": 0,
         "task_name": task, "task_id": task, "subtask_id": "",
-        "nozzle": None, "nozzle_target": None, "bed": None, "bed_target": None, "chamber": None, "chamber_target": 0,
+        "nozzle": None, "nozzle_target": None, "bed": None, "bed_target": None, "beds": [], "chamber": None, "chamber_target": 0,
+        "status_text": "",
         "extruders": [], "speed_lvl": None, "speed_pct": 100, "wifi": "", "nozzle_diameter": "", "nozzle_type": "",
         "ams_busy": False, "trays": [], "ams_units": [], "nozzles": [], "dual_nozzle": False,
         "fans": {"part": None, "aux": None, "chamber": None}, "hms": [], "print_error": "", "firmware": "",
@@ -127,6 +139,9 @@ def base_state(client: DirectClient, online: bool, error: str = "", **kw) -> dic
         "caps": dict(client.caps),
     }
     st.update(kw)
+    st["caps"].setdefault("print_options", [])
     if st["nozzles"]:
         st["nozzle"], st["nozzle_target"] = st["nozzles"][0]["temp"], st["nozzles"][0]["target"]
+    if st["beds"] and st["bed"] is None:
+        st["bed"], st["bed_target"] = st["beds"][0]["temp"], st["beds"][0]["target"]
     return st

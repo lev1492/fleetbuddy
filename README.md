@@ -187,11 +187,19 @@ insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova co
 | PrusaLink (MK4/MK4S, MK3.9, XL, MINI, CORE One, firmware 5+) | ✓ | ✓ | .bgcode / .gcode | — | — | indirizzo manuale |
 | Duet / RepRapFirmware 3 (Duet 2 e 3, autonoma o SBC) | ✓ | ✓ | .gcode | ✓ | ✓ | indirizzo manuale |
 | Repetier-Server | ✓ | ✓ | .gcode | ✓ | ✓ | indirizzo manuale |
+| Elegoo (SDCP) – Centauri Carbon, resine Saturn/Mars recenti | ✓ | ✓ | .gcode (con livellamento e timelapse) | — | — | automatica (MJPEG) |
 
 - Le stampe si inviano dall'archivio: i file `.gcode`/`.bgcode` vanno alle stampanti dirette, i `.gcode.3mf` alle Bambu.
   Tempo, filamenti, colori e miniatura sono letti dai commenti dello slicer (PrusaSlicer, OrcaSlicer, SuperSlicer, Cura)
   o dall'intestazione dei `.bgcode`.
-- PrusaLink non accetta G-code dalla rete: temperature e velocità si cambiano dalla stampante.
+- PrusaLink ed Elegoo (SDCP) non accettano G-code dalla rete: temperature e velocità si cambiano dalla stampante.
+- Piani riscaldati multipli (es. Elegoo OrangeStorm Giga con Klipper, Duet con più `bedHeaters`): un riquadro e un
+  comando per ciascun piano.
+- Senza camera la scheda mostra l'anteprima della stampa in corso (dalla stampante o dal file in archivio).
+- Opzioni di stampa (livellamento, calibrazione del flusso, timelapse) proposte solo dove la stampante le gestisce:
+  Bambu (senza timelapse sulla P1P) ed Elegoo; per le altre valgono le impostazioni del G-code.
+- Duet: compatibile con RepRapFirmware 3.7 (`bedHeaterMapping`/`chamberHeaterMapping`); sensori di temperatura guasti
+  segnalati come tali; con FabbrixOS mostra ugello, tipo, sensori del filamento e ore di riscaldamento per utensile.
 - Password e chiavi API sono salvate nel database di FleetBuddy (in `data/`, leggibile solo dal tuo utente).
 
 ### Altri metodi valutati (non ancora supportati)
@@ -203,7 +211,6 @@ insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova co
 | MKS (modulo Wi‑Fi) | protocollo TCP con comandi G-code e risposte testuali: fattibile, da provare su hardware |
 | ESP3D | API HTTP con comandi G-code: fattibile con lettura di M105/M27, da provare su hardware |
 | CrealityPrint | protocollo WebSocket delle Creality K1/K2/Ender‑3 V3 non documentato ufficialmente; le K1 con root funzionano già con Moonraker |
-| Elegoo Link | protocollo SDCP (WebSocket) della Centauri Carbon: documentato, fattibile, da provare su hardware |
 | Flashforge | API locale delle Adventurer 5M / 5M Pro (porta 8898) e protocollo TCP: fattibile, da provare su hardware |
 | Obico, SimplyPrint, 3DPrinterOS | servizi cloud con account e chiave API: fattibili, ma i dati passano su internet |
 

@@ -85,7 +85,7 @@ class OctoPrintClient(DirectClient):
     def stop(self):
         self.request("POST", "/api/job", json={"command": "cancel"})
 
-    def start(self, local_path: str, name: str):
+    def start(self, local_path: str, name: str, options: dict | None = None):
         with open(local_path, "rb") as fh:
             self.request("POST", "/api/files/local", files={"file": (name, fh, "application/octet-stream")},
                          data={"select": "true", "print": "true"}, timeout=600)

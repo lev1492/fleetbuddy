@@ -3,6 +3,25 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.10.0] – 2026-11-06
+
+### Novità
+- Elegoo (protocollo SDCP v3, "Elegoo Link"): Centauri Carbon e resine recenti. Ricerca automatica, stato, temperature,
+  ventole, avanzamento, pausa, ripresa, stop, invio e avvio dei file con livellamento e timelapse, fotogramma dal video.
+- Piani riscaldati multipli (es. Elegoo OrangeStorm Giga con Klipper, Duet con più piani): un riquadro e una
+  temperatura regolabile per ciascun piano.
+- Senza camera, la scheda mostra l'anteprima della stampa in corso: dalla stampante (Duet, Klipper, PrusaLink)
+  oppure dal file in archivio (anche per le Bambu senza camera). Miniature QOI convertite in PNG.
+- Opzioni di stampa proposte solo dove esistono: livellamento, calibrazione del flusso e timelapse per le Bambu
+  (niente timelapse sulla P1P), livellamento e timelapse per le Elegoo; per le altre valgono le impostazioni del file.
+- Duet: dati degli utensili dalle variabili FabbrixOS (diametro e tipo di ugello, per abrasivi, ore di riscaldamento),
+  sensori del filamento, utensile attivo, messaggio della scheda, motivo della pausa, potenza del segnale Wi‑Fi.
+
+### Correzioni
+- Duet con RepRapFirmware 3.7: temperatura del piano e della camera non mostrate (nuovi campi
+  `bedHeaterMapping`/`chamberHeaterMapping`).
+- Duet: un sensore di temperatura scollegato o guasto non appare più come 2000 °C ma come errore del sensore, con avviso.
+
 ## [0.9.0] – 2026-11-06
 
 ### Novità
