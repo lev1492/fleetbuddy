@@ -216,7 +216,7 @@ function activeColor(p) { const l = p.trays.filter(x => x.loaded); return l.leng
 const FLOW = {standard: "Flusso standard", high: "Alto flusso", tpu: "TPU alto flusso"};
 const MATERIAL = {stainless: "Acciaio inox", hardened: "Acciaio temprato", tungsten: "Carburo di tungsteno"};
 const deg = (v, target) => v == null ? "—" : `${Math.round(v)}°${target ? `<small>/${Math.round(target)}°</small>` : ""}`;
-const sideLetter = side => side === "left" ? "L" : side === "right" ? "R" : "";
+const sideLetter = side => side === "left" ? t("SX") : side === "right" ? t("DX") : "";
 function nozzleType(n) {
   const parts = [n.flow ? t(FLOW[n.flow]) : "", n.material ? t(MATERIAL[n.material]) : ""].filter(Boolean);
   if (parts.length) return parts.join(" · ") + (n.code && /^H/i.test(n.code) ? ` <span class="muted">(${esc(n.code)})</span>` : "");
@@ -283,7 +283,7 @@ function cardBody(p) {
   const tiles = [];
   if (dual) {
     const L = p.nozzles.find(n => n.side === "left") || p.nozzles[0], R = p.nozzles.find(n => n.side === "right") || p.nozzles[1];
-    tiles.push(`<div class="tile"><span>${t("Ugelli")} L / R</span><b>${deg(L.temp, L.target)} / ${deg(R.temp, R.target)}</b></div>`);
+    tiles.push(`<div class="tile"><span>${t("Ugelli")} ${sideLetter("left")} / ${sideLetter("right")}</span><b>${deg(L.temp, L.target)} / ${deg(R.temp, R.target)}</b></div>`);
   } else {
     const n = p.nozzles[0] || {temp: p.nozzle, target: p.nozzle_target};
     tiles.push(`<div class="tile"><span>${t("Ugello")}</span><b>${deg(n.temp, n.target)}</b></div>`);
@@ -540,7 +540,9 @@ async function uploadFiles(list, pid) {
     toast(t("Caricamento di {f}…", {f: file.name}));
     const fd = new FormData(); fd.append("file", file); fd.append("project_id", pid === null || pid === undefined ? "" : String(pid));
     const r = await act(() => api("/api/files", {method: "POST", body: fd}));
-    if (r) toast(r.duplicate ? t("{f} era già in archivio (progetto: {p})", {f: file.name, p: projectOf(r.project_id).name}) : t("{f} aggiunto all'archivio", {f: file.name}), "ok");
+    if (r) toast(r.duplicate ? t("{f} era già in archivio (progetto: {p})", {f: file.name, p: projectOf(r.project_id).name})
+      : r.renamed ? t("Esiste già un file {f}: il nuovo è stato aggiunto come {n}", {f: file.name, n: r.filename})
+      : t("{f} aggiunto all'archivio", {f: file.name}), "ok");
   }
   RENDER.archive();
 }
@@ -587,7 +589,13 @@ async function printDialog(f, presetPrinter) {
     if (!sn) { slots = null; $("#mapping").innerHTML = `<p class="sub" style="margin:0">${t("Filamenti richiesti: {list}.", {list: pl.filaments.map(x => esc(x.type)).join(", ")})} ${dots(pl.filaments)} ${gid ? t("La coda sceglierà la prima stampante libera del gruppo che li ha caricati.") : t("La coda sceglierà la prima stampante libera che li ha caricati.")}</p>`; return; }
     const r = await act(() => api(`/api/files/${f.id}/automap`, {method: "POST", body: {printer_sn: sn, plate: pl.index}}));
     if (!r) return;
-    slots = r.slots ? [...r.slots] : pl.filaments.map(() => ({ams_id: 255, slot_id: 255}));
+    // filamento non caricato: assegnazione automatica, la coda la farà quando sarà caricato
+    const missing = !r.slots;
+    slots = r.slots ? [...r.slots] : Array.from({length: Math.max(1, ...pl.filaments.map(x => x.id))}, () => ({auto: true}));
+    if (missing) {
+      $("#printnow").disabled = true; $("#toqueue").classList.add("primary"); $("#printnow").classList.remove("primary");
+      $("#busynote").innerHTML = t("Uno o più filamenti non sono caricati su {p}: aggiungi la stampa in coda con l'assegnazione automatica, partirà quando li avrai caricati.", {p: esc(pr0.name)});
+    }
     const loaded = r.trays.filter(x => x.loaded);
     const pr = S.printers.find(x => x.sn === sn) || {nozzles: [], ams_units: []};
     const dual = (pr.nozzles || []).length > 1;
@@ -599,21 +607,22 @@ async function printDialog(f, presetPrinter) {
     };
     const optHtml = x => `<span class="sw" style="--c:${esc(x.color || "#888")}"></span><b>${esc(trayLabel(x.label))}</b> ${esc(x.type)}${x.sub_brand ? ` <span class="muted">${esc(x.sub_brand)}</span>` : ""}${sideOfTray(x) ? ` <span class="side">${sideOfTray(x)}</span>` : ""}`;
     const findTray = c => loaded.find(x => x.ams_id === c.ams_id && x.slot_id === c.slot_id);
+    const autoHtml = `<span class="sw auto"></span><b>${t("Automatica")}</b> <span class="muted">${t("assegnata all'avvio")}</span>`;
+    const curHtml = c => c && c.auto ? autoHtml : (findTray(c || {}) ? optHtml(findTray(c)) : `<span class="muted">${t("— scegli uno slot —")}</span>`);
     $("#mapping").innerHTML = `<div class="maprow">${r.filaments.map(fl => {
-        const cur = findTray(slots[fl.id - 1] || {});
-        return `<div class="fl"><i style="--c:${esc(fl.color)}"></i>${fl.id}. ${esc(fl.type)} · ${fl.used_g} g${fl.extruder ? ` <span class="side">${fl.extruder === 1 ? "L" : "R"}</span>` : ""}</div>
-        <div class="slotpick" data-fid="${fl.id}"><button type="button" class="spk-cur">${cur ? optHtml(cur) : `<span class="muted">${t("— scegli uno slot —")}</span>`}<span class="spk-arrow">▾</span></button>
-          <div class="spk-list" role="listbox" hidden>${loaded.map(x => `<button type="button" role="option" data-v="${x.ams_id}:${x.slot_id}">${optHtml(x)}</button>`).join("")}</div></div>`;
+        return `<div class="fl"><i style="--c:${esc(fl.color)}"></i>${fl.id}. ${esc(fl.type)} · ${fl.used_g} g${fl.extruder ? ` <span class="side">${sideLetter(fl.extruder === 1 ? "left" : "right")}</span>` : ""}</div>
+        <div class="slotpick" data-fid="${fl.id}"><button type="button" class="spk-cur">${curHtml(slots[fl.id - 1])}<span class="spk-arrow">▾</span></button>
+          <div class="spk-list" role="listbox" hidden><button type="button" role="option" data-v="auto">${autoHtml}</button>${loaded.map(x => `<button type="button" role="option" data-v="${x.ams_id}:${x.slot_id}">${optHtml(x)}</button>`).join("")}</div></div>`;
       }).join("")}</div>${r.warnings.map(w => `<div class="warn">${esc(w)}</div>`).join("")}`;
     $$("#mapping .slotpick").forEach(box => {
       const list = $(".spk-list", box);
       $(".spk-cur", box).onclick = () => { const open = list.hidden; $$("#mapping .spk-list").forEach(l => l.hidden = true); list.hidden = !open; };
       list.onclick = e => {
         const o = e.target.closest("[data-v]"); if (!o) return;
-        const [a, b] = o.dataset.v.split(":").map(Number);
         while (slots.length < +box.dataset.fid) slots.push({ams_id: 255, slot_id: 255});
-        slots[+box.dataset.fid - 1] = {ams_id: a, slot_id: b};
-        $(".spk-cur", box).innerHTML = optHtml(findTray({ams_id: a, slot_id: b})) + `<span class="spk-arrow">▾</span>`;
+        if (o.dataset.v === "auto") slots[+box.dataset.fid - 1] = {auto: true};
+        else { const [a, b] = o.dataset.v.split(":").map(Number); slots[+box.dataset.fid - 1] = {ams_id: a, slot_id: b}; }
+        $(".spk-cur", box).innerHTML = curHtml(slots[+box.dataset.fid - 1]) + `<span class="spk-arrow">▾</span>`;
         list.hidden = true;
       };
     });
@@ -628,7 +637,7 @@ async function printDialog(f, presetPrinter) {
   if (fm.plate.tagName === "SELECT") fm.plate.onchange = () => { showPlate(); remap(); };
   remap();
   const opts = () => ({bed_leveling: fm.bed_leveling.checked, flow_calibration: fm.flow_calibration.checked, timelapse: fm.timelapse.checked});
-  const valid = () => !slots || plateOf().filaments.every(fl => slots[fl.id - 1] && slots[fl.id - 1].slot_id !== 255) || (toast(t("Assegna uno slot a ogni filamento"), "error"), false);
+  const valid = () => !slots || plateOf().filaments.every(fl => slots[fl.id - 1] && (slots[fl.id - 1].auto || slots[fl.id - 1].slot_id !== 255)) || (toast(t("Assegna uno slot a ogni filamento"), "error"), false);
   $("#printnow").onclick = async ev => {
     ev.preventDefault(); if (!valid()) return;
     ev.target.disabled = true; ev.target.textContent = t("Invio al Hub…");
@@ -646,6 +655,19 @@ async function printDialog(f, presetPrinter) {
 }
 
 // ------------------------------------------------------------------ coda
+// Filamenti richiesti da una stampa in coda, divisi per ugello (SX/DX); quelli non caricati sulla
+// stampante di destinazione sono evidenziati
+function needHtml(q) {
+  const fils = q.filaments || [];
+  if (!fils.length) return "";
+  const pr = q.printer_sn ? S.printers.find(x => x.sn === q.printer_sn) : null;
+  const loaded = pr ? new Set(pr.trays.filter(x => x.loaded).map(x => x.type.toUpperCase())) : null;
+  const groups = [[1, sideLetter("left")], [2, sideLetter("right")], [null, ""]]
+    .map(([ex, label]) => [label, fils.filter(f => (f.extruder || null) === ex)]).filter(([, l]) => l.length);
+  const one = f => { const miss = loaded && !loaded.has(f.type.toUpperCase());
+    return `<span class="nf ${miss ? "miss" : ""}" title="${esc(f.type)} ${esc(f.color)} · ${f.used_g} g${miss ? " – " + esc(t("non caricato")) : ""}"><i style="--c:${esc(f.color)}"></i>${esc(f.type)}</span>`; };
+  return `<div class="needs">${groups.map(([label, l]) => `<span class="need">${label ? `<b class="side">${label}</b>` : ""}${l.map(one).join("")}</span>`).join("")}</div>`;
+}
 RENDER.queue = async function renderQueue() {
   const el = $("#v-queue");
   const items = await api("/api/queue").catch(e => (toast(e.message, "error"), []));
@@ -655,7 +677,8 @@ RENDER.queue = async function renderQueue() {
     <div class="list">${items.length ? items.map(q => `<div class="item" data-id="${q.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${q.file_id}/thumb/${q.plate}">
       <div><div class="t">${esc(q.filename || t("File rimosso"))}${q.copies > 1 ? ` × ${q.copies}` : ""}</div>
-        <div class="m"><span class="st ${q.status}">${jobName(q.status)}</span> · ${dest(q)} · ${t("piatto {n}", {n: q.plate})} · ${fmtDur(q.prediction_s)} · ${q.weight_g} g ${dots(q.filaments)}</div>
+        <div class="m"><span class="st ${q.status}">${jobName(q.status)}</span> · ${dest(q)} · ${t("piatto {n}", {n: q.plate})} · ${fmtDur(q.prediction_s)} · ${q.weight_g} g</div>
+        ${needHtml(q)}
         <div class="m">${q.created_by_name ? t("Aggiunta da {u}", {u: esc(q.created_by_name)}) : ""}${q.message ? ` · ${esc(qMsg(q.message))}` : ""}</div></div>
       <div class="a operator-only">${q.status === "queued" ? `<button data-mv="up" aria-label="${esc(t("Sposta su"))}">↑</button><button data-mv="down" aria-label="${esc(t("Sposta giù"))}">↓</button>` : ""}
         ${q.status === "error" ? `<button data-retry>${t("Riprova")}</button>` : ""}<button class="danger" data-del>${t("Rimuovi")}</button></div></div>`).join("")

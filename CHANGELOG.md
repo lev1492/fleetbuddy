@@ -3,6 +3,19 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.7.0] – 2026-11-05
+
+### Novità
+- Assegnazione "Automatica" dei filamenti nel dialogo di stampa: si può mettere in coda una stampa per una stampante
+  anche se il filamento non è ancora caricato. La stampa resta in coda ("in attesa del filamento") e parte da sola
+  appena il filamento viene caricato, assegnato allo slot giusto sull'ugello giusto. Si possono anche combinare slot
+  scelti a mano e slot automatici. Se un filamento manca è proposta l'assegnazione automatica e "Stampa ora" è disattivato.
+- Coda di stampa: per ogni voce, i filamenti necessari divisi per ugello (SX/DX), con il colore; quelli non caricati
+  sulla stampante di destinazione sono evidenziati.
+- Archivio: caricando un file diverso con lo stesso nome di uno esistente, il nuovo viene salvato come "1-nome",
+  "2-nome" e così via.
+- I lati degli ugelli sono indicati come SX/DX in italiano (L/R in inglese e equivalenti nelle altre lingue).
+
 ## [0.6.1] – 2026-11-04
 
 ### Novità

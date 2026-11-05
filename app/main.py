@@ -639,11 +639,17 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
         return {"id": existing["id"], "duplicate": True, "project_id": existing["project_id"]}
     rel = f"{cfg.app.data_dir}/archive/{md5}.3mf"
     tmp.rename(cfg.path(rel))
+    name = Path(file.filename or "senza_nome.gcode.3mf").name
+    taken = {r["filename"].lower() for r in S().db.q("SELECT filename FROM files")}
+    final, n = name, 0
+    while final.lower() in taken:   # file diverso con lo stesso nome: "1-nome", "2-nome", ...
+        n += 1
+        final = f"{n}-{name}"
     fid = S().db.x("INSERT INTO files(md5, filename, path, size, uploaded_at, meta, project_id, uploaded_by) "
                    "VALUES(?,?,?,?,?,?,?,?)",
-                   (md5, Path(file.filename or "senza_nome.gcode.3mf").name, rel,
+                   (md5, final, rel,
                     cfg.path(rel).stat().st_size, time.time(), json.dumps(meta), pid, u.id))
-    return {"id": fid, "duplicate": False}
+    return {"id": fid, "duplicate": False, "filename": final, "renamed": final != name}
 
 
 @app.delete("/api/files/{fid}")

@@ -365,3 +365,33 @@ def auto_map(filaments: list[dict], printer: dict) -> tuple[list[dict] | None, l
         used.add((best["ams_id"], best["slot_id"]))
         slots[f["id"] - 1] = {"ams_id": best["ams_id"], "slot_id": best["slot_id"]}
     return slots, warnings
+
+
+def _is_auto(s) -> bool:
+    return not s or bool(s.get("auto")) or s.get("ams_id") is None
+
+
+def resolve_slots(slots: list | None, filaments: list[dict], printer: dict) -> tuple[list[dict] | None, list[str]]:
+    """Unisce gli slot scelti a mano con quelli "automatici" ({"auto": true}), assegnati sulla stampante
+    al momento dell'avvio. slots=None significa tutto automatico. Restituisce (slot, avvisi);
+    slot è None se un filamento automatico non è caricato sulla stampante."""
+    if not slots:
+        return auto_map(filaments, printer)
+    autos = [f for f in filaments if f["id"] - 1 >= len(slots) or _is_auto(slots[f["id"] - 1])]
+    if not autos:
+        return slots, []
+    found, warnings = auto_map(autos, printer)
+    if found is None:
+        return None, warnings
+    size = max(len(slots), len(found), max(f["id"] for f in filaments))
+    out = []
+    for i in range(size):
+        mine = slots[i] if i < len(slots) else None
+        if mine and not _is_auto(mine):
+            out.append({"ams_id": mine["ams_id"], "slot_id": mine["slot_id"]})
+        elif i < len(found):
+            out.append(found[i])
+        else:
+            out.append({"ams_id": 255, "slot_id": 255})
+    return out, warnings
+

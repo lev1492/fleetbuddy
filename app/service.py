@@ -17,7 +17,7 @@ from .i18n import tr
 def qmsg(msg: str, **params) -> str:
     """Messaggio di coda salvato come frase + parametri, tradotto dal browser."""
     return json.dumps({"msg": msg, "params": params}, ensure_ascii=False)
-from .printers import auto_map, is_ready, normalize
+from .printers import auto_map, is_ready, normalize, resolve_slots
 
 log = logging.getLogger("fleetbuddy.service")
 
@@ -465,10 +465,9 @@ class Service:
         if not p:
             raise HubError(key="Stampante sconosciuta o offline")
         warnings: list[str] = []
-        if not slots:
-            slots, warnings = auto_map(pl["filaments"], p)
-            if slots is None:
-                raise HubError(key="Mappatura automatica impossibile: {w}", params={"w": "; ".join(warnings)})
+        slots, warnings = resolve_slots(slots, pl["filaments"], p)
+        if slots is None:
+            raise HubError(key="Mappatura automatica impossibile: {w}", params={"w": "; ".join(warnings)})
         task = task_name_for(f["filename"], plate, len(f["meta"]["plates"]))
         cmd = self.build_print_cmd(task, plate, slots, options or {}, p)
         plan = filament_plan(pl, slots, p)
@@ -526,11 +525,15 @@ class Service:
                 if not p or sn in busy or not is_ready(p) or self._cooldown.get(sn, 0) > time.time() \
                         or self.has_pending(sn):
                     continue
-                slots = json.loads(it["mapping"]) if it["mapping"] else None
+                raw = json.loads(it["mapping"]) if it["mapping"] else None
+                slots, _w = resolve_slots(raw, pl["filaments"] if pl else [], p)
                 if slots is None:
-                    slots, _ = auto_map(pl["filaments"] if pl else [], p)
-                    if slots is None:
-                        continue   # questa stampante non ha i filamenti: prova la prossima
+                    # filamento non ancora caricato: la stampa resta in coda finché non lo è
+                    if it["printer_sn"]:
+                        note = qmsg("in attesa del filamento su {printer}", printer=p["name"])
+                        if note != it.get("message"):
+                            self.db.x("UPDATE queue SET message=? WHERE id=?", (note, it["id"]))
+                    continue   # questa stampante non ha i filamenti: prova la prossima
                 busy.add(sn)
                 try:
                     left = (it["copies"] or 1) - 1
