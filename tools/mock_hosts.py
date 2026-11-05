@@ -418,13 +418,96 @@ def udp_discovery(port: int):
                                                      "ProtocolVersion": "V3.0.0", "FirmwareVersion": "V1.1.29"}}).encode(), addr)
 
 
+# ------------------------------------------------------------------ Raise3D (Raise Touch Remote Access API)
+R3D = {"token": "", "files": {"Local": ["pezzo.gcode", "staffa.gcode"], "Local/clienti": ["ordine42.gcode"]}}
+
+
+def r3d_ok(data=None):
+    return {"status": 1, **({"data": data} if data is not None else {})}
+
+
+def r3d_auth(token: str):
+    return token and token == R3D["token"]
+
+
+@app.get("/v1/login")
+def r3d_login(sign: str, timestamp: str):
+    import hashlib as h
+    exp = h.md5(h.sha1(f"password=segreta&timestamp={timestamp}".encode()).hexdigest().encode()).hexdigest()
+    if sign != exp:
+        return {"error": {"code": 10000, "msg": "sign error or password error"}, "status": 0}
+    R3D["token"] = secrets.token_hex(16)
+    return r3d_ok({"token": R3D["token"]})
+
+
+@app.api_route("/v1/{path:path}", methods=["GET", "POST"])
+async def r3d_api(path: str, req: Request, token: str = ""):
+    if not r3d_auth(token):
+        return {"error": {"code": 401, "msg": "token error"}, "status": 0}
+    tick()
+    body = await req.json() if req.method == "POST" else {}
+    rs = {"printing": "running", "paused": "paused"}.get(P["state"]) or ("completed" if P["result"] == "complete" else "idle")
+    if path == "printer/system":
+        return r3d_ok({"Serial_number": "12345678942", "api_version": "0.1.0.307", "firmware_version": "1.1.6-rev1",
+                       "machine_name": "raise3d", "model": "Raise3D Pro3 Plus", "nozzies_num": 2, "version": "0.9.3"})
+    if path == "printer/camera":
+        return r3d_ok({"camerserver_URI": f":{K['port']}/api/v1/camera/auth_stream", "is_camera_connected": True,
+                       "user_name": "raise3d_camera", "password": "368d8d"})
+    if path == "printer/runningstatus":
+        return r3d_ok({"running_status": rs})
+    if path == "printer/basic":
+        return r3d_ok({"fan_cur_speed": 50 if P["state"] == "printing" else 0, "fan_tar_speed": 0, "feed_cur_rate": P["speed"],
+                       "feed_tar_rate": P["speed"], "heatbed_cur_temp": round(P["bed"][0], 1), "heatbed_tar_temp": P["bed"][1]})
+    if path in ("printer/nozzle1", "printer/nozzle2"):
+        t = P["tool"] if path.endswith("1") else P["chamber"]
+        return r3d_ok({"flow_cur_rate": 100, "flow_tar_rate": 100, "nozzle_cur_temp": round(t[0], 1), "nozzle_tar_temp": t[1]})
+    if path in ("printer/nozzle1/temp/set", "printer/nozzle2/temp/set"):
+        (P["tool"] if "nozzle1" in path else P["chamber"])[1] = body["temperature"]
+        return r3d_ok()
+    if path == "printer/heatbedtemp/set":
+        P["bed"][1] = body["temperature"]
+        return r3d_ok()
+    if path == "printer/feedrate/set":
+        P["speed"] = body["feedrate"]
+        return r3d_ok()
+    if path == "job/currentjob":
+        if not P["file"]:
+            return {"error": {"code": 10004, "msg": "no job"}, "status": 0}
+        js = {"printing": "running", "paused": "paused"}.get(P["state"]) or ("completed" if P["result"] == "complete" else "stopped")
+        return r3d_ok({"file_name": P["file"], "print_progress": round(progress() * 100, 2), "printed_layer": int(progress() * 200),
+                       "printed_time": int(progress() * K["dur"]), "job_id": f"JOB{P['jobid']}", "total_layer": 200,
+                       "total_time": K["dur"], "job_status": js})
+    if path == "job/currentjob/set":
+        {"pause": pause, "resume": resume, "stop": cancel}[body["operate"]]()
+        return r3d_ok()
+    if path == "job/newjob/set":
+        folder, name = body["file_path"].rsplit("/", 1)
+        if name not in R3D["files"].get(folder, []):
+            return {"error": {"code": 10005, "msg": "root path error"}, "status": 0}
+        start(body["file_path"])
+        return r3d_ok()
+    if path == "fileops/list":
+        d = req.query_params.get("dir", "Local")
+        subs = sorted({k[len(d) + 1:].split("/")[0] for k in R3D["files"] if k.startswith(d + "/")})
+        return r3d_ok({"dir_list": subs, "file_list": [{"data_path": "", "file_name": f} for f in R3D["files"].get(d, [])]})
+    return JSONResponse({"status": 0}, 404)
+
+
+@app.get("/api/v1/camera/auth_stream")
+def r3d_cam(req: Request):
+    import base64
+    if req.headers.get("authorization") != "Basic " + base64.b64encode(b"raise3d_camera:368d8d").decode():
+        return Response(status_code=401)
+    return sdcp_video()
+
+
 PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
                     "1f15c4890000000d49444154789c63f8cfc0f00f0004850180848a8c210000000049454e44ae426082")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kind", required=True, choices=["octoprint", "moonraker", "prusalink", "repetier", "elegoo"])
+    ap.add_argument("--kind", required=True, choices=["octoprint", "moonraker", "prusalink", "repetier", "elegoo", "raise3d"])
     ap.add_argument("--udp-port", type=int, default=3000)
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--duration", type=int, default=30)

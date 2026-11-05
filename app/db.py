@@ -72,6 +72,8 @@ MIGRATIONS = [
     ("direct_printers", "api_key", "TEXT DEFAULT ''"),
     ("direct_printers", "username", "TEXT DEFAULT ''"),
     ("direct_printers", "extra", "TEXT DEFAULT ''"),
+    ("direct_printers", "brand", "TEXT DEFAULT ''"),
+    ("direct_printers", "printer_model", "TEXT DEFAULT ''"),
     ("job_filaments", "source", "TEXT DEFAULT 'slicer'"),
 ]
 

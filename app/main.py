@@ -547,6 +547,32 @@ async def printer_opt(request: Request, sn: str, body: dict):
     return res
 
 
+@app.get("/api/printers/{sn}/files")
+async def printer_files(request: Request, sn: str, dir: str = "Local"):
+    """File presenti nella memoria della stampante (per i tipi che non permettono di caricarne, es. Raise3D)."""
+    u = U(request)
+    need_operator(u)
+    p = printer_for(u, sn)
+    c = S().direct.get(sn)
+    if not c or not (p.get("caps") or {}).get("remote_files"):
+        raise HTTPException(400, _("Comando non disponibile per questa stampante"))
+    return await asyncio.to_thread(c.list_files, dir)
+
+
+@app.post("/api/printers/{sn}/start_remote")
+async def printer_start_remote(request: Request, sn: str, body: dict):
+    u = U(request)
+    need_operator(u)
+    p = printer_for(u, sn)
+    if not S().direct.get(sn) or not (p.get("caps") or {}).get("remote_files"):
+        raise HTTPException(400, _("Comando non disponibile per questa stampante"))
+    if not is_ready(p) or S().has_pending(sn):
+        raise HTTPException(409, _("{p} non è pronta: i file si possono avviare solo con la stampante inattiva.", p=p["name"]))
+    await S().start_remote(sn, str(body.get("path", "")), u.id)
+    log.info("%s: avviato il file %s presente sulla stampante, da %s", sn, body.get("path"), u.username)
+    return {"ok": True}
+
+
 @app.post("/api/printers/{sn}/temperature")
 async def printer_temperature(request: Request, sn: str, body: dict):
     """Temperatura obiettivo di ugello (tool:N), piano (bed) o camera (chamber); solo stampanti dirette."""
@@ -1186,7 +1212,7 @@ DIRECT_KINDS = tuple(KINDS)
 
 def _direct_row(body: dict, old: dict | None = None) -> dict:
     row = dict(old or {})
-    for k in ("name", "host", "snapshot_url", "username", "extra"):
+    for k in ("name", "host", "snapshot_url", "username", "extra", "brand", "printer_model"):
         if k in body:
             row[k] = str(body[k] or "").strip()[:200]
     for k in ("password", "api_key"):   # segreti: un campo vuoto in modifica significa "non cambiare"
@@ -1198,7 +1224,7 @@ def _direct_row(body: dict, old: dict | None = None) -> dict:
     if not row.get("host"):
         raise HTTPException(400, _("Indica l'indirizzo della stampante"))
     row.setdefault("name", row["host"])
-    for k in ("password", "snapshot_url", "api_key", "username", "extra"):
+    for k in ("password", "snapshot_url", "api_key", "username", "extra", "brand", "printer_model"):
         row.setdefault(k, "")
     return row
 
@@ -1206,7 +1232,7 @@ def _direct_row(body: dict, old: dict | None = None) -> dict:
 @app.get("/api/direct")
 async def direct_list(request: Request):
     _admin(request)
-    rows = S().db.q("SELECT id, kind, name, host, snapshot_url, username, extra, enabled, created_at, "
+    rows = S().db.q("SELECT id, kind, name, host, snapshot_url, username, extra, brand, printer_model, enabled, created_at, "
                     "password <> '' AS has_password, api_key <> '' AS has_api_key FROM direct_printers ORDER BY name")
     for r in rows:
         sn = f"{r['kind']}-{r['id']}"
@@ -1238,10 +1264,10 @@ async def direct_test(request: Request, body: dict):
 async def direct_add(request: Request, body: dict):
     _admin(request)
     row = _direct_row(body)
-    rid = S().db.x("INSERT INTO direct_printers(kind, name, host, password, snapshot_url, api_key, username, extra, enabled, "
-                   "created_at) VALUES(?,?,?,?,?,?,?,?,1,?)",
+    rid = S().db.x("INSERT INTO direct_printers(kind, name, host, password, snapshot_url, api_key, username, extra, brand, "
+                   "printer_model, enabled, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,1,?)",
                    (row["kind"], row["name"], row["host"], row["password"], row["snapshot_url"], row["api_key"],
-                    row["username"], row["extra"], time.time()))
+                    row["username"], row["extra"], row["brand"], row["printer_model"], time.time()))
     S().reload_direct()
     return {"id": rid, "sn": f"{row['kind']}-{rid}"}
 
@@ -1255,8 +1281,9 @@ async def direct_edit(request: Request, rid: int, body: dict):
     row = _direct_row(body, old)
     enabled = 1 if body.get("enabled", old["enabled"]) else 0
     S().db.x("UPDATE direct_printers SET name=?, host=?, password=?, snapshot_url=?, api_key=?, username=?, extra=?, "
-             "enabled=? WHERE id=?", (row["name"], row["host"], row["password"], row["snapshot_url"], row["api_key"],
-                                      row["username"], row["extra"], enabled, rid))
+             "brand=?, printer_model=?, enabled=? WHERE id=?",
+             (row["name"], row["host"], row["password"], row["snapshot_url"], row["api_key"], row["username"], row["extra"],
+              row["brand"], row["printer_model"], enabled, rid))
     S().reload_direct()
     return {"ok": True}
 

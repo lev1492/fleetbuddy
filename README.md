@@ -188,6 +188,7 @@ insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova co
 | Duet / RepRapFirmware 3 (Duet 2 e 3, autonoma o SBC) | ✓ | ✓ | .gcode | ✓ | ✓ | indirizzo manuale |
 | Repetier-Server | ✓ | ✓ | .gcode | ✓ | ✓ | indirizzo manuale |
 | Elegoo (SDCP) – Centauri Carbon, resine Saturn/Mars recenti | ✓ | ✓ | .gcode (con livellamento e timelapse) | — | — | automatica (MJPEG) |
+| Raise3D (Raise Touch Remote Access API) – Pro2/Pro3, E2, N2 | ✓ | ✓ | solo file già sulla stampante (l'API non permette di caricarne) | ✓ | ✓ | automatica |
 
 - Le stampe si inviano dall'archivio: i file `.gcode`/`.bgcode` vanno alle stampanti dirette, i `.gcode.3mf` alle Bambu.
   Tempo, filamenti, colori e miniatura sono letti dai commenti dello slicer (PrusaSlicer, OrcaSlicer, SuperSlicer, Cura)
@@ -200,6 +201,10 @@ insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova co
   Bambu (senza timelapse sulla P1P) ed Elegoo; per le altre valgono le impostazioni del G-code.
 - Duet: compatibile con RepRapFirmware 3.7 (`bedHeaterMapping`/`chamberHeaterMapping`); sensori di temperatura guasti
   segnalati come tali; con FabbrixOS mostra ugello, tipo, sensori del filamento e ore di riscaldamento per utensile.
+- Marca e modello: scelti quando si aggiunge la stampante, da un catalogo delle principali marche e modelli dei profili
+  di OrcaSlicer (`static/catalog.json`, si può scrivere anche una marca o un modello diversi); per le Bambu sono automatici.
+- Vista delle stampanti a schede, elenco o tabella, con ricerca e ordinamento per nome, marca, modello, stato o
+  avanzamento; ordinando per marca le stampanti sono raggruppate. In elenco e tabella un clic apre la scheda completa.
 - Password e chiavi API sono salvate nel database di FleetBuddy (in `data/`, leggibile solo dal tuo utente).
 
 ### Altri metodi valutati (non ancora supportati)

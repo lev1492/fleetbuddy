@@ -29,6 +29,7 @@ CHUNK = 1024 * 1024
 class ElegooClient(DirectClient):
     kind = "elegoo"
     label = "Elegoo (SDCP)"
+    default_brand = "Elegoo"
     caps = {"temperature": False, "speed": False, "filament": False, "bed_clean": False,
             "print_options": ["bed_leveling", "timelapse"]}
 

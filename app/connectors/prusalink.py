@@ -25,6 +25,7 @@ RESULT = {"FINISHED": "finished", "STOPPED": "cancelled"}
 class PrusaLinkClient(DirectClient):
     kind = "prusalink"
     label = "PrusaLink"
+    default_brand = "Prusa"
     caps = {"temperature": False, "speed": False, "filament": False, "bed_clean": False}
 
     def __init__(self, row: dict):

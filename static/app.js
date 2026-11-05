@@ -170,7 +170,7 @@ const adminTabs = active => `<div class="tabs" role="tablist">
   <a href="#admin" role="tab" aria-selected="${active === "admin"}" class="${active === "admin" ? "on" : ""}">${t("Utenti e gruppi")}</a>
   <a href="#hub" role="tab" aria-selected="${active === "hub"}" class="${active === "hub" ? "on" : ""}">Fleet Hub</a>
   <a href="#direct" role="tab" aria-selected="${active === "direct"}" class="${active === "direct" ? "on" : ""}">${t("Altre stampanti")}</a></div>`;
-function reRender() { $("#v-printers")._built = false; $$("#pgrid .pc").forEach(c => c.remove()); go(); }
+function reRender() { $("#v-printers")._built = false; CARDS.clear(); go(); }
 window.addEventListener("hashchange", () => ME && go());
 
 // ------------------------------------------------------------------ eventi live (SSE)
@@ -238,7 +238,7 @@ function cardTop(p) {
     p.firmware ? `<span class="bdg ${p.fw_min ? "warn" : ""}" title="${p.fw_min ? esc(t("Firmware {v} inferiore al minimo supportato dal Hub ({min}).", {v: p.firmware, min: p.fw_min})) : ""}">fw ${esc(p.firmware)}</span>` : "",
   ].join("");
   return `<div class="pc-title"><div class="pc-name">${esc(p.name)}</div>
-      <div class="pc-model">${esc(p.model)}${diam ? " · " + esc(diam) : ""} · ${esc(p.sn)}</div></div>
+      <div class="pc-model">${esc([p.brand, p.printer_model || p.model].filter(Boolean).join(" "))}${diam ? " · " + esc(diam) : ""} · ${esc(p.sn)}</div></div>
     <div class="bdgs">${badges}</div>`;
 }
 function statusInfo(p) {
@@ -293,7 +293,7 @@ function cardBody(p) {
       : `<div class="tile"><span>${label}</span><b>${val}</b></div>`;
   };
   if (direct) {
-    p.nozzles.forEach(n => tiles.push(tile(esc(n.label || t("Ugello")) + (n.active && p.nozzles.length > 1 ? " ●" : ""), n.temp, n.target, `tool:${n.id}`, n.fault)));
+    p.nozzles.forEach(n => tiles.push(tile(esc(n.label || sideLetter(n.side) || t("Ugello")) + (n.active && p.nozzles.length > 1 ? " ●" : ""), n.temp, n.target, `tool:${n.id}`, n.fault)));
     if ((p.beds || []).length > 1) p.beds.forEach(b => tiles.push(tile(`${t("Piatto|letto")} ${esc(b.label)}`, b.temp, b.target, b.key, b.fault)));
     else tiles.push(tile(t("Piatto|letto"), p.bed, p.bed_target, "bed", p.beds && p.beds[0] && p.beds[0].fault));
     if (p.chamber != null) tiles.push(tile(t("Camera"), p.chamber, p.chamber_target, "chamber"));
@@ -329,9 +329,9 @@ function cardBody(p) {
   const groups = GROUPS.filter(g => g.printers.includes(p.sn));
   return `<div class="tiles">${tiles.join("")}</div>
     ${fans.length ? `<div class="tiles fans">${fans.map(([k, l]) => `<div class="tile"><span>${l}</span><b>${f[k]}%</b></div>`).join("")}</div>` : ""}
-    ${done && canOperate() ? `<button class="platebtn" data-opt="bed_clean">${t("Segna il piatto come liberato")}</button>` : ""}
+    ${done && canOperate() && (!p.direct || caps.bed_clean) ? `<button class="platebtn" data-opt="bed_clean">${t("Segna il piatto come liberato")}</button>` : ""}
     <div class="sec">${t("Comandi")}</div>
-    <div class="ctrls">${direct ? (caps.speed ? `<button type="button" class="bdg edit" data-speed="${p.speed_pct}" ${canOperate() && p.online ? "" : "disabled"}>${t("Velocità")} · ${p.speed_pct}% ✎</button>`
+    <div class="ctrls">${caps.remote_files && canOperate() && p.online ? `<button type="button" data-remote>${t("File sulla stampante")}</button>` : ""}${direct ? (caps.speed ? `<button type="button" class="bdg edit" data-speed="${p.speed_pct}" ${canOperate() && p.online ? "" : "disabled"}>${t("Velocità")} · ${p.speed_pct}% ✎</button>`
       : `<span class="bdg">${t("Velocità")} · ${p.speed_pct}%</span>`)
       : `<span class="bdg">${t("Velocità")} · ${esc(t(SPEEDS[p.speed_lvl] || "—"))}</span>`}<span class="grow"></span>${btns.join("") || `<span class="muted small">${t("Nessun comando disponibile in questo stato")}</span>`}</div>
     ${direct ? "" : `<div class="sec">${t("Filamenti")}</div>
@@ -339,6 +339,29 @@ function cardBody(p) {
     ${alerts ? `<div class="alerts">${alerts}</div>` : ""}
     ${p.last_cmd_error ? `<div class="warn">${t("Ultimo invio fallito: {e}", {e: esc(p.last_cmd_error)})}</div>` : ""}
     ${groups.length ? `<div>${groups.map(g => `<span class="tag" style="--c:${esc(g.color)}"><i></i>${esc(g.name)}</span>`).join(" ")}</div>` : ""}`;
+}
+// File nella memoria della stampante, per i tipi che non accettano caricamenti (es. Raise3D)
+async function remoteFilesDialog(p, folder) {
+  openDialog(`<h3>${esc(p.name)} – ${t("File sulla stampante")}</h3><p class="sub" style="margin:0">${esc(folder)}</p><div id="rfl" class="muted">${t("Caricamento…")}</div>
+    <div class="dlgfoot"><button value="cancel">${t("Chiudi")}</button></div>`);
+  let data;
+  try { data = await api(`/api/printers/${p.sn}/files?dir=${encodeURIComponent(folder)}`); }
+  catch (e) { $("#rfl").innerHTML = `<span class="warn">${esc(e.message)}</span>`; return; }
+  const ready = p.online && p.state === "IDLE" && !p.pending;
+  const up = folder.includes("/") ? folder.slice(0, folder.lastIndexOf("/")) : "";
+  $("#rfl").className = "rfiles";
+  $("#rfl").innerHTML = (up ? `<button type="button" data-dir="${esc(up)}">⬆ ${t("Cartella superiore")}</button>` : "")
+    + data.dirs.map(d => `<button type="button" data-dir="${esc(folder + "/" + d)}">📁 ${esc(d)}</button>`).join("")
+    + data.files.map(f => `<button type="button" data-file="${esc(folder + "/" + f)}" ${ready ? "" : "disabled"}>▶ ${esc(f)}</button>`).join("")
+    + (!data.dirs.length && !data.files.length ? `<p class="muted">${t("Cartella vuota")}</p>` : "")
+    + (ready ? "" : `<p class="warn small">${t("{p} non è pronta: i file si possono avviare solo con la stampante inattiva.", {p: esc(p.name)})}</p>`);
+  $("#rfl").onclick = async e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.dir !== undefined) return remoteFilesDialog(p, b.dataset.dir);
+    if (b.dataset.file && confirm(t("Avviare {f} su {p}?", {f: b.dataset.file.split("/").pop(), p: p.name}))) {
+      if (await act(() => api(`/api/printers/${p.sn}/start_remote`, {method: "POST", body: {path: b.dataset.file}}), t("Stampa avviata"))) $("#dlg").close();
+    }
+  };
 }
 function tempDialog(p, target, label, current) {
   const max = target === "bed" ? 130 : target === "chamber" ? 80 : 320;
@@ -382,34 +405,97 @@ function createCard(p) {
   return a;
 }
 function setHTML(el, html) { if (el._html !== html) { el.innerHTML = html; el._html = html; } }
+// ---------------------------------------------------------------- vista delle stampanti
+const CARDS = new Map();          // schede già create, riusate tra le viste (la camera non si ricarica)
+const EXPANDED = new Set();       // in elenco/tabella: stampanti con la scheda aperta
+let PVIEW = localStorage.getItem("fb_pview") || "cards", PSORT = localStorage.getItem("fb_psort") || "name", PSEARCH = "";
+const brandOf = p => p.brand || t("Altra marca");
+const modelOf = p => p.printer_model || p.model || "";
+const STATE_ORDER = s => ({RUNNING: 0, PREPARE: 0, PAUSE: 1, FINISH: 2, FAILED: 2, IDLE: 3}[s] ?? 4);
+function sortPrinters(list) {
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: "base"});
+  const cmp = {name: byName,
+    brand: (a, b) => brandOf(a).localeCompare(brandOf(b)) || modelOf(a).localeCompare(modelOf(b)) || byName(a, b),
+    model: (a, b) => modelOf(a).localeCompare(modelOf(b), undefined, {numeric: true}) || byName(a, b),
+    state: (a, b) => (a.online ? STATE_ORDER(a.state) : 5) - (b.online ? STATE_ORDER(b.state) : 5) || byName(a, b),
+    progress: (a, b) => (b.active ? b.progress : -1) - (a.active ? a.progress : -1) || byName(a, b)}[PSORT] || byName;
+  return [...list].sort(cmp);
+}
+function cardFor(p) {
+  let card = CARDS.get(p.sn);
+  if (!card) { card = createCard(p); CARDS.set(p.sn, card); }
+  card.classList.toggle("offline", !p.online);
+  setHTML($(".pc-top", card), cardTop(p));
+  setHTML($(".st-info", card), statusInfo(p));
+  setHTML($(".pc-body", card), cardBody(p));
+  return card;
+}
+const stateDot = p => `<i class="sdot ${!p.online ? "off" : p.active ? (p.state === "PAUSE" ? "pause" : "run") : ["FINISH", "FAILED"].includes(p.state) ? "warn" : "idle"}"></i>`;
+const tempsShort = p => [p.nozzles.length ? p.nozzles.map(n => n.fault ? "⚠" : n.temp != null ? Math.round(n.temp) + "°" : "—").join("/") : "",
+  p.bed != null ? `${t("Piatto|letto")} ${Math.round(p.bed)}°` : ""].filter(Boolean).join(" · ");
+const progressCell = p => p.active ? `<div class="mini"><div class="strand" style="${activeColor(p) ? "--fc:" + activeColor(p) : ""}"><i style="width:${p.progress}%"></i></div><b>${p.progress}%</b></div>` : "";
+
 RENDER.printers = function renderPrinters() {
   const el = $("#v-printers");
   if (!el._built) {
-    el.innerHTML = `<div class="head"><div><h1>${t("Stampanti")}</h1><p class="sub" id="psub"></p></div></div>
-      <div class="chips" id="gchips"></div><div class="grid" id="pgrid"></div><div id="pempty"></div>`;
+    el.innerHTML = `<div class="head"><div><h1>${t("Stampanti")}</h1><p class="sub" id="psub"></p></div>
+        <div class="ptools"><input type="search" id="psearch" placeholder="${esc(t("Cerca per nome, marca, modello…"))}" value="${esc(PSEARCH)}">
+        <label class="inline">${t("Ordina per")} <select id="psort">${[["name", t("Nome")], ["brand", t("Marca")], ["model", t("Modello")], ["state", t("Stato")], ["progress", t("Avanzamento")]]
+          .map(([k, l]) => `<option value="${k}" ${k === PSORT ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <div class="seg" id="pview" role="group">${[["cards", t("Schede")], ["list", t("Elenco")], ["table", t("Tabella")]]
+          .map(([k, l]) => `<button type="button" data-v="${k}" class="${k === PVIEW ? "on" : ""}" aria-pressed="${k === PVIEW}">${l}</button>`).join("")}</div></div></div>
+      <div class="chips" id="gchips"></div><div id="pwrap"></div><div id="pempty"></div>`;
     el._built = true;
     $("#gchips").onclick = e => { const c = e.target.closest("[data-g]"); if (!c) return; groupFilter = c.dataset.g; localStorage.setItem("fb_group", groupFilter); RENDER.printers(); };
+    $("#psearch").oninput = e => { PSEARCH = e.target.value; RENDER.printers(); };
+    $("#psort").onchange = e => { PSORT = e.target.value; localStorage.setItem("fb_psort", PSORT); RENDER.printers(); };
+    $("#pview").onclick = e => { const b = e.target.closest("[data-v]"); if (!b) return; PVIEW = b.dataset.v; localStorage.setItem("fb_pview", PVIEW);
+      $$("#pview button").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-pressed", x === b); }); $("#pwrap").innerHTML = ""; RENDER.printers(); };
   }
   const grp = GROUPS.find(g => String(g.id) === groupFilter);
-  const list = grp ? S.printers.filter(p => grp.printers.includes(p.sn)) : S.printers;
+  const q = PSEARCH.trim().toLowerCase();
+  let list = grp ? S.printers.filter(p => grp.printers.includes(p.sn)) : S.printers;
+  if (q) list = list.filter(p => [p.name, p.brand, modelOf(p), p.task_name, p.sn, p.kind_label].some(v => (v || "").toLowerCase().includes(q)));
+  list = sortPrinters(list);
   const ready = list.filter(p => p.online && p.state === "IDLE").length, printing = list.filter(p => p.active).length;
   setHTML($("#psub"), t("{a} in stampa, {b} pronte", {a: printing, b: ready}) + (S.queue_paused ? " · " + t("coda in pausa") : ""));
   setHTML($("#gchips"), GROUPS.length ? [`<button class="chip ${groupFilter ? "" : "on"}" data-g="">${t("Tutte")} <small>${S.printers.length}</small></button>`,
     ...GROUPS.map(g => `<button class="chip ${String(g.id) === groupFilter ? "on" : ""}" data-g="${g.id}" style="--c:${esc(g.color)}"><i></i>${esc(g.name)} <small>${g.printers.filter(sn => S.printers.some(p => p.sn === sn)).length}</small></button>`)].join("") : "");
-  const grid = $("#pgrid");
-  const want = list.map(p => p.sn);
-  $$(".pc", grid).forEach(c => { if (!want.includes(c.dataset.sn)) c.remove(); });
-  list.forEach((p, i) => {
-    let card = grid.querySelector(`.pc[data-sn="${CSS.escape(p.sn)}"]`);
-    if (!card) card = createCard(p);
-    if (grid.children[i] !== card) grid.insertBefore(card, grid.children[i] || null);
-    card.classList.toggle("offline", !p.online);
-    setHTML($(".pc-top", card), cardTop(p));
-    setHTML($(".st-info", card), statusInfo(p));
-    setHTML($(".pc-body", card), cardBody(p));
-    [...(p.print_error ? [p.print_error] : []), ...p.hms].forEach(c => loadHms(p.model, c));
-  });
-  setHTML($("#pempty"), list.length ? "" : `<div class="empty">${!S.hub_ok ? t("In attesa del Hub…") : S.printers.length ? t("Nessuna stampante in questo gruppo.") : isAdmin() ? t("Nessuna stampante collegata al Hub. Aggiungile da Amministrazione → Fleet Hub.") : t("Nessuna stampante assegnata al tuo utente. Chiedi all'amministratore.")}</div>`);
+  S.printers.forEach(p => [...(p.print_error ? [p.print_error] : []), ...p.hms].forEach(c => loadHms(p.model, c)));
+  const wrap = $("#pwrap");
+  const brandHead = (p, i) => PSORT === "brand" && (i === 0 || brandOf(list[i - 1]) !== brandOf(p));
+  if (PVIEW === "cards") {
+    let grid = $("#pgrid");
+    if (!grid) { wrap.innerHTML = `<div class="grid" id="pgrid"></div>`; grid = $("#pgrid"); }
+    const nodes = [];
+    list.forEach((p, i) => {
+      if (brandHead(p, i)) { const h = document.createElement("h2"); h.className = "bhead"; h.textContent = brandOf(p); nodes.push(h); }
+      nodes.push(cardFor(p));
+    });
+    [...grid.children].forEach(c => { if (!nodes.includes(c)) c.remove(); });
+    nodes.forEach((n, i) => { if (grid.children[i] !== n) grid.insertBefore(n, grid.children[i] || null); });
+  } else {
+    const rows = list.map((p, i) => {
+      const head = brandHead(p, i) ? (PVIEW === "table" ? `<tr class="bhead"><td colspan="7">${esc(brandOf(p))}</td></tr>` : `<h2 class="bhead">${esc(brandOf(p))}</h2>`) : "";
+      const open = EXPANDED.has(p.sn);
+      if (PVIEW === "table") return head + `<tr data-prow="${esc(p.sn)}" class="${open ? "open" : ""}">
+          <td>${stateDot(p)} <b>${esc(p.name)}</b></td><td>${esc(brandOf(p))}<br><small class="muted">${esc(modelOf(p))}</small></td>
+          <td>${p.online ? stateName(p.state) : t("Offline")}</td><td>${progressCell(p)}</td>
+          <td class="ell" title="${esc(p.task_name)}">${esc(p.task_name || "")}</td><td>${p.active && p.remaining_min ? fmtDur(p.remaining_min * 60) : ""}</td>
+          <td>${tempsShort(p)}</td></tr>${open ? `<tr class="pexp"><td colspan="7"><div class="slot" data-sn="${esc(p.sn)}"></div></td></tr>` : ""}`;
+      return head + `<div class="prow ${open ? "open" : ""}" data-prow="${esc(p.sn)}">${stateDot(p)}
+          <div class="pr-name"><b>${esc(p.name)}</b><small class="muted">${esc(brandOf(p))} ${esc(modelOf(p))}</small></div>
+          <div class="pr-state">${p.online ? stateName(p.state) : t("Offline")}${p.task_name ? `<small class="muted ell">${esc(p.task_name)}</small>` : ""}</div>
+          <div class="pr-prog">${progressCell(p)}${p.active && p.remaining_min ? `<small class="muted">${t("mancano {d}", {d: fmtDur(p.remaining_min * 60)})}</small>` : ""}</div>
+          <div class="pr-temp muted small">${tempsShort(p)}</div><span class="pr-arrow">${open ? "▴" : "▾"}</span></div>
+        ${open ? `<div class="slot" data-sn="${esc(p.sn)}"></div>` : ""}`;
+    }).join("");
+    const html = PVIEW === "table" ? `<div class="tablewrap"><table class="ptable"><thead><tr><th>${t("Stampante")}</th><th>${t("Marca")} / ${t("Modello")}</th><th>${t("Stato")}</th><th>${t("Avanzamento")}</th><th>${t("Lavoro")}</th><th>${t("Tempo rimanente")}</th><th>${t("Temperature")}</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : `<div class="plist">${rows}</div>`;
+    setHTML(wrap, html);
+    list.forEach(p => { if (EXPANDED.has(p.sn)) { const slot = wrap.querySelector(`.slot[data-sn="${CSS.escape(p.sn)}"]`); const card = cardFor(p); if (slot && card.parentNode !== slot) slot.appendChild(card); } });
+  }
+  setHTML($("#pempty"), list.length ? "" : `<div class="empty">${q ? t("Nessuna stampante corrisponde alla ricerca.") : !S.hub_ok && !S.printers.length ? t("In attesa del Hub…") : S.printers.length ? t("Nessuna stampante in questo gruppo.") : isAdmin() ? t("Nessuna stampante collegata al Hub. Aggiungile da Amministrazione → Fleet Hub.") : t("Nessuna stampante assegnata al tuo utente. Chiedi all'amministratore.")}</div>`);
 };
 async function loadHms(model, code) {
   const key = model + code;
@@ -440,9 +526,9 @@ let camTimer = null;
 function startCamTimer() {
   clearInterval(camTimer);
   const sec = (S.settings && S.settings.camera_refresh_s) || 60;
-  camTimer = setInterval(() => { if (view === "printers" && !document.hidden) $$("#pgrid .pc").forEach(refreshCam); }, sec * 1000);
+  camTimer = setInterval(() => { if (view === "printers" && !document.hidden) $$("#v-printers .pc").forEach(refreshCam); }, sec * 1000);
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden && view === "printers") $$("#pgrid .pc").forEach(refreshCam); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && view === "printers") $$("#v-printers .pc").forEach(refreshCam); });
 
 function closeMenus() {
   $$(".pc-menu .dots[aria-expanded=true]").forEach(d => { d.setAttribute("aria-expanded", "false"); d.nextElementSibling.hidden = true; });
@@ -450,6 +536,8 @@ function closeMenus() {
 document.addEventListener("click", e => { if (!e.target.closest(".pc-menu")) closeMenus(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeMenus(); });
 $("#v-printers").addEventListener("click", async e => {
+  const row = e.target.closest("[data-prow]");
+  if (row && !e.target.closest(".pc")) { const sn = row.dataset.prow; EXPANDED.has(sn) ? EXPANDED.delete(sn) : EXPANDED.add(sn); RENDER.printers(); return; }
   const card = e.target.closest(".pc"); if (!card) return;
   const sn = card.dataset.sn, p = S.printers.find(x => x.sn === sn);
   const b = e.target.closest("button"); if (!b) return;
@@ -458,6 +546,8 @@ $("#v-printers").addEventListener("click", async e => {
     if (ask[b.dataset.opt] && !confirm(ask[b.dataset.opt])) return;
     b.disabled = true;
     await act(() => api(`/api/printers/${sn}/opt`, {method: "POST", body: {opt: b.dataset.opt}}), t("Comando inviato (lo stato si aggiorna in ~10 s)"));
+  } else if (b.hasAttribute("data-remote")) {
+    remoteFilesDialog(p, "Local");
   } else if (b.dataset.temp) {
     tempDialog(p, b.dataset.temp, b.dataset.label, +b.dataset.target);
   } else if (b.dataset.speed) {
@@ -605,7 +695,7 @@ async function uploadFiles(list, pid) {
 async function printDialog(f, presetPrinter) {
   const plates = f.meta.plates;
   const isG = f.meta.kind === "gcode";   // .gcode → stampanti dirette (Duet); .gcode.3mf → Bambu
-  const online = S.printers.filter(p => p.online && !!p.direct === isG);
+  const online = S.printers.filter(p => p.online && !!p.direct === isG && (p.caps || {}).upload !== false);
   const myGroups = GROUPS.filter(g => isAdmin() || (g.printers.length && g.printers.every(sn => S.printers.some(p => p.sn === sn))));
   openDialog(`<h3>${t("Stampa {f}", {f: esc(f.filename)})}</h3>
     <div class="printhead"><img class="platethumb" id="platethumb" alt="${esc(t("Anteprima del piatto"))}" src="/api/files/${f.id}/thumb/${plates[0].index}">
@@ -999,6 +1089,8 @@ RENDER.hub = async function renderHub() {
 // ------------------------------------------------------------------ amministrazione
 // ---------------------------------------------------------------- stampanti collegate direttamente
 // campi: host sempre; api = chiave API (obbligatoria se "api!"), user/pass = utente e password, slug = stampante su Repetier
+let CATALOG = {brands: {}};
+fetch("/static/catalog.json").then(r => r.json()).then(c => { CATALOG = c; }).catch(() => {});
 const DIRECT_KINDS = {
   octoprint: {label: "OctoPrint", fields: ["api!"], host: "192.168.1.50"},
   moonraker: {label: "Klipper (Moonraker)", fields: ["api"], host: "192.168.1.60:7125"},
@@ -1006,6 +1098,7 @@ const DIRECT_KINDS = {
   duet: {label: "Duet / RepRapFirmware 3", fields: ["pass"], host: "192.168.1.179"},
   repetier: {label: "Repetier-Server", fields: ["api!", "slug"], host: "192.168.1.80:3344"},
   elegoo: {label: "Elegoo (SDCP)", fields: [], host: "192.168.1.90"},
+  raise3d: {label: "Raise3D (Raise Touch)", fields: ["pass"], host: "192.168.1.100"},
 };
 // suggerimenti mostrati nel modulo (frasi del catalogo traduzioni)
 const DIRECT_HINTS = {
@@ -1014,6 +1107,7 @@ const DIRECT_HINTS = {
   prusalink: "Utente maker e password mostrati sulla stampante (Impostazioni → Rete → PrusaLink). Firmware 5 o successivo.",
   duet: "Lo stesso indirizzo di Duet Web Control; password solo se impostata con M551.",
   repetier: "Chiave API: Repetier-Server → Impostazioni globali → Connettività. Stampante: lo slug, se il server ne gestisce più di una.",
+  raise3d: "Attiva sulla stampante Impostazioni → Remote Access API e usa la password impostata lì. L'API non permette di caricare file: si avviano quelli già presenti nella stampante.",
   elegoo: "Centauri Carbon e resine Elegoo recenti (protocollo SDCP): basta l'indirizzo IP. Le porte 3000 (UDP) e 3030 devono essere raggiungibili.",
 };
 RENDER.direct = async function renderDirect() {
@@ -1025,7 +1119,7 @@ RENDER.direct = async function renderDirect() {
     ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Nome")}</th><th>${t("Tipo")}</th><th>${t("Indirizzo")}</th><th>${t("Stato")}</th><th></th></tr></thead><tbody>
       ${rows.map(r => `<tr data-id="${r.id}"><td><b>${esc(r.name)}</b>${r.enabled ? "" : ` <small class="muted">· ${t("disattivata")}</small>`}</td>
         <td>${esc((DIRECT_KINDS[r.kind] || {}).label || r.kind)}${r.board ? `<br><small class="muted">${esc(r.board)} · ${esc(r.firmware || "")}${r.mode ? " · " + (r.mode === "sbc" ? "SBC" : t("autonoma")) : ""}</small>` : ""}</td>
-        <td>${esc(r.host)}</td>
+        <td>${esc(r.host)}${r.brand || r.printer_model ? `<br><small class="muted">${esc([r.brand, r.printer_model].filter(Boolean).join(" "))}</small>` : ""}</td>
         <td>${r.online ? `<span class="st finished">${t("Connessa")}</span> · ${stateName(r.state)}` : `<span class="st failed">${t("Non raggiungibile")}</span>${r.error ? `<br><small class="muted">${esc(r.error)}</small>` : ""}`}</td>
         <td style="white-space:nowrap"><button data-edit>${t("Modifica")}</button> <button class="danger" data-del>${t("Elimina")}</button></td></tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">${t("Nessuna stampante collegata direttamente. Con \"Aggiungi stampante\" puoi collegare per esempio una stampante con scheda Duet.")}</div>`}
@@ -1033,7 +1127,7 @@ RENDER.direct = async function renderDirect() {
     <div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Stato")}</th><th>${t("Pausa / stop")}</th><th>${t("Invio file")}</th><th>${t("Temperature")}</th><th>${t("Velocità")}</th><th>${t("Camera")}</th></tr></thead><tbody>
       ${[["OctoPrint", 1, 1, ".gcode", 1, 1, t("automatica")], ["Klipper (Moonraker)", 1, 1, ".gcode", 1, 1, t("automatica")],
          ["PrusaLink", 1, 1, ".bgcode / .gcode", 0, 0, t("manuale")], ["Duet / RepRapFirmware 3", 1, 1, ".gcode", 1, 1, t("manuale")],
-         ["Repetier-Server", 1, 1, ".gcode", 1, 1, t("manuale")], ["Elegoo (SDCP)", 1, 1, ".gcode", 0, 0, t("automatica")]].map(([n, a, b, c, d, e2, f]) =>
+         ["Repetier-Server", 1, 1, ".gcode", 1, 1, t("manuale")], ["Elegoo (SDCP)", 1, 1, ".gcode", 0, 0, t("automatica")], ["Raise3D (Raise Touch)", 1, 1, t("solo file già sulla stampante"), 1, 1, t("automatica")]].map(([n, a, b, c, d, e2, f]) =>
         `<tr><td><b>${n}</b></td><td>${a ? "✓" : "—"}</td><td>${b ? "✓" : "—"}</td><td>${c}</td><td>${d ? "✓" : "—"}</td><td>${e2 ? "✓" : "—"}</td><td>${f}</td></tr>`).join("")}
     </tbody></table></div>
     <p class="sub" style="margin-top:8px">${t("PrusaLink e SDCP (Elegoo) non hanno comandi di rete per temperature e velocità: si cambiano dalla stampante. \"Automatica\": l'indirizzo della webcam viene letto dalla stampante; \"manuale\": va indicato nel modulo. Senza camera, la scheda mostra l'anteprima della stampa.")}</p>`;
@@ -1053,6 +1147,9 @@ function directDialog(r) {
     <div class="row"><label style="flex:1">${t("Nome")}<input name="dname" value="${esc(r ? r.name : "")}" maxlength="64" placeholder="Elemento-v21"></label>
       <label>${t("Tipo")}<select name="kind" ${r ? "disabled" : ""}>${Object.entries(DIRECT_KINDS).map(([k, d]) => `<option value="${k}" ${r && r.kind === k ? "selected" : ""}>${d.label}</option>`).join("")}</select></label></div>
     <p class="sub small" id="khint" style="margin:0"></p>
+    <div class="row"><label style="flex:1">${t("Marca")}<input name="brand" list="dl-brands" value="${esc(r ? r.brand || "" : "")}" autocomplete="off"></label>
+      <label style="flex:1">${t("Modello")}<input name="pmodel" list="dl-models" value="${esc(r ? r.printer_model || "" : "")}" autocomplete="off"></label></div>
+    <datalist id="dl-brands">${Object.keys(CATALOG.brands || {}).map(b => `<option value="${esc(b)}">`).join("")}</datalist><datalist id="dl-models"></datalist>
     <label>${t("Indirizzo")}<input name="host" value="${esc(r ? r.host : "")}"></label>
     <label data-f="user">${t("Utente")}<input name="user" value="${esc(r ? r.username || "" : "")}" placeholder="maker" autocomplete="off"></label>
     <label data-f="pass"><span data-pl></span><input name="pw" type="password" autocomplete="new-password"></label>
@@ -1072,9 +1169,14 @@ function directDialog(r) {
     $("#dlgbody [data-al]").textContent = r && r.has_api_key ? t("Chiave API (lascia vuoto per non cambiarla)")
       : d.fields.includes("api!") ? t("Chiave API") : t("Chiave API (facoltativa)");
   };
-  val("kind").onchange = showFields; showFields();
+  const KIND_BRAND = {prusalink: "Prusa", elegoo: "Elegoo", raise3d: "Raise3D"};
+  const fillModels = () => { $("#dl-models").innerHTML = ((CATALOG.brands || {})[val("brand").value] || []).map(m => `<option value="${esc(m)}">`).join(""); };
+  val("brand").oninput = fillModels; fillModels();
+  val("kind").onchange = () => { showFields(); if (!r && (!val("brand").value || Object.values(KIND_BRAND).includes(val("brand").value))) { val("brand").value = KIND_BRAND[val("kind").value] || ""; fillModels(); } };
+  showFields(); if (!r && !val("brand").value) { val("brand").value = KIND_BRAND[val("kind").value] || ""; fillModels(); }
   const body = () => ({id: r ? r.id : undefined, name: val("dname").value || val("host").value, kind: val("kind").value, host: val("host").value,
     password: val("pw").value, api_key: val("api").value, username: val("user").value, extra: val("slug").value,
+    brand: val("brand").value.trim(), printer_model: val("pmodel").value.trim(),
     snapshot_url: val("snap").value, ...(r ? {enabled: val("en").checked} : {})});
   $("#dtry").onclick = async () => {
     $("#dtest").innerHTML = `<span class="muted">${t("Collegamento in corso…")}</span>`;

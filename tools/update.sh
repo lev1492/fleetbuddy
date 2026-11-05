@@ -48,7 +48,7 @@ mkdir -p "$DIR/data"
 
 version_of() { sed -n 's/^__version__ = "\(.*\)"/\1/p'; }
 current="$(version_of < app/__init__.py)"
-git fetch --quiet --tags --prune origin 2>/dev/null || die "impossibile contattare GitHub (rete o chiave di accesso)"
+git fetch --quiet --tags --force --prune origin 2>/dev/null || die "impossibile contattare GitHub (rete o chiave di accesso)"
 
 if [ "$CHANNEL" = release ]; then
   target="$(git tag -l 'v[0-9]*' --sort=-v:refname | head -n1)"

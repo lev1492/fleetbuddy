@@ -20,6 +20,7 @@ TIMEOUT = 6
 class DirectClient:
     kind = ""
     label = ""
+    default_brand = ""
     default_port: int | None = None
     # print_options: opzioni proposte nel dialogo di stampa (es. "bed_leveling", "timelapse"); vuoto = nessuna
     caps = {"temperature": False, "speed": False, "filament": False, "bed_clean": False, "print_options": []}
@@ -40,6 +41,8 @@ class DirectClient:
         self.password = row.get("password") or ""
         self.extra = (row.get("extra") or "").strip()
         self.snapshot_url = (row.get("snapshot_url") or "").strip()
+        self.brand = (row.get("brand") or "").strip() or self.default_brand
+        self.printer_model = (row.get("printer_model") or "").strip()
         self.auto_snapshot_url = ""          # trovato dalla stampante stessa (es. OctoPrint, Moonraker)
         self._s = requests.Session()
 
@@ -140,6 +143,8 @@ def base_state(client: DirectClient, online: bool, error: str = "", **kw) -> dic
     }
     st.update(kw)
     st["caps"].setdefault("print_options", [])
+    st["brand"] = client.brand
+    st["printer_model"] = client.printer_model or st.get("model") or ""
     if st["nozzles"]:
         st["nozzle"], st["nozzle_target"] = st["nozzles"][0]["temp"], st["nozzles"][0]["target"]
     if st["beds"] and st["bed"] is None:

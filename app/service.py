@@ -596,6 +596,19 @@ class Service:
             "filament_slot": slots,
         }
 
+    async def start_remote(self, sn: str, path: str, user_id: int | None):
+        """Avvia un file già presente nella memoria della stampante (es. Raise3D, che non accetta caricamenti)."""
+        c = self.direct[sn]
+        task = task_name_for(Path(path).name, 1, 1)
+        self._set_pending(sn, {"file_id": None, "plate": 1, "task_name": task, "user_id": user_id,
+                               "planned_g": 0, "plan": [], "queue": None})
+        try:
+            await asyncio.to_thread(c.start_remote, path)
+        except Exception:
+            self.db.x("DELETE FROM pending_prints WHERE printer_sn=?", (sn,))
+            raise
+        self._cooldown[sn] = time.time() + 20
+
     async def _start_direct(self, f: dict, pl: dict, sn: str, user_id: int | None, queue: dict | None,
                             options: dict | None = None) -> dict:
         """Carica il .gcode sulla stampante diretta e lo avvia."""
@@ -628,6 +641,8 @@ class Service:
         if gcode_file != (sn in self.direct):
             raise HubError(key="Questo file non è adatto a questa stampante: i .gcode.3mf vanno alle Bambu, i .gcode alle altre")
         if gcode_file:
+            if not self.direct[sn].caps.get("upload", True):
+                raise HubError(key="Questa stampante non accetta file dalla rete: avvia un file presente nella sua memoria")
             return await self._start_direct(f, pl, sn, user_id, queue, options)
         warnings: list[str] = []
         slots, warnings = resolve_slots(slots, pl["filaments"], p)
@@ -692,6 +707,8 @@ class Service:
                     continue
                 if (f["meta"].get("kind") == "gcode") != (sn in self.direct):
                     continue   # .gcode.3mf solo alle Bambu, .gcode solo alle stampanti dirette
+                if sn in self.direct and not self.direct[sn].caps.get("upload", True):
+                    continue   # stampante che non accetta file dalla rete (es. Raise3D)
                 raw = json.loads(it["mapping"]) if it["mapping"] else None
                 slots, _w = ([], []) if sn in self.direct else resolve_slots(raw, pl["filaments"] if pl else [], p)
                 if slots is None:

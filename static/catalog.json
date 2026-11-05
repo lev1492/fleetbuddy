@@ -1,0 +1,225 @@
+{
+ "note": "Marche e modelli principali dei profili stampante di OrcaSlicer (elenco indicativo, modificabile).",
+ "brands": {
+  "Anker": [
+   "M5",
+   "M5C"
+  ],
+  "Anycubic": [
+   "Kobra",
+   "Kobra 2",
+   "Kobra 2 Pro",
+   "Kobra 2 Plus",
+   "Kobra 2 Max",
+   "Kobra 3",
+   "Kobra 3 Combo",
+   "Kobra S1",
+   "Vyper",
+   "i3 Mega S",
+   "Chiron"
+  ],
+  "Artillery": [
+   "Sidewinder X1",
+   "Sidewinder X2",
+   "Sidewinder X3 Pro",
+   "Sidewinder X3 Plus",
+   "Sidewinder X4 Pro",
+   "Sidewinder X4 Plus",
+   "Genius",
+   "Genius Pro",
+   "Hornet"
+  ],
+  "Bambu Lab": [
+   "X1 Carbon",
+   "X1",
+   "X1E",
+   "P1S",
+   "P1P",
+   "P2S",
+   "A1",
+   "A1 mini",
+   "H2D",
+   "H2D Pro",
+   "H2S",
+   "X2D"
+  ],
+  "BIQU": [
+   "B1",
+   "BX",
+   "Hurakan"
+  ],
+  "Blocks": [
+   "RD50 V2",
+   "Pro S100"
+  ],
+  "Comgrow": [
+   "T300",
+   "T500"
+  ],
+  "Creality": [
+   "Ender-3",
+   "Ender-3 V2",
+   "Ender-3 V2 Neo",
+   "Ender-3 S1",
+   "Ender-3 S1 Pro",
+   "Ender-3 V3",
+   "Ender-3 V3 SE",
+   "Ender-3 V3 KE",
+   "Ender-3 V3 Plus",
+   "Ender-5 S1",
+   "Ender-5 Max",
+   "CR-10 SE",
+   "CR-10 Smart Pro",
+   "K1",
+   "K1C",
+   "K1 Max",
+   "K1 SE",
+   "K2 Plus",
+   "Hi"
+  ],
+  "Dremel": [
+   "3D20",
+   "3D40",
+   "3D45"
+  ],
+  "Elegoo": [
+   "Neptune 3",
+   "Neptune 3 Pro",
+   "Neptune 3 Plus",
+   "Neptune 3 Max",
+   "Neptune 4",
+   "Neptune 4 Pro",
+   "Neptune 4 Plus",
+   "Neptune 4 Max",
+   "OrangeStorm Giga",
+   "Centauri",
+   "Centauri Carbon"
+  ],
+  "Fabbrix": [
+   "Elemento V21"
+  ],
+  "Flashforge": [
+   "Adventurer 3",
+   "Adventurer 4",
+   "Adventurer 5M",
+   "Adventurer 5M Pro",
+   "AD5X",
+   "Guider 3 Ultra",
+   "Creator 4"
+  ],
+  "FLSun": [
+   "Q5",
+   "Super Racer",
+   "V400",
+   "T1",
+   "T1 Pro",
+   "S1"
+  ],
+  "Folgertech": [
+   "FT-5",
+   "i3"
+  ],
+  "Geeetech": [
+   "A10",
+   "A20",
+   "Thunder",
+   "Mizar"
+  ],
+  "InfiMech": [
+   "TX"
+  ],
+  "Kingroon": [
+   "KP3S",
+   "KP3S Pro",
+   "KLP1"
+  ],
+  "LulzBot": [
+   "TAZ 6",
+   "TAZ Pro",
+   "TAZ Workhorse",
+   "Mini 2"
+  ],
+  "Peopoly": [
+   "Magneto X"
+  ],
+  "Prusa": [
+   "MK4S",
+   "MK4",
+   "MK3.9",
+   "MK3S+",
+   "XL",
+   "MINI+",
+   "CORE One"
+  ],
+  "Qidi": [
+   "X-Max 3",
+   "X-Plus 3",
+   "X-Smart 3",
+   "Q1 Pro",
+   "Plus4"
+  ],
+  "Raise3D": [
+   "Pro2",
+   "Pro2 Plus",
+   "Pro3",
+   "Pro3 Plus",
+   "Pro3 HS",
+   "E2",
+   "E2CF",
+   "N2",
+   "N2 Plus"
+  ],
+  "RatRig": [
+   "V-Core 3",
+   "V-Core 4",
+   "V-Minion"
+  ],
+  "Snapmaker": [
+   "J1",
+   "Artisan",
+   "A250",
+   "A350",
+   "U1"
+  ],
+  "Sovol": [
+   "SV04",
+   "SV06",
+   "SV06 Plus",
+   "SV07",
+   "SV07 Plus",
+   "SV08"
+  ],
+  "Tronxy": [
+   "X5SA",
+   "Crux 1"
+  ],
+  "TwoTrees": [
+   "SK1",
+   "SP-5"
+  ],
+  "UltiMaker": [
+   "2+ Connect",
+   "S3",
+   "S5",
+   "S7",
+   "Method",
+   "Method X"
+  ],
+  "Voron": [
+   "0.2",
+   "Trident",
+   "2.4",
+   "Switchwire"
+  ],
+  "Voxelab": [
+   "Aquila"
+  ],
+  "VzBot": [
+   "235",
+   "330"
+  ],
+  "Wanhao": [
+   "D12"
+  ]
+ }
+}

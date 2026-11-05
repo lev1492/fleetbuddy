@@ -323,6 +323,33 @@ button.bdg.edit:hover:not(:disabled){border-color:var(--run);color:var(--ink)}
 
 .pc.thumbimg .cam img{object-fit:contain;background:var(--sunk)}
 
+/* vista delle stampanti: strumenti, elenco, tabella */
+.ptools{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.ptools input[type=search]{min-width:220px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-sm);overflow:hidden}
+.seg button{border:0;border-radius:0;background:var(--surface)}
+.seg button.on{background:var(--ink);color:var(--surface)}
+.bhead{grid-column:1/-1;font-size:15px;margin:10px 0 0;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+tr.bhead td{font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;background:var(--sunk)}
+.sdot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--off);flex:0 0 auto}
+.sdot.run{background:var(--run)}.sdot.pause{background:var(--pause)}.sdot.warn{background:var(--pause)}.sdot.idle{background:var(--done)}.sdot.off{background:var(--off)}
+.plist{display:flex;flex-direction:column;gap:6px}
+.prow{display:grid;grid-template-columns:auto minmax(160px,1.4fr) minmax(120px,1fr) minmax(140px,1fr) minmax(120px,.8fr) auto;gap:14px;align-items:center;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px 14px;cursor:pointer}
+.prow:hover,.prow.open{border-color:var(--muted)}
+.prow>div{display:flex;flex-direction:column;min-width:0}
+.ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+.pr-arrow{color:var(--muted)}
+.mini{display:flex;align-items:center;gap:8px}.mini .strand{flex:1;min-width:60px}.mini b{font-size:12px}
+.ptable tbody tr[data-prow]{cursor:pointer}
+.ptable tbody tr[data-prow]:hover,.ptable tr.open{background:var(--sunk)}
+.ptable td{vertical-align:middle}
+.slot{margin:4px 0 10px}
+.slot .pc{max-width:760px}
+.rfiles{display:flex;flex-direction:column;gap:4px;max-height:50vh;overflow:auto}
+.rfiles button{justify-content:flex-start;text-align:left}
+@media (max-width:760px){.prow{grid-template-columns:auto 1fr auto}.prow .pr-prog,.prow .pr-temp{display:none}}
+
 @media (max-width:760px){
   .statusbox .cam{flex-basis:104px}
   main{margin-left:0}

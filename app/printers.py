@@ -313,6 +313,7 @@ def normalize(d: dict) -> dict:
         "last_cmd_error": d.get("latest_print_cmd_send_fail_reason", ""),
         "cmd_retry": int(_num(d.get("print_cmd_send_retry_cnt"))),
         "fw_min": firmware_below_min(model, up.get("current_ver", "")),
+        "brand": "Bambu Lab", "printer_model": model,
         "caps": {"print_options": ["bed_leveling", "flow_calibration"] + ([] if model == "P1P" else ["timelapse"])},
     }
 

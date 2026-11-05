@@ -3,6 +3,22 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.11.0] – 2026-11-06
+
+### Novità
+- Raise3D (Raise Touch Remote Access API, porta 10800): stato, temperature dei due ugelli e del piano, velocità,
+  ventola, pausa, ripresa, stop, camera. L'API non permette di caricare file: dalla scheda si sfoglia la memoria della
+  stampante ("File sulla stampante") e si avvia un file già presente.
+- Marca e modello delle stampanti dirette, scelti da un catalogo delle principali marche e modelli dei profili di
+  OrcaSlicer (o scritti a mano); per le Bambu sono automatici. Mostrati nella scheda e in Amministrazione.
+- Vista delle stampanti a schede, elenco o tabella; ricerca per nome, marca, modello o lavoro; ordinamento per nome,
+  marca (con raggruppamento), modello, stato o avanzamento. In elenco e tabella un clic apre la scheda completa.
+  Le scelte restano memorizzate nel browser.
+
+### Correzioni
+- `fleetbuddy-update` aggiorna i tag spostati su GitHub (es. dopo aver corretto una versione pubblicata).
+- Il pulsante "Segna il piatto come liberato" compare solo sulle stampanti che hanno quel comando.
+
 ## [0.10.0] – 2026-11-06
 
 ### Novità
