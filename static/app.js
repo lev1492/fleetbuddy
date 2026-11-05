@@ -230,7 +230,7 @@ function cardTop(p) {
   const alerts = (p.print_error ? 1 : 0) + p.hms.length;
   const badges = [
     `<span class="bdg ${p.online ? "ok" : "off"}">${p.online ? t("Connessa") : t("Offline")}</span>`,
-    p.kind === "duet" ? `<span class="bdg">Duet${p.caps && p.caps.mode ? " · " + (p.caps.mode === "sbc" ? "SBC" : t("autonoma")) : ""}</span>` : "",
+    p.direct ? `<span class="bdg">${esc(p.kind_label || p.kind)}${p.caps && p.caps.mode ? " · " + (p.caps.mode === "sbc" ? "SBC" : t("autonoma")) : ""}</span>` : "",
     p.wifi ? `<span class="bdg">${esc(p.wifi)}</span>` : "",
     `<span class="bdg ${alerts ? "err" : "ok"}">${alerts ? t("{n} avvisi", {n: alerts}) : t("Nessun errore")}</span>`,
     p.firmware ? `<span class="bdg ${p.fw_min ? "warn" : ""}" title="${p.fw_min ? esc(t("Firmware {v} inferiore al minimo supportato dal Hub ({min}).", {v: p.firmware, min: p.fw_min})) : ""}">fw ${esc(p.firmware)}</span>` : "",
@@ -282,9 +282,9 @@ function filamentCards(p) {
 function cardBody(p) {
   const done = p.state === "FINISH" || p.state === "FAILED";
   const dual = p.nozzles.length > 1;
-  const direct = p.kind === "duet", editT = direct && canOperate() && p.online;
+  const direct = !!p.direct, caps = p.caps || {}, editT = direct && caps.temperature && canOperate() && p.online;
   const tiles = [];
-  const tile = (label, v, tgt, key) => editT
+  const tile = (label, v, tgt, key) => editT && !(key === "chamber" && caps.chamber_heater === false)
     ? `<button type="button" class="tile edit" data-temp="${key}" data-label="${esc(label)}" data-target="${tgt || 0}" title="${esc(t("Clicca per impostare la temperatura"))}"><span>${label} ✎</span><b>${deg(v, tgt)}</b></button>`
     : `<div class="tile"><span>${label}</span><b>${deg(v, tgt)}</b></div>`;
   if (direct) {
@@ -318,7 +318,8 @@ function cardBody(p) {
     ${fans.length ? `<div class="tiles fans">${fans.map(([k, l]) => `<div class="tile"><span>${l}</span><b>${f[k]}%</b></div>`).join("")}</div>` : ""}
     ${done && canOperate() ? `<button class="platebtn" data-opt="bed_clean">${t("Segna il piatto come liberato")}</button>` : ""}
     <div class="sec">${t("Comandi")}</div>
-    <div class="ctrls">${direct ? `<button type="button" class="bdg edit" data-speed="${p.speed_pct}" ${editT ? "" : "disabled"}>${t("Velocità")} · ${p.speed_pct}% ✎</button>`
+    <div class="ctrls">${direct ? (caps.speed ? `<button type="button" class="bdg edit" data-speed="${p.speed_pct}" ${canOperate() && p.online ? "" : "disabled"}>${t("Velocità")} · ${p.speed_pct}% ✎</button>`
+      : `<span class="bdg">${t("Velocità")} · ${p.speed_pct}%</span>`)
       : `<span class="bdg">${t("Velocità")} · ${esc(t(SPEEDS[p.speed_lvl] || "—"))}</span>`}<span class="grow"></span>${btns.join("") || `<span class="muted small">${t("Nessun comando disponibile in questo stato")}</span>`}</div>
     ${direct ? "" : `<div class="sec">${t("Filamenti")}</div>
     ${filamentCards(p)}`}
@@ -588,7 +589,7 @@ async function uploadFiles(list, pid) {
 async function printDialog(f, presetPrinter) {
   const plates = f.meta.plates;
   const isG = f.meta.kind === "gcode";   // .gcode → stampanti dirette (Duet); .gcode.3mf → Bambu
-  const online = S.printers.filter(p => p.online && (p.kind === "duet") === isG);
+  const online = S.printers.filter(p => p.online && !!p.direct === isG);
   const myGroups = GROUPS.filter(g => isAdmin() || (g.printers.length && g.printers.every(sn => S.printers.some(p => p.sn === sn))));
   openDialog(`<h3>${t("Stampa {f}", {f: esc(f.filename)})}</h3>
     <div class="printhead"><img class="platethumb" id="platethumb" alt="${esc(t("Anteprima del piatto"))}" src="/api/files/${f.id}/thumb/${plates[0].index}">
@@ -973,7 +974,22 @@ RENDER.hub = async function renderHub() {
 
 // ------------------------------------------------------------------ amministrazione
 // ---------------------------------------------------------------- stampanti collegate direttamente
-const DIRECT_KINDS = {duet: "Duet / RepRapFirmware 3"};
+// campi: host sempre; api = chiave API (obbligatoria se "api!"), user/pass = utente e password, slug = stampante su Repetier
+const DIRECT_KINDS = {
+  octoprint: {label: "OctoPrint", fields: ["api!"], host: "192.168.1.50"},
+  moonraker: {label: "Klipper (Moonraker)", fields: ["api"], host: "192.168.1.60:7125"},
+  prusalink: {label: "PrusaLink", fields: ["user", "pass", "api"], host: "192.168.1.70"},
+  duet: {label: "Duet / RepRapFirmware 3", fields: ["pass"], host: "192.168.1.179"},
+  repetier: {label: "Repetier-Server", fields: ["api!", "slug"], host: "192.168.1.80:3344"},
+};
+// suggerimenti mostrati nel modulo (frasi del catalogo traduzioni)
+const DIRECT_HINTS = {
+  octoprint: "Chiave API: OctoPrint → Impostazioni → Application Keys (o API).",
+  moonraker: "Mainsail/Fluidd usano Moonraker: indirizzo con porta 7125, oppure quello di Mainsail/Fluidd. Chiave API solo se richiesta.",
+  prusalink: "Utente maker e password mostrati sulla stampante (Impostazioni → Rete → PrusaLink). Firmware 5 o successivo.",
+  duet: "Lo stesso indirizzo di Duet Web Control; password solo se impostata con M551.",
+  repetier: "Chiave API: Repetier-Server → Impostazioni globali → Connettività. Stampante: lo slug, se il server ne gestisce più di una.",
+};
 RENDER.direct = async function renderDirect() {
   const el = $("#v-direct");
   const rows = await api("/api/direct").catch(e => (toast(e.message, "error"), []));
@@ -982,13 +998,19 @@ RENDER.direct = async function renderDirect() {
     <div class="row" style="margin-bottom:12px"><button class="primary" id="dadd">${t("Aggiungi stampante")}</button></div>
     ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Nome")}</th><th>${t("Tipo")}</th><th>${t("Indirizzo")}</th><th>${t("Stato")}</th><th></th></tr></thead><tbody>
       ${rows.map(r => `<tr data-id="${r.id}"><td><b>${esc(r.name)}</b>${r.enabled ? "" : ` <small class="muted">· ${t("disattivata")}</small>`}</td>
-        <td>${esc(DIRECT_KINDS[r.kind] || r.kind)}${r.board ? `<br><small class="muted">${esc(r.board)} · ${esc(r.firmware || "")}${r.mode ? " · " + (r.mode === "sbc" ? "SBC" : t("autonoma")) : ""}</small>` : ""}</td>
+        <td>${esc((DIRECT_KINDS[r.kind] || {}).label || r.kind)}${r.board ? `<br><small class="muted">${esc(r.board)} · ${esc(r.firmware || "")}${r.mode ? " · " + (r.mode === "sbc" ? "SBC" : t("autonoma")) : ""}</small>` : ""}</td>
         <td>${esc(r.host)}</td>
         <td>${r.online ? `<span class="st finished">${t("Connessa")}</span> · ${stateName(r.state)}` : `<span class="st failed">${t("Non raggiungibile")}</span>${r.error ? `<br><small class="muted">${esc(r.error)}</small>` : ""}`}</td>
         <td style="white-space:nowrap"><button data-edit>${t("Modifica")}</button> <button class="danger" data-del>${t("Elimina")}</button></td></tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">${t("Nessuna stampante collegata direttamente. Con \"Aggiungi stampante\" puoi collegare per esempio una stampante con scheda Duet.")}</div>`}
     <h2>${t("Tipi supportati")}</h2>
-    <div class="box"><p style="margin:0"><b>Duet / RepRapFirmware 3</b> – ${t("schede Duet 2 e Duet 3, sia autonome sia con SBC (Raspberry Pi). Si usa lo stesso indirizzo di Duet Web Control. Stato, pausa, ripresa, annullamento, temperature, velocità e invio di file .gcode.")}</p></div>`;
+    <div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Stato")}</th><th>${t("Pausa / stop")}</th><th>${t("Invio file")}</th><th>${t("Temperature")}</th><th>${t("Velocità")}</th><th>${t("Camera")}</th></tr></thead><tbody>
+      ${[["OctoPrint", 1, 1, ".gcode", 1, 1, t("automatica")], ["Klipper (Moonraker)", 1, 1, ".gcode", 1, 1, t("automatica")],
+         ["PrusaLink", 1, 1, ".bgcode / .gcode", 0, 0, t("manuale")], ["Duet / RepRapFirmware 3", 1, 1, ".gcode", 1, 1, t("manuale")],
+         ["Repetier-Server", 1, 1, ".gcode", 1, 1, t("manuale")]].map(([n, a, b, c, d, e2, f]) =>
+        `<tr><td><b>${n}</b></td><td>${a ? "✓" : "—"}</td><td>${b ? "✓" : "—"}</td><td>${c}</td><td>${d ? "✓" : "—"}</td><td>${e2 ? "✓" : "—"}</td><td>${f}</td></tr>`).join("")}
+    </tbody></table></div>
+    <p class="sub" style="margin-top:8px">${t("PrusaLink non accetta comandi G-code dalla rete, quindi temperature e velocità si cambiano dalla stampante. \"Automatica\": l'indirizzo della webcam viene letto dalla stampante; \"manuale\": va indicato nel modulo.")}</p>`;
   $("#dadd").onclick = () => directDialog();
   const tb = el.querySelector("table");
   if (tb) tb.onclick = async e => {
@@ -1003,21 +1025,36 @@ RENDER.direct = async function renderDirect() {
 function directDialog(r) {
   openDialog(`<h3>${r ? t("Modifica {p}", {p: esc(r.name)}) : t("Aggiungi stampante")}</h3>
     <div class="row"><label style="flex:1">${t("Nome")}<input name="dname" value="${esc(r ? r.name : "")}" maxlength="64" placeholder="Elemento-v21"></label>
-      <label>${t("Tipo")}<select name="kind">${Object.entries(DIRECT_KINDS).map(([k, l]) => `<option value="${k}" ${r && r.kind === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
-    <label>${t("Indirizzo (lo stesso di Duet Web Control)")}<input name="host" value="${esc(r ? r.host : "")}" placeholder="192.168.1.179"></label>
-    <label>${r && r.has_password ? t("Password della scheda (lascia vuoto per non cambiarla)") : t("Password della scheda (se impostata con M551)")}<input name="pw" type="password" autocomplete="new-password"></label>
+      <label>${t("Tipo")}<select name="kind" ${r ? "disabled" : ""}>${Object.entries(DIRECT_KINDS).map(([k, d]) => `<option value="${k}" ${r && r.kind === k ? "selected" : ""}>${d.label}</option>`).join("")}</select></label></div>
+    <p class="sub small" id="khint" style="margin:0"></p>
+    <label>${t("Indirizzo")}<input name="host" value="${esc(r ? r.host : "")}"></label>
+    <label data-f="user">${t("Utente")}<input name="user" value="${esc(r ? r.username || "" : "")}" placeholder="maker" autocomplete="off"></label>
+    <label data-f="pass"><span data-pl></span><input name="pw" type="password" autocomplete="new-password"></label>
+    <label data-f="api"><span data-al></span><input name="api" type="password" autocomplete="off"></label>
+    <label data-f="slug">${t("Stampante su Repetier-Server (slug, facoltativo)")}<input name="slug" value="${esc(r ? r.extra || "" : "")}" placeholder="ender3"></label>
     <label>${t("Indirizzo della foto della webcam (facoltativo)")}<input name="snap" value="${esc(r ? r.snapshot_url : "")}" placeholder="http://192.168.1.179:8080/?action=snapshot"></label>
     ${r ? `<label class="inline"><input type="checkbox" name="en" ${r.enabled ? "checked" : ""}> ${t("Attiva")}</label>` : ""}
     <div id="dtest" class="small"></div>
     <div class="dlgfoot"><button value="cancel">${t("Annulla")}</button><button type="button" id="dtry">${t("Prova connessione")}</button><button class="primary" id="dsave">${t("Salva")}</button></div>`);
   const fm = $("#dlgbody"), val = n => fm.elements.namedItem(n);
+  const showFields = () => {   // solo i campi che servono al tipo scelto
+    const d = DIRECT_KINDS[val("kind").value], f = d.fields.map(x => x.replace("!", ""));
+    $$("#dlgbody [data-f]").forEach(l => l.hidden = !f.includes(l.dataset.f));
+    $("#khint").textContent = t(DIRECT_HINTS[val("kind").value]);
+    val("host").placeholder = d.host;
+    $("#dlgbody [data-pl]").textContent = r && r.has_password ? t("Password (lascia vuoto per non cambiarla)") : t("Password");
+    $("#dlgbody [data-al]").textContent = r && r.has_api_key ? t("Chiave API (lascia vuoto per non cambiarla)")
+      : d.fields.includes("api!") ? t("Chiave API") : t("Chiave API (facoltativa)");
+  };
+  val("kind").onchange = showFields; showFields();
   const body = () => ({id: r ? r.id : undefined, name: val("dname").value || val("host").value, kind: val("kind").value, host: val("host").value,
-    password: val("pw").value, snapshot_url: val("snap").value, ...(r ? {enabled: val("en").checked} : {})});
+    password: val("pw").value, api_key: val("api").value, username: val("user").value, extra: val("slug").value,
+    snapshot_url: val("snap").value, ...(r ? {enabled: val("en").checked} : {})});
   $("#dtry").onclick = async () => {
     $("#dtest").innerHTML = `<span class="muted">${t("Collegamento in corso…")}</span>`;
     try {
       const x = await api("/api/direct/test", {method: "POST", body: body()});
-      $("#dtest").innerHTML = `<span class="st finished">✓ ${t("Collegata")}</span> · ${esc(x.board || "Duet")} · RRF ${esc(x.firmware || "?")} · ${x.mode === "sbc" ? "SBC" : t("autonoma")} · ${t("{n} utensili", {n: x.tools})} · ${stateName(({idle: "IDLE", processing: "RUNNING", paused: "PAUSE"})[x.status] || "UNKNOWN")}${body().snapshot_url ? " · " + (x.snapshot ? t("foto OK") : `<span class="warn">${t("foto non disponibile")}</span>`) : ""}`;
+      $("#dtest").innerHTML = `<span class="st finished">✓ ${t("Collegata")}</span> · ${esc(x.board || "")} · ${esc(x.firmware || "?")}${x.mode ? " · " + esc(x.mode === "sbc" ? "SBC" : x.mode === "standalone" ? t("autonoma") : x.mode) : ""} · ${t("{n} utensili", {n: x.tools})}${x.snapshot_configured ? " · " + (x.snapshot ? t("foto OK") : `<span class="warn">${t("foto non disponibile")}</span>`) : ""}`;
     } catch (e) { $("#dtest").innerHTML = `<span class="warn">✗ ${esc(e.message)}</span>`; }
   };
   $("#dsave").onclick = async ev => {

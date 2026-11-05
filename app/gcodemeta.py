@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import base64
 import re
+import struct
+import zlib
 from pathlib import Path
 
-GCODE_EXT = (".gcode", ".gco", ".g")
+GCODE_EXT = (".gcode", ".gco", ".g", ".bgcode")
 CHUNK = 400 * 1024
 
 
@@ -56,8 +58,48 @@ def _floats(value: str | None) -> list[float]:
     return out
 
 
+def _bgcode_blocks(path: Path):
+    """Blocchi di metadati e miniature di un G-code binario (formato libbgcode di Prusa), fino al primo blocco di G-code.
+    Restituisce (testo dei metadati, [miniature PNG con area])."""
+    texts, thumbs = [], []
+    with open(path, "rb") as fh:
+        head = fh.read(10)
+        if head[:4] != b"GCDE":
+            return "", []
+        checksum = struct.unpack("<H", head[8:10])[0]
+        while True:
+            hdr = fh.read(8)
+            if len(hdr) < 8:
+                break
+            btype, comp, usize = struct.unpack("<HHI", hdr)
+            csize = struct.unpack("<I", fh.read(4))[0] if comp else usize
+            if btype == 1:                      # inizio del G-code: i metadati sono finiti
+                break
+            params = fh.read(6 if btype == 5 else 2)
+            data = fh.read(csize)
+            if checksum == 1:
+                fh.read(4)
+            if comp == 1:
+                try:
+                    data = zlib.decompress(data)
+                except zlib.error:
+                    continue
+            elif comp != 0:                     # heatshrink: raro per i metadati, si salta
+                continue
+            if btype == 5:
+                fmt, w, h = struct.unpack("<HHH", params)
+                if fmt == 0 and data[:8] == b"\x89PNG\r\n\x1a\n":
+                    thumbs.append((w * h, data))
+            elif btype in (0, 2, 3, 4):
+                texts.extend("; " + line.replace("=", " = ", 1) for line in data.decode("utf-8", "replace").splitlines() if "=" in line)
+    return "\n".join(texts), thumbs
+
+
 def thumbnail_png(path: Path) -> bytes | None:
     """La miniatura PNG più grande tra quelle scritte dallo slicer ('; thumbnail begin WxH len')."""
+    if str(path).lower().endswith(".bgcode"):
+        thumbs = _bgcode_blocks(Path(path))[1]
+        return max(thumbs)[1] if thumbs else None
     head, tail = _read_ends(path)
     best, best_px = None, 0
     for text in (head, tail):
@@ -75,8 +117,13 @@ def thumbnail_png(path: Path) -> bytes | None:
 
 def parse_gcode(path: str | Path) -> dict:
     path = Path(path)
-    head, tail = _read_ends(path)
-    text = head + "\n" + tail
+    if path.name.lower().endswith(".bgcode"):
+        text = _bgcode_blocks(path)[0]
+        if not text:
+            raise ValueError("file .bgcode non valido")
+    else:
+        head, tail = _read_ends(path)
+        text = head + "\n" + tail
     st = _settings(text)
     # tempo stimato
     secs = 0

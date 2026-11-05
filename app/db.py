@@ -69,6 +69,9 @@ MIGRATIONS = [
     ("users", "last_name", "TEXT DEFAULT ''"),
     ("jobs", "start_trays", "TEXT"),
     ("users", "must_change_pw", "INTEGER DEFAULT 0"),
+    ("direct_printers", "api_key", "TEXT DEFAULT ''"),
+    ("direct_printers", "username", "TEXT DEFAULT ''"),
+    ("direct_printers", "extra", "TEXT DEFAULT ''"),
     ("job_filaments", "source", "TEXT DEFAULT 'slicer'"),
 ]
 

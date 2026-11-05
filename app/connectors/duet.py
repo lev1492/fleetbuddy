@@ -17,6 +17,7 @@ from pathlib import PurePosixPath
 import requests
 
 from ..hub_client import HubError
+from .base import DirectClient
 
 log = logging.getLogger("fleetbuddy.duet")
 
@@ -28,21 +29,25 @@ STATE = {"idle": "IDLE", "processing": "RUNNING", "simulating": "RUNNING", "resu
 TIMEOUT = 6
 
 
-class DuetClient:
+class DuetClient(DirectClient):
+    kind = "duet"
+    label = "Duet / RepRapFirmware 3"
+    caps = {"temperature": True, "speed": True, "filament": False, "bed_clean": False}
+
     def __init__(self, row: dict):
-        self.id = row["id"]
-        self.sn = f"duet-{row['id']}"
-        self.name = row.get("name") or self.sn
-        host = (row.get("host") or "").strip().rstrip("/")
-        if not host.startswith(("http://", "https://")):
-            host = "http://" + host
-        self.base = host
-        self.password = row.get("password") or ""
-        self.snapshot_url = (row.get("snapshot_url") or "").strip()
+        super().__init__(row)
         self.mode: str | None = None          # "standalone" oppure "sbc"
         self.session_key: str | None = None
-        self._s = requests.Session()
         self._lock = threading.Lock()
+
+    def normalize(self, raw: dict | None, error: str = "") -> dict:
+        return normalize_duet(self, raw, error)
+
+    def info(self, raw: dict) -> dict:
+        board = (raw.get("boards") or [{}])[0] or {}
+        return {"board": board.get("name") or board.get("shortName") or "Duet", "firmware": board.get("firmwareVersion"),
+                "mode": self.mode, "status": (raw.get("state") or {}).get("status"),
+                "tools": len([t for t in raw.get("tools") or [] if t])}
 
     # ------------------------------------------------------------------ collegamento
     def _headers(self) -> dict:
@@ -107,15 +112,6 @@ class DuetClient:
         if r.status_code != 200:
             raise HubError(key="Risposta non valida dalla scheda Duet (codice {c})", params={"c": r.status_code})
         return r.json()
-
-    def snapshot(self) -> bytes | None:
-        if not self.snapshot_url:
-            return None
-        try:
-            r = self._s.get(self.snapshot_url, timeout=TIMEOUT)
-        except requests.RequestException:
-            return None
-        return r.content if r.status_code == 200 and r.content[:2] in (b"\xff\xd8", b"\x89P") else None
 
     # ------------------------------------------------------------------ comandi
     def gcode(self, code: str) -> str:
@@ -226,7 +222,7 @@ def normalize_duet(client: DuetClient, model: dict | None, error: str = "") -> d
     fname = PurePosixPath(jf.get("fileName") or "").name
     task = fname.rsplit(".", 1)[0] if fname else ""
     return {
-        "sn": client.sn, "kind": "duet", "model": board.get("name") or board.get("shortName") or "Duet",
+        "sn": client.sn, "kind": "duet", "kind_label": client.label, "direct": True, "model": board.get("name") or board.get("shortName") or "Duet",
         "name": client.name,
         "ip": client.base.split("://", 1)[-1], "online": online, "mqtt": 2 if online else 0,
         "state": state if online else "OFFLINE", "active": state in ("PREPARE", "RUNNING", "PAUSE") and bool(fname),

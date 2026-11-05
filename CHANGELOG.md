@@ -3,6 +3,24 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.9.0] – 2026-11-06
+
+### Novità
+- Nuovi tipi di stampante collegabili direttamente, senza Fleet Hub: OctoPrint, Klipper (Moonraker), PrusaLink e
+  Repetier-Server, oltre a Duet. Per ognuno: stato, temperature, avanzamento, pausa, ripresa, annullamento, invio
+  e avvio dei file dall'archivio e coda; temperature e velocità modificabili dove l'API lo consente (non su PrusaLink).
+  Webcam letta in automatico da OctoPrint e Moonraker.
+- Il modulo "Aggiungi stampante" mostra solo i campi del tipo scelto (chiave API, utente e password, stampante su
+  Repetier-Server) con le indicazioni su dove trovarli; tabella delle capacità di ogni tipo.
+- Archivio: supporto ai file .bgcode (G-code binario di PrusaSlicer per MK4, XL, MINI, CORE One) con tempo,
+  filamenti e miniatura.
+- Connettori riorganizzati con un'interfaccia comune: aggiungere un nuovo tipo non tocca il resto del programma.
+- `tools/mock_hosts.py`: OctoPrint, Moonraker, PrusaLink e Repetier-Server simulati per lo sviluppo.
+
+### Correzioni
+- Stampanti che non comunicano l'esito della stampa: l'esito "completata" o "annullata" tiene conto della velocità
+  di avanzamento nell'ultimo intervallo di lettura, per non scambiare una stampa finita per annullata.
+
 ## [0.8.0] – 2026-11-05
 
 ### Novità

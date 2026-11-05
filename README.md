@@ -11,7 +11,7 @@ ma passando **esclusivamente dal Bambu Fleet Hub** (HTTP API v1.0.0) invece che 
 
 | Funzione | Come è realizzata con il Fleet Hub |
 |---|---|
-| Altre stampanti | stampanti Duet / RepRapFirmware 3 collegate direttamente, senza Fleet Hub, con temperature e velocità modificabili |
+| Altre stampanti | OctoPrint, Klipper (Moonraker), PrusaLink, Duet / RepRapFirmware 3 e Repetier-Server collegate direttamente, senza Fleet Hub |
 | Multilingua | italiano, inglese, francese, tedesco, spagnolo e portoghese: interfaccia, messaggi di errore, file Excel e notifiche; ogni utente sceglie la propria lingua |
 | Utenti e permessi | accesso con utente e password; ruoli Amministratore / Operatore / Osservatore; l'admin decide quali stampanti (singole o per gruppo) e quali progetti vede ogni utente |
 | Gruppi di stampanti | filtro nel cruscotto e nelle statistiche, coda "sulla prima libera del gruppo", permessi per gruppo |
@@ -177,23 +177,40 @@ sudo systemctl restart fleetbuddy
   l'accesso da quell'indirizzo è sospeso per 5 minuti.
 
 ## Altre stampanti (senza Fleet Hub)
-In *Amministrazione → Altre stampanti* si collegano stampanti che non passano dal Fleet Hub. Oggi è supportato il tipo
-**Duet / RepRapFirmware 3** (Duet 2 e Duet 3, autonome o con SBC): basta l'indirizzo usato per Duet Web Control e,
-se impostata con `M551`, la password della scheda. "Prova connessione" mostra scheda, versione del firmware e modalità.
+In *Amministrazione → Altre stampanti* si collegano stampanti che non passano dal Fleet Hub. Compaiono nell'elenco
+insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova connessione" verifica i dati prima di salvarli.
 
-- Stato, avanzamento, strati, temperature di utensili, piano e camera, ventola, fattore di velocità.
-- Comandi: pausa (`M25`), ripresa (`M24`), annullamento (`M25` + `M0`), temperature (`G10`, `M140`, `M141`),
-  velocità (`M220`). Le temperature si impostano cliccando sul riquadro, la velocità sul relativo pulsante.
-- Stampa: si caricano in archivio file `.gcode` preparati per quella stampante; FleetBuddy li copia in `0:/gcodes`
-  e li avvia con `M32`. Fine stampa e annullamenti si riconoscono dall'object model (`lastFileCancelled`, `lastFileAborted`).
-- Foto: indirizzo di uno snapshot JPEG facoltativo (es. `http://ip:8080/?action=snapshot` di mjpg-streamer).
-- La password della scheda è salvata nel database di FleetBuddy (in `data/`, leggibile solo dal tuo utente).
-- Non supportato: RepRapFirmware 2 (API `rr_status`).
+| Tipo | Stato | Pausa / stop | Invio e avvio file | Temperature | Velocità | Webcam |
+|---|---|---|---|---|---|---|
+| OctoPrint | ✓ | ✓ | .gcode | ✓ | ✓ (ultimo valore impostato) | automatica |
+| Klipper (Moonraker) – Mainsail, Fluidd, Creality K1 con root, Neptune 4, Qidi, Sovol… | ✓ | ✓ | .gcode | ✓ (camera se `heater_generic`) | ✓ | automatica |
+| PrusaLink (MK4/MK4S, MK3.9, XL, MINI, CORE One, firmware 5+) | ✓ | ✓ | .bgcode / .gcode | — | — | indirizzo manuale |
+| Duet / RepRapFirmware 3 (Duet 2 e 3, autonoma o SBC) | ✓ | ✓ | .gcode | ✓ | ✓ | indirizzo manuale |
+| Repetier-Server | ✓ | ✓ | .gcode | ✓ | ✓ | indirizzo manuale |
+
+- Le stampe si inviano dall'archivio: i file `.gcode`/`.bgcode` vanno alle stampanti dirette, i `.gcode.3mf` alle Bambu.
+  Tempo, filamenti, colori e miniatura sono letti dai commenti dello slicer (PrusaSlicer, OrcaSlicer, SuperSlicer, Cura)
+  o dall'intestazione dei `.bgcode`.
+- PrusaLink non accetta G-code dalla rete: temperature e velocità si cambiano dalla stampante.
+- Password e chiavi API sono salvate nel database di FleetBuddy (in `data/`, leggibile solo dal tuo utente).
+
+### Altri metodi valutati (non ancora supportati)
+| Metodo | Valutazione |
+|---|---|
+| PrusaConnect | servizio cloud di Prusa senza API pubblica per terze parti; per le Prusa in rete locale si usa PrusaLink |
+| FlashAir | scheda SD Wi‑Fi: permette solo di copiare file, nessuno stato né comando |
+| AstroBox | prodotto dismesso (AstroPrint); API simile a OctoPrint, da verificare su un dispositivo |
+| MKS (modulo Wi‑Fi) | protocollo TCP con comandi G-code e risposte testuali: fattibile, da provare su hardware |
+| ESP3D | API HTTP con comandi G-code: fattibile con lettura di M105/M27, da provare su hardware |
+| CrealityPrint | protocollo WebSocket delle Creality K1/K2/Ender‑3 V3 non documentato ufficialmente; le K1 con root funzionano già con Moonraker |
+| Elegoo Link | protocollo SDCP (WebSocket) della Centauri Carbon: documentato, fattibile, da provare su hardware |
+| Flashforge | API locale delle Adventurer 5M / 5M Pro (porta 8898) e protocollo TCP: fattibile, da provare su hardware |
+| Obico, SimplyPrint, 3DPrinterOS | servizi cloud con account e chiave API: fattibili, ma i dati passano su internet |
 
 Senza Fleet Hub: lascia vuoto `host` nella sezione `[hub]` di `config.toml` e FleetBuddy userà solo le stampanti dirette.
 
-Per sviluppare senza stampante: `python -m tools.mock_duet` (autonoma, porta 8090, password `reprap`) oppure
-`python -m tools.mock_duet --sbc --port 8091`.
+Per sviluppare senza stampanti: `python -m tools.mock_duet` (Duet) e
+`python -m tools.mock_hosts --kind octoprint|moonraker|prusalink|repetier --port …`.
 
 ## Lingue
 - La lingua si sceglie nella pagina di accesso o in basso a sinistra; viene salvata nel profilo dell'utente e
@@ -242,7 +259,8 @@ tools/backup.sh     backup di certificati, configurazione e database
 deploy/make_ui_cert.sh  certificato HTTPS per l'interfaccia
 tools/mock_hub.py   Hub simulato con mTLS per sviluppare senza hardware
 tools/mock_duet.py  scheda Duet simulata (autonoma o SBC)
-app/connectors/     collegamento diretto alle stampanti non Bambu (Duet)
+tools/mock_hosts.py OctoPrint, Moonraker, PrusaLink e Repetier-Server simulati
+app/connectors/     collegamento diretto alle stampanti non Bambu (un modulo per tipo)
 app/gcodemeta.py    lettura dei metadati dei file .gcode
 ```
 

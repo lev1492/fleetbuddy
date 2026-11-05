@@ -22,7 +22,7 @@ from .i18n import LANGS, _, current_lang, from_accept_language, normalize
 from .hub_client import HubError
 from .printers import FILAMENT_PRESETS, auto_map, firmware_below_min, is_ready
 from .service import Service, qmsg
-from .connectors.duet import DuetClient
+from .connectors import KINDS, make_client
 from .gcodemeta import is_gcode, parse_gcode, thumbnail_png
 from .threemf import md5_file, parse_3mf, thumbnail
 
@@ -554,7 +554,8 @@ async def printer_temperature(request: Request, sn: str, body: dict):
     need_operator(u)
     p = printer_for(u, sn)
     if not (p.get("caps") or {}).get("temperature"):
-        raise HTTPException(400, _("Il Fleet Hub non permette di modificare le temperature"))
+        raise HTTPException(400, _("Questa stampante non permette di modificare le temperature tramite la sua API")
+                            if p.get("direct") else _("Il Fleet Hub non permette di modificare le temperature"))
     await S().set_temperature(sn, str(body.get("target", "")), float(body.get("value", 0)))
     log.info("%s: temperatura %s = %s impostata da %s", sn, body.get("target"), body.get("value"), u.username)
     return {"ok": True}
@@ -566,7 +567,8 @@ async def printer_speed(request: Request, sn: str, body: dict):
     need_operator(u)
     p = printer_for(u, sn)
     if not (p.get("caps") or {}).get("speed"):
-        raise HTTPException(400, _("Il Fleet Hub non permette di modificare la velocità"))
+        raise HTTPException(400, _("Questa stampante non permette di modificare la velocità tramite la sua API")
+                            if p.get("direct") else _("Il Fleet Hub non permette di modificare la velocità"))
     await S().set_speed(sn, int(body.get("pct", 100)))
     return {"ok": True}
 
@@ -658,7 +660,8 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
         raise HTTPException(403, _("Scegli un progetto a cui hai accesso"))
     data = S().cfg.data_path
     gcode_file = is_gcode(file.filename or "")
-    tmp = data / "tmp" / f"{uuid.uuid4().hex}{'.gcode' if gcode_file else '.3mf'}"
+    ext = (".bgcode" if (file.filename or "").lower().endswith(".bgcode") else ".gcode") if gcode_file else ".3mf"
+    tmp = data / "tmp" / f"{uuid.uuid4().hex}{ext}"
     with tmp.open("wb") as out:
         shutil.copyfileobj(file.file, out, 1 << 20)
     try:
@@ -671,7 +674,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
     if existing:
         tmp.unlink(missing_ok=True)
         return {"id": existing["id"], "duplicate": True, "project_id": existing["project_id"]}
-    rel = f"{cfg.app.data_dir}/archive/{md5}{'.gcode' if gcode_file else '.3mf'}"
+    rel = f"{cfg.app.data_dir}/archive/{md5}{ext}"
     tmp.rename(cfg.path(rel))
     name = Path(file.filename or "senza_nome.gcode.3mf").name
     taken = {r["filename"].lower() for r in S().db.q("SELECT filename FROM files")}
@@ -1176,35 +1179,37 @@ async def admin_update_install(request: Request):
 
 
 # ====================================================================== stampanti dirette (solo admin)
-DIRECT_KINDS = ("duet",)
+DIRECT_KINDS = tuple(KINDS)
 
 
 def _direct_row(body: dict, old: dict | None = None) -> dict:
     row = dict(old or {})
-    for k in ("name", "host", "snapshot_url"):
+    for k in ("name", "host", "snapshot_url", "username", "extra"):
         if k in body:
             row[k] = str(body[k] or "").strip()[:200]
-    if body.get("password") is not None and (body.get("password") != "" or not old):
-        row["password"] = str(body["password"])[:100]
-    row["kind"] = body.get("kind", row.get("kind", "duet"))
+    for k in ("password", "api_key"):   # segreti: un campo vuoto in modifica significa "non cambiare"
+        if body.get(k) is not None and (body.get(k) != "" or not old):
+            row[k] = str(body[k])[:200]
+    row["kind"] = old["kind"] if old else body.get("kind", "octoprint")   # il tipo non si cambia dopo la creazione
     if row["kind"] not in DIRECT_KINDS:
         raise HTTPException(400, _("Tipo di stampante non supportato"))
     if not row.get("host"):
         raise HTTPException(400, _("Indica l'indirizzo della stampante"))
     row.setdefault("name", row["host"])
-    row.setdefault("password", "")
-    row.setdefault("snapshot_url", "")
+    for k in ("password", "snapshot_url", "api_key", "username", "extra"):
+        row.setdefault(k, "")
     return row
 
 
 @app.get("/api/direct")
 async def direct_list(request: Request):
     _admin(request)
-    rows = S().db.q("SELECT id, kind, name, host, snapshot_url, enabled, created_at, password <> '' AS has_password "
-                    "FROM direct_printers ORDER BY name")
+    rows = S().db.q("SELECT id, kind, name, host, snapshot_url, username, extra, enabled, created_at, "
+                    "password <> '' AS has_password, api_key <> '' AS has_api_key FROM direct_printers ORDER BY name")
     for r in rows:
-        p = S().printers.get(f"duet-{r['id']}") or {}
-        r.update(sn=f"duet-{r['id']}", online=p.get("online", False), state=p.get("state"), error=p.get("last_cmd_error", ""),
+        sn = f"{r['kind']}-{r['id']}"
+        p = S().printers.get(sn) or {}
+        r.update(sn=sn, label=KINDS[r["kind"]].label if r["kind"] in KINDS else r["kind"], online=p.get("online", False), state=p.get("state"), error=p.get("last_cmd_error", ""),
                  board=p.get("model"), firmware=p.get("firmware"), mode=(p.get("caps") or {}).get("mode"))
     return rows
 
@@ -1215,28 +1220,28 @@ async def direct_test(request: Request, body: dict):
     _admin(request)
     old = S().db.one("SELECT * FROM direct_printers WHERE id=?", (int(body["id"]),)) if body.get("id") else None
     row = _direct_row(body, old)
-    c = DuetClient({**row, "id": 0})
+    c = make_client({**row, "id": 0})
     try:
         model = await asyncio.to_thread(c.model)
+        info = c.info(model)
     except HubError as e:
         raise HTTPException(400, e.localized(current_lang.get()))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, str(e))
-    board = (model.get("boards") or [{}])[0] or {}
-    return {"ok": True, "mode": c.mode, "board": board.get("name") or board.get("shortName"),
-            "firmware": board.get("firmwareVersion"), "status": (model.get("state") or {}).get("status"),
-            "tools": len([t for t in model.get("tools") or [] if t]), "snapshot": bool(row.get("snapshot_url")) and
-            bool(await asyncio.to_thread(c.snapshot))}
+    return {"ok": True, **info, "snapshot_configured": c.has_snapshot(),
+            "snapshot": c.has_snapshot() and bool(await asyncio.to_thread(c.snapshot))}
 
 
 @app.post("/api/direct")
 async def direct_add(request: Request, body: dict):
     _admin(request)
     row = _direct_row(body)
-    rid = S().db.x("INSERT INTO direct_printers(kind, name, host, password, snapshot_url, enabled, created_at) VALUES(?,?,?,?,?,1,?)",
-                   (row["kind"], row["name"], row["host"], row["password"], row["snapshot_url"], time.time()))
+    rid = S().db.x("INSERT INTO direct_printers(kind, name, host, password, snapshot_url, api_key, username, extra, enabled, "
+                   "created_at) VALUES(?,?,?,?,?,?,?,?,1,?)",
+                   (row["kind"], row["name"], row["host"], row["password"], row["snapshot_url"], row["api_key"],
+                    row["username"], row["extra"], time.time()))
     S().reload_direct()
-    return {"id": rid, "sn": f"duet-{rid}"}
+    return {"id": rid, "sn": f"{row['kind']}-{rid}"}
 
 
 @app.patch("/api/direct/{rid}")
@@ -1247,8 +1252,9 @@ async def direct_edit(request: Request, rid: int, body: dict):
         raise HTTPException(404)
     row = _direct_row(body, old)
     enabled = 1 if body.get("enabled", old["enabled"]) else 0
-    S().db.x("UPDATE direct_printers SET kind=?, name=?, host=?, password=?, snapshot_url=?, enabled=? WHERE id=?",
-             (row["kind"], row["name"], row["host"], row["password"], row["snapshot_url"], enabled, rid))
+    S().db.x("UPDATE direct_printers SET name=?, host=?, password=?, snapshot_url=?, api_key=?, username=?, extra=?, "
+             "enabled=? WHERE id=?", (row["name"], row["host"], row["password"], row["snapshot_url"], row["api_key"],
+                                      row["username"], row["extra"], enabled, rid))
     S().reload_direct()
     return {"ok": True}
 
@@ -1256,8 +1262,9 @@ async def direct_edit(request: Request, rid: int, body: dict):
 @app.delete("/api/direct/{rid}")
 async def direct_delete(request: Request, rid: int):
     _admin(request)
+    row = S().db.one("SELECT kind FROM direct_printers WHERE id=?", (rid,))
     S().db.x("DELETE FROM direct_printers WHERE id=?", (rid,))
-    sn = f"duet-{rid}"
+    sn = f"{row['kind'] if row else 'duet'}-{rid}"
     S().db.x("DELETE FROM access WHERE kind='printer' AND ref=?", (sn,))
     S().db.x("DELETE FROM group_printers WHERE printer_sn=?", (sn,))
     S().reload_direct()

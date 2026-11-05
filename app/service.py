@@ -10,7 +10,7 @@ from pathlib import Path
 from . import notifier
 from .config import Config
 from .db import DB
-from .connectors.duet import DuetClient, normalize_duet
+from .connectors import DirectClient, make_client
 from .gcodemeta import is_gcode
 from .hub_client import FleetHubClient, HubError
 from .i18n import tr
@@ -37,7 +37,7 @@ class _NoHub:
 def task_name_for(filename: str, plate: int, plates: int) -> str:
     """Nome del lavoro inviato al Hub: lo stesso usato per riconoscere la stampa nello storico."""
     task = Path(filename).name.replace(".gcode.3mf", "").replace(".3mf", "")
-    for ext in (".gcode", ".gco", ".g"):
+    for ext in (".bgcode", ".gcode", ".gco", ".g"):
         if task.lower().endswith(ext):
             task = task[: -len(ext)]
             break
@@ -111,7 +111,7 @@ class Service:
             log.warning("Fleet Hub non disponibile (%s): restano attive le stampanti collegate direttamente", e)
             self.hub = _NoHub(str(e))
         self.hub_printers: dict[str, dict] = {}
-        self.direct: dict[str, DuetClient] = {}
+        self.direct: dict[str, DirectClient] = {}
         self._direct_err: dict[str, str] = {}
         self.reload_direct()
         self.printers: dict[str, dict] = {}
@@ -217,41 +217,43 @@ class Service:
     # ------------------------------------------------------------------ stampanti dirette
     def reload_direct(self):
         """(Ri)carica le stampanti collegate direttamente, dopo ogni modifica in Amministrazione."""
+        from .connectors import KINDS
         rows = self.db.q("SELECT * FROM direct_printers WHERE enabled=1")
         keep = {}
         for r in rows:
-            if r["kind"] != "duet":
+            if r["kind"] not in KINDS:
                 continue
-            sn = f"duet-{r['id']}"
+            sn = f"{r['kind']}-{r['id']}"
+            sig = tuple((r.get(k) or "").strip() for k in ("host", "password", "api_key", "username", "extra", "snapshot_url"))
             old = self.direct.get(sn)
-            same = old and (old.base.split("://", 1)[-1], old.password, old.snapshot_url) == \
-                (r["host"].strip().rstrip("/").split("://", 1)[-1], r["password"] or "", (r["snapshot_url"] or "").strip())
-            if same:
+            if old and getattr(old, "_sig", None) == sig:   # stessi dati di collegamento: si tiene la sessione
                 old.name = r["name"] or sn
                 keep[sn] = old
             else:
-                keep[sn] = DuetClient(r)
+                c = make_client(r)
+                c._sig = sig
+                keep[sn] = c
         self.direct = keep
 
     async def _poll_direct(self) -> dict[str, dict]:
-        async def one(c: DuetClient):
+        async def one(c: DirectClient):
             try:
                 model = await asyncio.to_thread(c.model)
                 self.raw[c.sn] = model
                 if self._direct_err.pop(c.sn, None):
                     log.info("%s (%s) di nuovo raggiungibile", c.name, c.base)
-                return normalize_duet(c, model)
+                return c.normalize(model)
             except Exception as e:  # noqa: BLE001
                 msg = e.localized("it") if isinstance(e, HubError) else str(e)
                 if self._direct_err.get(c.sn) != msg:
                     log.warning("%s (%s): %s", c.name, c.base, msg)
                 self._direct_err[c.sn] = msg
-                return normalize_duet(c, None, msg)
+                return c.normalize(None, msg)
         results = await asyncio.gather(*(one(c) for c in self.direct.values()))
         return {p["sn"]: p for p in results}
 
     def kind_of(self, sn: str) -> str:
-        return "duet" if sn in self.direct else "bambu"
+        return self.direct[sn].kind if sn in self.direct else "bambu"
 
     async def command(self, sn: str, opt: str):
         """Pausa / ripresa / stop / piatto liberato, sulla strada giusta per il tipo di stampante."""
@@ -395,10 +397,16 @@ class Service:
             elif p["state"] == "FAILED":
                 await self._close_job(job, p, "failed")
             elif p["state"] == "IDLE":
-                if p.get("kind") == "duet" and p.get("last_result"):
+                if p.get("direct") and p.get("last_result"):
                     await self._close_job(job, p, p["last_result"])
                 else:
-                    await self._close_job(job, p, "finished" if job.get("progress", 0) >= 99 else "cancelled")
+                    # senza esito comunicato si guarda l'ultimo avanzamento letto; per le dirette si stima anche dove
+                    # sarebbe arrivato nell'ultimo intervallo di lettura, alla velocità con cui procedeva
+                    prog = job.get("progress", 0) or 0
+                    if p.get("direct"):
+                        rate = prog / max(1.0, time.time() - (job.get("started_at") or time.time()))
+                        prog += rate * (self.cfg.app.poll_interval + 2)
+                    await self._close_job(job, p, "finished" if prog >= 99 else "cancelled")
             elif not p["online"] and prev and prev["online"]:
                 pass  # resta aperto: potrebbe tornare online e continuare
 
@@ -566,7 +574,7 @@ class Service:
             self.db.x("DELETE FROM pending_prints WHERE printer_sn=?", (sn,))
             raise
         self._cooldown[sn] = time.time() + 20
-        log.info("Stampa inviata a %s (Duet): %s", sn, f["filename"])
+        log.info("Stampa inviata a %s (%s): %s", sn, self.direct[sn].label, f["filename"])
         return {"ok": True, "cached": False, "warnings": [], "print_cmd": {"file": f["filename"]}, "hub": {}}
 
     async def start_print(self, file_id: int, plate: int, sn: str, slots: list[dict] | None,
