@@ -84,7 +84,7 @@ def all_keys() -> set[str]:
     keys: set[str] = set()
     keys |= js_keys((ROOT / "static" / "app.js").read_text(encoding="utf-8"))
     keys |= html_keys((ROOT / "static" / "index.html").read_text(encoding="utf-8"))
-    for p in sorted((ROOT / "app").glob("*.py")):
+    for p in sorted((ROOT / "app").rglob("*.py")):
         if p.name != "i18n.py":
             keys |= py_keys(p.read_text(encoding="utf-8"))
     return {k for k in keys if k.strip()}

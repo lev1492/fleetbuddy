@@ -3,6 +3,25 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.8.0] – 2026-11-05
+
+### Novità
+- Stampanti collegate direttamente, senza Fleet Hub: Amministrazione → Altre stampanti. Primo tipo supportato:
+  Duet / RepRapFirmware 3 (Duet 2 e Duet 3, sia autonome con API `rr_` sia con SBC con API `/machine`, modalità
+  riconosciuta da sola, con password della scheda e prova di connessione). Compaiono nell'elenco insieme alle Bambu,
+  con storico, statistiche, coda, gruppi e permessi.
+- Sulle stampanti Duet si possono impostare dalla scheda le temperature di ogni utensile, del piano e della camera
+  (clic sul riquadro) e il fattore di velocità; pausa, ripresa e annullamento funzionano come per le Bambu.
+  Foto da una webcam opzionale (indirizzo di snapshot, es. mjpg-streamer).
+- Archivio: accetta anche file .gcode (PrusaSlicer, SuperSlicer, OrcaSlicer, Cura) con lettura di tempo stimato,
+  filamenti, colori e miniatura. I .gcode vanno alle stampanti dirette, i .gcode.3mf alle Bambu.
+- Il Fleet Hub diventa facoltativo: senza `host` in config.toml (o senza certificati) FleetBuddy funziona con le
+  sole stampanti dirette.
+- `tools/mock_duet.py`: scheda Duet simulata per lo sviluppo.
+
+### Correzioni
+- Un errore imprevisto nell'invio di una voce della coda segna quella voce in errore invece di interrompere la coda.
+
 ## [0.7.0] – 2026-11-05
 
 ### Novità

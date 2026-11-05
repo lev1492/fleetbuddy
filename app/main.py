@@ -22,6 +22,8 @@ from .i18n import LANGS, _, current_lang, from_accept_language, normalize
 from .hub_client import HubError
 from .printers import FILAMENT_PRESETS, auto_map, firmware_below_min, is_ready
 from .service import Service, qmsg
+from .connectors.duet import DuetClient
+from .gcodemeta import is_gcode, parse_gcode, thumbnail_png
 from .threemf import md5_file, parse_3mf, thumbnail
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -538,11 +540,35 @@ async def printer_opt(request: Request, sn: str, body: dict):
         raise HTTPException(409, _("Comando '{opt}' non disponibile nello stato {state}", opt=opt, state=p["state"]))
     if p["mqtt"] != 2:
         raise HTTPException(409, _("Canale MQTT della stampante non connesso, riprova tra poco"))
-    res = await asyncio.to_thread(S().hub.opt, sn, opt)
+    res = await S().command(sn, opt)
     if opt == "stop":
         S().stopped_by_user.add(sn)
     log.info("%s: comando %s inviato da %s", sn, opt, u.username)
     return res
+
+
+@app.post("/api/printers/{sn}/temperature")
+async def printer_temperature(request: Request, sn: str, body: dict):
+    """Temperatura obiettivo di ugello (tool:N), piano (bed) o camera (chamber); solo stampanti dirette."""
+    u = U(request)
+    need_operator(u)
+    p = printer_for(u, sn)
+    if not (p.get("caps") or {}).get("temperature"):
+        raise HTTPException(400, _("Il Fleet Hub non permette di modificare le temperature"))
+    await S().set_temperature(sn, str(body.get("target", "")), float(body.get("value", 0)))
+    log.info("%s: temperatura %s = %s impostata da %s", sn, body.get("target"), body.get("value"), u.username)
+    return {"ok": True}
+
+
+@app.post("/api/printers/{sn}/speed")
+async def printer_speed(request: Request, sn: str, body: dict):
+    u = U(request)
+    need_operator(u)
+    p = printer_for(u, sn)
+    if not (p.get("caps") or {}).get("speed"):
+        raise HTTPException(400, _("Il Fleet Hub non permette di modificare la velocità"))
+    await S().set_speed(sn, int(body.get("pct", 100)))
+    return {"ok": True}
 
 
 @app.put("/api/printers/{sn}/name")
@@ -550,7 +576,12 @@ async def printer_name(request: Request, sn: str, body: dict):
     u = U(request)
     need_admin(u)
     printer_for(u, sn)
-    return await asyncio.to_thread(S().hub.set_name, sn, str(body.get("name", ""))[:64])
+    name = str(body.get("name", "")).strip()[:64]
+    if sn in S().direct:   # stampante diretta: il nome è salvato in FleetBuddy
+        S().db.x("UPDATE direct_printers SET name=? WHERE id=?", (name, int(sn.split("-", 1)[1])))
+        S().reload_direct()
+        return {"ok": True}
+    return await asyncio.to_thread(S().hub.set_name, sn, name)
 
 
 @app.get("/api/printers/{sn}/snapshot")
@@ -581,6 +612,8 @@ async def printer_filament(request: Request, sn: str, body: dict):
     u = U(request)
     need_operator(u)
     p = printer_for(u, sn)
+    if sn in S().direct:
+        raise HTTPException(400, _("Comando non disponibile per questa stampante"))
     ams_id, slot_id = int(body["ams_id"]), int(body["slot_id"])
     tray = next((t for t in p["trays"] if t["ams_id"] == ams_id and t["slot_id"] == slot_id), None)
     if tray and tray["rfid"]:
@@ -624,11 +657,12 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
     if not u.sees_project(pid):
         raise HTTPException(403, _("Scegli un progetto a cui hai accesso"))
     data = S().cfg.data_path
-    tmp = data / "tmp" / f"{uuid.uuid4().hex}.3mf"
+    gcode_file = is_gcode(file.filename or "")
+    tmp = data / "tmp" / f"{uuid.uuid4().hex}{'.gcode' if gcode_file else '.3mf'}"
     with tmp.open("wb") as out:
         shutil.copyfileobj(file.file, out, 1 << 20)
     try:
-        meta = await asyncio.to_thread(parse_3mf, tmp)
+        meta = await asyncio.to_thread(parse_gcode if gcode_file else parse_3mf, tmp)
     except Exception as e:  # noqa: BLE001
         tmp.unlink(missing_ok=True)
         raise HTTPException(400, _("File non valido: {e}", e=e))
@@ -637,7 +671,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
     if existing:
         tmp.unlink(missing_ok=True)
         return {"id": existing["id"], "duplicate": True, "project_id": existing["project_id"]}
-    rel = f"{cfg.app.data_dir}/archive/{md5}.3mf"
+    rel = f"{cfg.app.data_dir}/archive/{md5}{'.gcode' if gcode_file else '.3mf'}"
     tmp.rename(cfg.path(rel))
     name = Path(file.filename or "senza_nome.gcode.3mf").name
     taken = {r["filename"].lower() for r in S().db.q("SELECT filename FROM files")}
@@ -683,7 +717,8 @@ async def edit_file(request: Request, fid: int, body: dict):
 @app.get("/api/files/{fid}/thumb/{plate}")
 async def file_thumb(request: Request, fid: int, plate: int):
     f = file_for(U(request), fid)
-    img = await asyncio.to_thread(thumbnail, cfg.path(f["path"]), plate)
+    img = await asyncio.to_thread(thumbnail_png if f["meta"].get("kind") == "gcode" else (lambda pth: thumbnail(pth, plate)),
+                                  cfg.path(f["path"]))
     if not img:
         raise HTTPException(404)
     return Response(img, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
@@ -1137,6 +1172,95 @@ async def admin_update_install(request: Request):
         log.warning("Avvio dell'aggiornamento non riuscito: %s", out)
         raise HTTPException(502, _("Impossibile avviare l'aggiornamento: esegui una volta sul Raspberry Pi bash deploy/install.sh"))
     log.info("Aggiornamento avviato dal browser da %s", U(request).username)
+    return {"ok": True}
+
+
+# ====================================================================== stampanti dirette (solo admin)
+DIRECT_KINDS = ("duet",)
+
+
+def _direct_row(body: dict, old: dict | None = None) -> dict:
+    row = dict(old or {})
+    for k in ("name", "host", "snapshot_url"):
+        if k in body:
+            row[k] = str(body[k] or "").strip()[:200]
+    if body.get("password") is not None and (body.get("password") != "" or not old):
+        row["password"] = str(body["password"])[:100]
+    row["kind"] = body.get("kind", row.get("kind", "duet"))
+    if row["kind"] not in DIRECT_KINDS:
+        raise HTTPException(400, _("Tipo di stampante non supportato"))
+    if not row.get("host"):
+        raise HTTPException(400, _("Indica l'indirizzo della stampante"))
+    row.setdefault("name", row["host"])
+    row.setdefault("password", "")
+    row.setdefault("snapshot_url", "")
+    return row
+
+
+@app.get("/api/direct")
+async def direct_list(request: Request):
+    _admin(request)
+    rows = S().db.q("SELECT id, kind, name, host, snapshot_url, enabled, created_at, password <> '' AS has_password "
+                    "FROM direct_printers ORDER BY name")
+    for r in rows:
+        p = S().printers.get(f"duet-{r['id']}") or {}
+        r.update(sn=f"duet-{r['id']}", online=p.get("online", False), state=p.get("state"), error=p.get("last_cmd_error", ""),
+                 board=p.get("model"), firmware=p.get("firmware"), mode=(p.get("caps") or {}).get("mode"))
+    return rows
+
+
+@app.post("/api/direct/test")
+async def direct_test(request: Request, body: dict):
+    """Prova la connessione con i dati inseriti, senza salvarli."""
+    _admin(request)
+    old = S().db.one("SELECT * FROM direct_printers WHERE id=?", (int(body["id"]),)) if body.get("id") else None
+    row = _direct_row(body, old)
+    c = DuetClient({**row, "id": 0})
+    try:
+        model = await asyncio.to_thread(c.model)
+    except HubError as e:
+        raise HTTPException(400, e.localized(current_lang.get()))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, str(e))
+    board = (model.get("boards") or [{}])[0] or {}
+    return {"ok": True, "mode": c.mode, "board": board.get("name") or board.get("shortName"),
+            "firmware": board.get("firmwareVersion"), "status": (model.get("state") or {}).get("status"),
+            "tools": len([t for t in model.get("tools") or [] if t]), "snapshot": bool(row.get("snapshot_url")) and
+            bool(await asyncio.to_thread(c.snapshot))}
+
+
+@app.post("/api/direct")
+async def direct_add(request: Request, body: dict):
+    _admin(request)
+    row = _direct_row(body)
+    rid = S().db.x("INSERT INTO direct_printers(kind, name, host, password, snapshot_url, enabled, created_at) VALUES(?,?,?,?,?,1,?)",
+                   (row["kind"], row["name"], row["host"], row["password"], row["snapshot_url"], time.time()))
+    S().reload_direct()
+    return {"id": rid, "sn": f"duet-{rid}"}
+
+
+@app.patch("/api/direct/{rid}")
+async def direct_edit(request: Request, rid: int, body: dict):
+    _admin(request)
+    old = S().db.one("SELECT * FROM direct_printers WHERE id=?", (rid,))
+    if not old:
+        raise HTTPException(404)
+    row = _direct_row(body, old)
+    enabled = 1 if body.get("enabled", old["enabled"]) else 0
+    S().db.x("UPDATE direct_printers SET kind=?, name=?, host=?, password=?, snapshot_url=?, enabled=? WHERE id=?",
+             (row["kind"], row["name"], row["host"], row["password"], row["snapshot_url"], enabled, rid))
+    S().reload_direct()
+    return {"ok": True}
+
+
+@app.delete("/api/direct/{rid}")
+async def direct_delete(request: Request, rid: int):
+    _admin(request)
+    S().db.x("DELETE FROM direct_printers WHERE id=?", (rid,))
+    sn = f"duet-{rid}"
+    S().db.x("DELETE FROM access WHERE kind='printer' AND ref=?", (sn,))
+    S().db.x("DELETE FROM group_printers WHERE printer_sn=?", (sn,))
+    S().reload_direct()
     return {"ok": True}
 
 

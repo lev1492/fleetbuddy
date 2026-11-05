@@ -2,7 +2,7 @@
 # Copia in config.toml e adatta i valori.
 
 [hub]
-host = "192.168.1.50"          # IP del Fleet Hub (trovalo con: python -m tools.find_hub --write)
+host = "192.168.1.50"          # IP del Fleet Hub; lascia vuoto ("") se usi solo stampanti dirette (Duet) (trovalo con: python -m tools.find_hub --write)
 port = 8888                    # API HTTP mTLS (la 443 è solo il Web Client del Hub)
 sni_hostname = "fleet_v1.bambulab.com"   # nome atteso dal certificato del Hub (dalla demo)
 client_cert = "certs/hub_client.chain.crt"   # certificato client scaricato dal Developer Center

@@ -11,6 +11,7 @@ ma passando **esclusivamente dal Bambu Fleet Hub** (HTTP API v1.0.0) invece che 
 
 | Funzione | Come è realizzata con il Fleet Hub |
 |---|---|
+| Altre stampanti | stampanti Duet / RepRapFirmware 3 collegate direttamente, senza Fleet Hub, con temperature e velocità modificabili |
 | Multilingua | italiano, inglese, francese, tedesco, spagnolo e portoghese: interfaccia, messaggi di errore, file Excel e notifiche; ogni utente sceglie la propria lingua |
 | Utenti e permessi | accesso con utente e password; ruoli Amministratore / Operatore / Osservatore; l'admin decide quali stampanti (singole o per gruppo) e quali progetti vede ogni utente |
 | Gruppi di stampanti | filtro nel cruscotto e nelle statistiche, coda "sulla prima libera del gruppo", permessi per gruppo |
@@ -175,6 +176,25 @@ sudo systemctl restart fleetbuddy
 - Le password sono salvate con PBKDF2-SHA256; le sessioni durano 30 giorni; dopo 5 tentativi errati
   l'accesso da quell'indirizzo è sospeso per 5 minuti.
 
+## Altre stampanti (senza Fleet Hub)
+In *Amministrazione → Altre stampanti* si collegano stampanti che non passano dal Fleet Hub. Oggi è supportato il tipo
+**Duet / RepRapFirmware 3** (Duet 2 e Duet 3, autonome o con SBC): basta l'indirizzo usato per Duet Web Control e,
+se impostata con `M551`, la password della scheda. "Prova connessione" mostra scheda, versione del firmware e modalità.
+
+- Stato, avanzamento, strati, temperature di utensili, piano e camera, ventola, fattore di velocità.
+- Comandi: pausa (`M25`), ripresa (`M24`), annullamento (`M25` + `M0`), temperature (`G10`, `M140`, `M141`),
+  velocità (`M220`). Le temperature si impostano cliccando sul riquadro, la velocità sul relativo pulsante.
+- Stampa: si caricano in archivio file `.gcode` preparati per quella stampante; FleetBuddy li copia in `0:/gcodes`
+  e li avvia con `M32`. Fine stampa e annullamenti si riconoscono dall'object model (`lastFileCancelled`, `lastFileAborted`).
+- Foto: indirizzo di uno snapshot JPEG facoltativo (es. `http://ip:8080/?action=snapshot` di mjpg-streamer).
+- La password della scheda è salvata nel database di FleetBuddy (in `data/`, leggibile solo dal tuo utente).
+- Non supportato: RepRapFirmware 2 (API `rr_status`).
+
+Senza Fleet Hub: lascia vuoto `host` nella sezione `[hub]` di `config.toml` e FleetBuddy userà solo le stampanti dirette.
+
+Per sviluppare senza stampante: `python -m tools.mock_duet` (autonoma, porta 8090, password `reprap`) oppure
+`python -m tools.mock_duet --sbc --port 8091`.
+
 ## Lingue
 - La lingua si sceglie nella pagina di accesso o in basso a sinistra; viene salvata nel profilo dell'utente e
   lo segue su ogni dispositivo. Le notifiche (ntfy, Telegram, webhook) usano la lingua impostata in Amministrazione.
@@ -221,6 +241,9 @@ tools/release.sh    pubblicazione di una nuova versione
 tools/backup.sh     backup di certificati, configurazione e database
 deploy/make_ui_cert.sh  certificato HTTPS per l'interfaccia
 tools/mock_hub.py   Hub simulato con mTLS per sviluppare senza hardware
+tools/mock_duet.py  scheda Duet simulata (autonoma o SBC)
+app/connectors/     collegamento diretto alle stampanti non Bambu (Duet)
+app/gcodemeta.py    lettura dei metadati dei file .gcode
 ```
 
 ## Se il Hub non si trova

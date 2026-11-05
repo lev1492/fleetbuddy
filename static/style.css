@@ -315,6 +315,12 @@ legend{font-size:13px;font-weight:700;color:var(--muted);padding:0 4px}
 .nf.miss{color:var(--pause);text-decoration:underline dotted}
 .sw.auto{background:conic-gradient(#e74c3c,#f1c40f,#2ecc71,#3498db,#9b59b6,#e74c3c)}
 
+/* riquadri modificabili (stampanti dirette) */
+button.tile.edit{border:1px solid transparent;cursor:pointer;color:var(--ink);font:inherit}
+button.tile.edit:hover{border-color:var(--run)}
+button.bdg.edit{cursor:pointer;font:inherit;font-size:12px;font-weight:600}
+button.bdg.edit:hover:not(:disabled){border-color:var(--run);color:var(--ink)}
+
 @media (max-width:760px){
   .statusbox .cam{flex-basis:104px}
   main{margin-left:0}

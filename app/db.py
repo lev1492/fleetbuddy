@@ -49,6 +49,11 @@ CREATE INDEX IF NOT EXISTS job_filaments_job ON job_filaments(job_id);
 CREATE TABLE IF NOT EXISTS pending_prints (printer_sn TEXT PRIMARY KEY, data TEXT, at REAL);
 -- permessi: kind = 'printer' (ref = seriale), 'group' (ref = id gruppo), 'project' (ref = id progetto)
 CREATE TABLE IF NOT EXISTS access (user_id INTEGER, kind TEXT, ref TEXT, PRIMARY KEY (user_id, kind, ref));
+-- stampanti collegate direttamente, senza Fleet Hub (es. Duet / RepRapFirmware)
+CREATE TABLE IF NOT EXISTS direct_printers (
+    id INTEGER PRIMARY KEY, kind TEXT DEFAULT 'duet', name TEXT, host TEXT, password TEXT DEFAULT '',
+    snapshot_url TEXT DEFAULT '', enabled INTEGER DEFAULT 1, created_at REAL
+);
 """
 
 # colonne aggiunte nelle versioni successive (migrazione automatica dei database esistenti)

@@ -160,15 +160,16 @@ $("#mepwd").onclick = () => {
 const RENDER = {};
 function go() {
   view = (location.hash || "#printers").slice(1);
-  if ((view === "hub" || view === "admin") && !isAdmin()) view = "printers";
-  const navView = view === "hub" ? "admin" : view;   // il Hub è una scheda di Amministrazione
+  if (["hub", "admin", "direct"].includes(view) && !isAdmin()) view = "printers";
+  const navView = view === "hub" || view === "direct" ? "admin" : view;   // schede di Amministrazione
   $$(".nav a").forEach(a => a.classList.toggle("on", a.dataset.view === navView));
   $$(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + view));
   (RENDER[view] || RENDER.printers)();
 }
 const adminTabs = active => `<div class="tabs" role="tablist">
   <a href="#admin" role="tab" aria-selected="${active === "admin"}" class="${active === "admin" ? "on" : ""}">${t("Utenti e gruppi")}</a>
-  <a href="#hub" role="tab" aria-selected="${active === "hub"}" class="${active === "hub" ? "on" : ""}">Fleet Hub</a></div>`;
+  <a href="#hub" role="tab" aria-selected="${active === "hub"}" class="${active === "hub" ? "on" : ""}">Fleet Hub</a>
+  <a href="#direct" role="tab" aria-selected="${active === "direct"}" class="${active === "direct" ? "on" : ""}">${t("Altre stampanti")}</a></div>`;
 function reRender() { $("#v-printers")._built = false; $$("#pgrid .pc").forEach(c => c.remove()); go(); }
 window.addEventListener("hashchange", () => ME && go());
 
@@ -229,6 +230,7 @@ function cardTop(p) {
   const alerts = (p.print_error ? 1 : 0) + p.hms.length;
   const badges = [
     `<span class="bdg ${p.online ? "ok" : "off"}">${p.online ? t("Connessa") : t("Offline")}</span>`,
+    p.kind === "duet" ? `<span class="bdg">Duet${p.caps && p.caps.mode ? " · " + (p.caps.mode === "sbc" ? "SBC" : t("autonoma")) : ""}</span>` : "",
     p.wifi ? `<span class="bdg">${esc(p.wifi)}</span>` : "",
     `<span class="bdg ${alerts ? "err" : "ok"}">${alerts ? t("{n} avvisi", {n: alerts}) : t("Nessun errore")}</span>`,
     p.firmware ? `<span class="bdg ${p.fw_min ? "warn" : ""}" title="${p.fw_min ? esc(t("Firmware {v} inferiore al minimo supportato dal Hub ({min}).", {v: p.firmware, min: p.fw_min})) : ""}">fw ${esc(p.firmware)}</span>` : "",
@@ -280,17 +282,27 @@ function filamentCards(p) {
 function cardBody(p) {
   const done = p.state === "FINISH" || p.state === "FAILED";
   const dual = p.nozzles.length > 1;
+  const direct = p.kind === "duet", editT = direct && canOperate() && p.online;
   const tiles = [];
-  if (dual) {
+  const tile = (label, v, tgt, key) => editT
+    ? `<button type="button" class="tile edit" data-temp="${key}" data-label="${esc(label)}" data-target="${tgt || 0}" title="${esc(t("Clicca per impostare la temperatura"))}"><span>${label} ✎</span><b>${deg(v, tgt)}</b></button>`
+    : `<div class="tile"><span>${label}</span><b>${deg(v, tgt)}</b></div>`;
+  if (direct) {
+    p.nozzles.forEach(n => tiles.push(tile(esc(n.label || t("Ugello")), n.temp, n.target, `tool:${n.id}`)));
+    tiles.push(tile(t("Piatto|letto"), p.bed, p.bed_target, "bed"));
+    if (p.chamber != null) tiles.push(tile(t("Camera"), p.chamber, p.chamber_target, "chamber"));
+  } else if (dual) {
     const L = p.nozzles.find(n => n.side === "left") || p.nozzles[0], R = p.nozzles.find(n => n.side === "right") || p.nozzles[1];
     tiles.push(`<div class="tile"><span>${t("Ugelli")} ${sideLetter("left")} / ${sideLetter("right")}</span><b>${deg(L.temp, L.target)} / ${deg(R.temp, R.target)}</b></div>`);
   } else {
     const n = p.nozzles[0] || {temp: p.nozzle, target: p.nozzle_target};
     tiles.push(`<div class="tile"><span>${t("Ugello")}</span><b>${deg(n.temp, n.target)}</b></div>`);
   }
-  tiles.push(`<div class="tile"><span>${t("Piatto|letto")}</span><b>${deg(p.bed, p.bed_target)}</b></div>`);
-  if (p.chamber != null) tiles.push(`<div class="tile"><span>${t("Camera")}</span><b>${deg(p.chamber, p.chamber_target)}</b></div>`);
-  tiles.push(`<div class="tile wide"><span>${t("Hotend")}</span>${p.nozzles.map(n => `<div class="hot">${dual ? `<b class="side">${sideLetter(n.side)}</b>` : ""}<b>${n.diameter ? n.diameter + " mm" : "—"}</b> <small>${nozzleType(n)}</small></div>`).join("")}</div>`);
+  if (!direct) {
+    tiles.push(`<div class="tile"><span>${t("Piatto|letto")}</span><b>${deg(p.bed, p.bed_target)}</b></div>`);
+    if (p.chamber != null) tiles.push(`<div class="tile"><span>${t("Camera")}</span><b>${deg(p.chamber, p.chamber_target)}</b></div>`);
+    tiles.push(`<div class="tile wide"><span>${t("Hotend")}</span>${p.nozzles.map(n => `<div class="hot">${dual ? `<b class="side">${sideLetter(n.side)}</b>` : ""}<b>${n.diameter ? n.diameter + " mm" : "—"}</b> <small>${nozzleType(n)}</small></div>`).join("")}</div>`);
+  }
   const f = p.fans || {};
   const fans = [["part", t("Ventola pezzo")], ["aux", t("Ventola ausiliaria")], ["chamber", t("Ventola camera")]].filter(([k]) => f[k] != null);
   const btns = [];
@@ -306,12 +318,34 @@ function cardBody(p) {
     ${fans.length ? `<div class="tiles fans">${fans.map(([k, l]) => `<div class="tile"><span>${l}</span><b>${f[k]}%</b></div>`).join("")}</div>` : ""}
     ${done && canOperate() ? `<button class="platebtn" data-opt="bed_clean">${t("Segna il piatto come liberato")}</button>` : ""}
     <div class="sec">${t("Comandi")}</div>
-    <div class="ctrls"><span class="bdg">${t("Velocità")} · ${esc(t(SPEEDS[p.speed_lvl] || "—"))}</span><span class="grow"></span>${btns.join("") || `<span class="muted small">${t("Nessun comando disponibile in questo stato")}</span>`}</div>
-    <div class="sec">${t("Filamenti")}</div>
-    ${filamentCards(p)}
+    <div class="ctrls">${direct ? `<button type="button" class="bdg edit" data-speed="${p.speed_pct}" ${editT ? "" : "disabled"}>${t("Velocità")} · ${p.speed_pct}% ✎</button>`
+      : `<span class="bdg">${t("Velocità")} · ${esc(t(SPEEDS[p.speed_lvl] || "—"))}</span>`}<span class="grow"></span>${btns.join("") || `<span class="muted small">${t("Nessun comando disponibile in questo stato")}</span>`}</div>
+    ${direct ? "" : `<div class="sec">${t("Filamenti")}</div>
+    ${filamentCards(p)}`}
     ${alerts ? `<div class="alerts">${alerts}</div>` : ""}
     ${p.last_cmd_error ? `<div class="warn">${t("Ultimo invio fallito: {e}", {e: esc(p.last_cmd_error)})}</div>` : ""}
     ${groups.length ? `<div>${groups.map(g => `<span class="tag" style="--c:${esc(g.color)}"><i></i>${esc(g.name)}</span>`).join(" ")}</div>` : ""}`;
+}
+function tempDialog(p, target, label, current) {
+  const max = target === "bed" ? 130 : target === "chamber" ? 80 : 320;
+  openDialog(`<h3>${esc(p.name)} – ${label}</h3>
+    <label>${t("Temperatura obiettivo (°C)")}<input type="number" name="v" min="0" max="${max}" step="1" value="${Math.round(current || 0)}"></label>
+    <p class="sub" style="margin:0">${t("0 spegne il riscaldatore. Massimo {m} °C.", {m: max})}</p>
+    <div class="dlgfoot"><button value="cancel">${t("Annulla")}</button><button type="button" id="toff">${t("Spegni")}</button><button class="primary" id="tok">${t("Imposta")}</button></div>`);
+  const send = async v => { if (await act(() => api(`/api/printers/${p.sn}/temperature`, {method: "POST", body: {target, value: v}}), t("Comando inviato"))) $("#dlg").close(); };
+  $("#tok").onclick = ev => { ev.preventDefault(); const v = +$("#dlgbody").elements.namedItem("v").value; if (v >= 0 && v <= max) send(v); };
+  $("#toff").onclick = () => send(0);
+}
+function speedDialog(p, current) {
+  openDialog(`<h3>${esc(p.name)} – ${t("Velocità")}</h3>
+    <label>${t("Fattore di velocità: {v}%", {v: `<b id="spv">${current}</b>`})}<input type="range" name="v" min="50" max="200" step="5" value="${current}"></label>
+    <div class="row">${[50, 75, 100, 125, 150].map(v => `<button type="button" data-v="${v}">${v}%</button>`).join("")}</div>
+    <div class="dlgfoot"><button value="cancel">${t("Annulla")}</button><button class="primary" id="sok">${t("Imposta")}</button></div>`);
+  const r = $("#dlgbody").elements.namedItem("v");
+  r.oninput = () => $("#spv").textContent = r.value;
+  $$("#dlgbody [data-v]").forEach(b => b.onclick = () => { r.value = b.dataset.v; r.oninput(); });
+  $("#sok").onclick = async ev => { ev.preventDefault();
+    if (await act(() => api(`/api/printers/${p.sn}/speed`, {method: "POST", body: {pct: +r.value}}), t("Comando inviato"))) $("#dlg").close(); };
 }
 function createCard(p) {
   const a = document.createElement("article");
@@ -407,6 +441,10 @@ $("#v-printers").addEventListener("click", async e => {
     if (ask[b.dataset.opt] && !confirm(ask[b.dataset.opt])) return;
     b.disabled = true;
     await act(() => api(`/api/printers/${sn}/opt`, {method: "POST", body: {opt: b.dataset.opt}}), t("Comando inviato (lo stato si aggiorna in ~10 s)"));
+  } else if (b.dataset.temp) {
+    tempDialog(p, b.dataset.temp, b.dataset.label, +b.dataset.target);
+  } else if (b.dataset.speed) {
+    speedDialog(p, +b.dataset.speed);
   } else if (b.hasAttribute("data-camzoom")) {
     const img = $(".cam img", card);
     if (!img.hidden) openDialog(`<img src="${img.src}" alt="" style="width:100%;border-radius:8px"><p class="sub" style="margin:0">${esc(snapAge(p))}</p><div class="dlgfoot"><button value="cancel">${t("Chiudi")}</button></div>`);
@@ -463,9 +501,9 @@ RENDER.archive = async function renderArchive() {
   const sel = projFilter === "none" ? PROJECTS.find(p => p.id === null) : PROJECTS.find(p => String(p.id) === projFilter);
   const uploadPid = sel ? sel.id : (!isAdmin() && PROJECTS.length === 1 ? PROJECTS[0].id : (isAdmin() ? null : undefined));
   const dropText = uploadPid === undefined ? t("Seleziona un progetto per caricare file")
-    : (sel ? t("Trascina qui un file .gcode.3mf nel progetto {p} oppure sceglilo dal computer", {p: `<b>${esc(projName(sel))}</b>`})
-      : uploadPid === null ? t("Trascina qui un file .gcode.3mf (sarà senza progetto) oppure sceglilo dal computer")
-      : t("Trascina qui un file .gcode.3mf nel progetto {p} oppure sceglilo dal computer", {p: `<b>${esc(PROJECTS[0].name)}</b>`}));
+    : (sel ? t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti) nel progetto {p} oppure sceglilo dal computer", {p: `<b>${esc(projName(sel))}</b>`})
+      : uploadPid === null ? t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti), sarà senza progetto, oppure sceglilo dal computer")
+      : t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti) nel progetto {p} oppure sceglilo dal computer", {p: `<b>${esc(PROJECTS[0].name)}</b>`}));
   el.innerHTML = `<div class="head"><div><h1>${t("Archivio")}</h1><p class="sub">${t("I file sono organizzati in progetti. Ogni utente vede solo i progetti che l'amministratore gli ha assegnato.")}</p></div>
       <button class="admin-only primary" id="newproj">${t("Nuovo progetto")}</button></div>
     <div class="chips" id="pchips">
@@ -475,7 +513,7 @@ RENDER.archive = async function renderArchive() {
     </div>
     ${sel ? `<div class="projhead"><div><h2 style="margin:0">${esc(projName(sel))}</h2>${sel.id === null ? `<p>${t("Visibili solo agli amministratori")}</p>` : sel.description ? `<p>${esc(sel.description)}</p>` : ""}</div>
       ${sel.id !== null ? `<div class="row admin-only"><button id="editproj">${t("Modifica")}</button><button class="danger" id="delproj">${t("Elimina progetto")}</button></div>` : ""}</div>` : ""}
-    ${canOperate() ? `<div class="drop" id="drop">${dropText}<input type="file" id="fpick" accept=".3mf" multiple hidden></div>` : ""}
+    ${canOperate() ? `<div class="drop" id="drop">${dropText}<input type="file" id="fpick" accept=".3mf,.gcode,.gco,.g" multiple hidden></div>` : ""}
     <div class="list" id="flist"><div class="empty">${t("Caricamento…")}</div></div>`;
   $("#pchips").onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; projFilter = c.dataset.p; localStorage.setItem("fb_proj", projFilter); RENDER.archive(); };
   if ($("#newproj")) $("#newproj").onclick = () => projectDialog();
@@ -500,7 +538,7 @@ RENDER.archive = async function renderArchive() {
     return `<div class="item" data-id="${f.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${f.id}/thumb/${p0.index || 1}">
       <div><div class="t" title="${esc(f.filename)}">${esc(f.filename)}</div>
-        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.name)}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
+        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.name)}</span> · <span class="bdg">${f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
         <div class="m">${t("Caricato il {d}", {d: fmtDate(f.uploaded_at)})} · ${t("stampato {n} volte", {n: f.prints})}${f.prints ? " " + t("({n} riuscite)", {n: f.ok}) : ""}</div></div>
       <div class="a">${canOperate() ? `<button class="primary" data-print>${t("Stampa")}</button><button data-move>${t("Sposta")}</button>` : ""}
         <a class="btn" href="/api/files/${f.id}/download">${t("Scarica")}</a>${canDel ? `<button class="danger" data-del>${t("Elimina")}</button>` : ""}</div></div>`;
@@ -549,7 +587,8 @@ async function uploadFiles(list, pid) {
 
 async function printDialog(f, presetPrinter) {
   const plates = f.meta.plates;
-  const online = S.printers.filter(p => p.online);
+  const isG = f.meta.kind === "gcode";   // .gcode → stampanti dirette (Duet); .gcode.3mf → Bambu
+  const online = S.printers.filter(p => p.online && (p.kind === "duet") === isG);
   const myGroups = GROUPS.filter(g => isAdmin() || (g.printers.length && g.printers.every(sn => S.printers.some(p => p.sn === sn))));
   openDialog(`<h3>${t("Stampa {f}", {f: esc(f.filename)})}</h3>
     <div class="printhead"><img class="platethumb" id="platethumb" alt="${esc(t("Anteprima del piatto"))}" src="/api/files/${f.id}/thumb/${plates[0].index}">
@@ -587,6 +626,11 @@ async function printDialog(f, presetPrinter) {
       : pr0.pending ? t("{p} sta già ricevendo una stampa: puoi solo aggiungerla alla sua coda.", {p: esc(pr0.name)})
       : t("{p} è occupata ({s}): puoi solo aggiungere la stampa alla sua coda.", {p: esc(pr0.name), s: stateName(pr0.state)});
     if (!sn) { slots = null; $("#mapping").innerHTML = `<p class="sub" style="margin:0">${t("Filamenti richiesti: {list}.", {list: pl.filaments.map(x => esc(x.type)).join(", ")})} ${dots(pl.filaments)} ${gid ? t("La coda sceglierà la prima stampante libera del gruppo che li ha caricati.") : t("La coda sceglierà la prima stampante libera che li ha caricati.")}</p>`; return; }
+    if (isG) {   // G-code già preparato per la stampante: nessuno slot da scegliere
+      slots = null;
+      $("#mapping").innerHTML = `<p class="sub" style="margin:0">${t("Filamenti richiesti: {list}.", {list: pl.filaments.map(x => esc(x.type)).join(", ")})} ${dots(pl.filaments)}</p>`;
+      return;
+    }
     const r = await act(() => api(`/api/files/${f.id}/automap`, {method: "POST", body: {printer_sn: sn, plate: pl.index}}));
     if (!r) return;
     // filamento non caricato: assegnazione automatica, la coda la farà quando sarà caricato
@@ -928,6 +972,60 @@ RENDER.hub = async function renderHub() {
 };
 
 // ------------------------------------------------------------------ amministrazione
+// ---------------------------------------------------------------- stampanti collegate direttamente
+const DIRECT_KINDS = {duet: "Duet / RepRapFirmware 3"};
+RENDER.direct = async function renderDirect() {
+  const el = $("#v-direct");
+  const rows = await api("/api/direct").catch(e => (toast(e.message, "error"), []));
+  el.innerHTML = `<div class="head"><div><h1>${t("Amministrazione")}</h1></div></div>${adminTabs("direct")}
+    <p class="sub">${t("Stampanti collegate direttamente a FleetBuddy, senza passare dal Fleet Hub. Compaiono nell'elenco delle stampanti insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi.")}</p>
+    <div class="row" style="margin-bottom:12px"><button class="primary" id="dadd">${t("Aggiungi stampante")}</button></div>
+    ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Nome")}</th><th>${t("Tipo")}</th><th>${t("Indirizzo")}</th><th>${t("Stato")}</th><th></th></tr></thead><tbody>
+      ${rows.map(r => `<tr data-id="${r.id}"><td><b>${esc(r.name)}</b>${r.enabled ? "" : ` <small class="muted">· ${t("disattivata")}</small>`}</td>
+        <td>${esc(DIRECT_KINDS[r.kind] || r.kind)}${r.board ? `<br><small class="muted">${esc(r.board)} · ${esc(r.firmware || "")}${r.mode ? " · " + (r.mode === "sbc" ? "SBC" : t("autonoma")) : ""}</small>` : ""}</td>
+        <td>${esc(r.host)}</td>
+        <td>${r.online ? `<span class="st finished">${t("Connessa")}</span> · ${stateName(r.state)}` : `<span class="st failed">${t("Non raggiungibile")}</span>${r.error ? `<br><small class="muted">${esc(r.error)}</small>` : ""}`}</td>
+        <td style="white-space:nowrap"><button data-edit>${t("Modifica")}</button> <button class="danger" data-del>${t("Elimina")}</button></td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty">${t("Nessuna stampante collegata direttamente. Con \"Aggiungi stampante\" puoi collegare per esempio una stampante con scheda Duet.")}</div>`}
+    <h2>${t("Tipi supportati")}</h2>
+    <div class="box"><p style="margin:0"><b>Duet / RepRapFirmware 3</b> – ${t("schede Duet 2 e Duet 3, sia autonome sia con SBC (Raspberry Pi). Si usa lo stesso indirizzo di Duet Web Control. Stato, pausa, ripresa, annullamento, temperature, velocità e invio di file .gcode.")}</p></div>`;
+  $("#dadd").onclick = () => directDialog();
+  const tb = el.querySelector("table");
+  if (tb) tb.onclick = async e => {
+    const tr = e.target.closest("tr[data-id]"); if (!tr) return;
+    const r = rows.find(x => x.id === +tr.dataset.id);
+    if (e.target.closest("[data-edit]")) directDialog(r);
+    if (e.target.closest("[data-del]") && confirm(t("Eliminare la stampante {p} da FleetBuddy? Lo storico delle sue stampe resta.", {p: r.name}))) {
+      await act(() => api(`/api/direct/${r.id}`, {method: "DELETE"}), t("Stampante eliminata")); RENDER.direct();
+    }
+  };
+};
+function directDialog(r) {
+  openDialog(`<h3>${r ? t("Modifica {p}", {p: esc(r.name)}) : t("Aggiungi stampante")}</h3>
+    <div class="row"><label style="flex:1">${t("Nome")}<input name="dname" value="${esc(r ? r.name : "")}" maxlength="64" placeholder="Elemento-v21"></label>
+      <label>${t("Tipo")}<select name="kind">${Object.entries(DIRECT_KINDS).map(([k, l]) => `<option value="${k}" ${r && r.kind === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+    <label>${t("Indirizzo (lo stesso di Duet Web Control)")}<input name="host" value="${esc(r ? r.host : "")}" placeholder="192.168.1.179"></label>
+    <label>${r && r.has_password ? t("Password della scheda (lascia vuoto per non cambiarla)") : t("Password della scheda (se impostata con M551)")}<input name="pw" type="password" autocomplete="new-password"></label>
+    <label>${t("Indirizzo della foto della webcam (facoltativo)")}<input name="snap" value="${esc(r ? r.snapshot_url : "")}" placeholder="http://192.168.1.179:8080/?action=snapshot"></label>
+    ${r ? `<label class="inline"><input type="checkbox" name="en" ${r.enabled ? "checked" : ""}> ${t("Attiva")}</label>` : ""}
+    <div id="dtest" class="small"></div>
+    <div class="dlgfoot"><button value="cancel">${t("Annulla")}</button><button type="button" id="dtry">${t("Prova connessione")}</button><button class="primary" id="dsave">${t("Salva")}</button></div>`);
+  const fm = $("#dlgbody"), val = n => fm.elements.namedItem(n);
+  const body = () => ({id: r ? r.id : undefined, name: val("dname").value || val("host").value, kind: val("kind").value, host: val("host").value,
+    password: val("pw").value, snapshot_url: val("snap").value, ...(r ? {enabled: val("en").checked} : {})});
+  $("#dtry").onclick = async () => {
+    $("#dtest").innerHTML = `<span class="muted">${t("Collegamento in corso…")}</span>`;
+    try {
+      const x = await api("/api/direct/test", {method: "POST", body: body()});
+      $("#dtest").innerHTML = `<span class="st finished">✓ ${t("Collegata")}</span> · ${esc(x.board || "Duet")} · RRF ${esc(x.firmware || "?")} · ${x.mode === "sbc" ? "SBC" : t("autonoma")} · ${t("{n} utensili", {n: x.tools})} · ${stateName(({idle: "IDLE", processing: "RUNNING", paused: "PAUSE"})[x.status] || "UNKNOWN")}${body().snapshot_url ? " · " + (x.snapshot ? t("foto OK") : `<span class="warn">${t("foto non disponibile")}</span>`) : ""}`;
+    } catch (e) { $("#dtest").innerHTML = `<span class="warn">✗ ${esc(e.message)}</span>`; }
+  };
+  $("#dsave").onclick = async ev => {
+    ev.preventDefault();
+    const ok = await act(() => r ? api(`/api/direct/${r.id}`, {method: "PATCH", body: body()}) : api("/api/direct", {method: "POST", body: body()}), t("Stampante salvata"));
+    if (ok) { $("#dlg").close(); RENDER.direct(); }
+  };
+}
 RENDER.admin = async function renderAdmin() {
   const el = $("#v-admin");
   await loadMeta();

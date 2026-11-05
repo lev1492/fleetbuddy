@@ -10,6 +10,8 @@ from pathlib import Path
 from . import notifier
 from .config import Config
 from .db import DB
+from .connectors.duet import DuetClient, normalize_duet
+from .gcodemeta import is_gcode
 from .hub_client import FleetHubClient, HubError
 from .i18n import tr
 
@@ -21,9 +23,24 @@ from .printers import auto_map, is_ready, normalize, resolve_slots
 
 log = logging.getLogger("fleetbuddy.service")
 
+
+class _NoHub:
+    """Segnaposto quando il Fleet Hub non è configurato: ogni chiamata dà un errore leggibile."""
+    def __init__(self, reason: str):
+        self.reason = reason
+
+    def __getattr__(self, name):
+        def fail(*_a, **_k):
+            raise HubError(key="Fleet Hub non configurato: {e}", params={"e": self.reason})
+        return fail
+
 def task_name_for(filename: str, plate: int, plates: int) -> str:
     """Nome del lavoro inviato al Hub: lo stesso usato per riconoscere la stampa nello storico."""
     task = Path(filename).name.replace(".gcode.3mf", "").replace(".3mf", "")
+    for ext in (".gcode", ".gco", ".g"):
+        if task.lower().endswith(ext):
+            task = task[: -len(ext)]
+            break
     return f"{task}_plate_{plate}" if plates > 1 else task
 
 
@@ -88,7 +105,15 @@ class Service:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.db = DB(cfg.data_path / "fleetbuddy.db")
-        self.hub = FleetHubClient(cfg)
+        try:
+            self.hub = FleetHubClient(cfg) if cfg.hub.host else _NoHub("host vuoto in config.toml")
+        except Exception as e:  # noqa: BLE001 - certificati mancanti: FleetBuddy funziona con le sole stampanti dirette
+            log.warning("Fleet Hub non disponibile (%s): restano attive le stampanti collegate direttamente", e)
+            self.hub = _NoHub(str(e))
+        self.hub_printers: dict[str, dict] = {}
+        self.direct: dict[str, DuetClient] = {}
+        self._direct_err: dict[str, str] = {}
+        self.reload_direct()
         self.printers: dict[str, dict] = {}
         self.hub_ok = False
         self.hub_error = ""
@@ -160,25 +185,96 @@ class Service:
         while True:
             t0 = time.time()
             try:
-                raw = await asyncio.to_thread(self.hub.devices)
-                new = {p["sn"]: p for p in (normalize(d) for d in raw) if p["sn"]}
-                self.raw = {d.get("dev_sn"): d for d in raw if d.get("dev_sn")}
-                self.hub_ok, self.hub_error, self.hub_error_obj = True, "", None
-                for sn, p in new.items():
+                hub_new = None
+                if not isinstance(self.hub, _NoHub):
+                    try:
+                        raw = await asyncio.to_thread(self.hub.devices)
+                        hub_new = {p["sn"]: p for p in (normalize(d) for d in raw) if p["sn"]}
+                        self.raw.update({d.get("dev_sn"): d for d in raw if d.get("dev_sn")})
+                        self.hub_ok, self.hub_error, self.hub_error_obj = True, "", None
+                    except HubError as e:
+                        if str(e) != self.hub_error:   # registra solo i cambi di errore, non ogni polling
+                            log.warning("Polling fallito: %s", e)
+                        self.hub_ok, self.hub_error, self.hub_error_obj = False, str(e), e
+                else:
+                    self.hub_ok, self.hub_error, self.hub_error_obj = False, "", None
+                direct_new = await self._poll_direct()
+                if hub_new is not None:
+                    self.hub_printers = hub_new
+                fresh = {**(hub_new or {}), **direct_new}
+                for sn, p in fresh.items():
                     await self._track(p, self.printers.get(sn))
-                self.printers = new
+                self.printers = {**self.hub_printers, **direct_new}
                 self.last_poll = time.time()
                 await self._dispatch_queue()
-            except HubError as e:
-                if str(e) != self.hub_error:   # registra solo i cambi di errore, non ogni polling
-                    log.warning("Polling fallito: %s", e)
-                self.hub_ok, self.hub_error, self.hub_error_obj = False, str(e), e
             except Exception as e:  # noqa: BLE001 - il ciclo non deve mai morire
                 self.hub_ok, self.hub_error = False, f"Errore interno: {e}"
                 self.hub_error_obj = HubError(key="Errore interno: {e}", params={"e": e})
                 log.exception("Errore nel ciclo di polling")
             self.emit("state", self.snapshot_state())
             await asyncio.sleep(max(1.0, self.cfg.app.poll_interval - (time.time() - t0)))
+
+    # ------------------------------------------------------------------ stampanti dirette
+    def reload_direct(self):
+        """(Ri)carica le stampanti collegate direttamente, dopo ogni modifica in Amministrazione."""
+        rows = self.db.q("SELECT * FROM direct_printers WHERE enabled=1")
+        keep = {}
+        for r in rows:
+            if r["kind"] != "duet":
+                continue
+            sn = f"duet-{r['id']}"
+            old = self.direct.get(sn)
+            same = old and (old.base.split("://", 1)[-1], old.password, old.snapshot_url) == \
+                (r["host"].strip().rstrip("/").split("://", 1)[-1], r["password"] or "", (r["snapshot_url"] or "").strip())
+            if same:
+                old.name = r["name"] or sn
+                keep[sn] = old
+            else:
+                keep[sn] = DuetClient(r)
+        self.direct = keep
+
+    async def _poll_direct(self) -> dict[str, dict]:
+        async def one(c: DuetClient):
+            try:
+                model = await asyncio.to_thread(c.model)
+                self.raw[c.sn] = model
+                if self._direct_err.pop(c.sn, None):
+                    log.info("%s (%s) di nuovo raggiungibile", c.name, c.base)
+                return normalize_duet(c, model)
+            except Exception as e:  # noqa: BLE001
+                msg = e.localized("it") if isinstance(e, HubError) else str(e)
+                if self._direct_err.get(c.sn) != msg:
+                    log.warning("%s (%s): %s", c.name, c.base, msg)
+                self._direct_err[c.sn] = msg
+                return normalize_duet(c, None, msg)
+        results = await asyncio.gather(*(one(c) for c in self.direct.values()))
+        return {p["sn"]: p for p in results}
+
+    def kind_of(self, sn: str) -> str:
+        return "duet" if sn in self.direct else "bambu"
+
+    async def command(self, sn: str, opt: str):
+        """Pausa / ripresa / stop / piatto liberato, sulla strada giusta per il tipo di stampante."""
+        c = self.direct.get(sn)
+        if not c:
+            return await asyncio.to_thread(self.hub.opt, sn, opt)
+        fn = {"pause": c.pause, "resume": c.resume, "stop": c.stop}.get(opt)
+        if not fn:
+            raise HubError(key="Comando non disponibile per questa stampante")
+        await asyncio.to_thread(fn)
+        return {"code": 0}
+
+    async def set_temperature(self, sn: str, target: str, value: float):
+        c = self.direct.get(sn)
+        if not c:
+            raise HubError(key="Il Fleet Hub non permette di modificare le temperature")
+        await asyncio.to_thread(c.set_temperature, target, value)
+
+    async def set_speed(self, sn: str, pct: int):
+        c = self.direct.get(sn)
+        if not c:
+            raise HubError(key="Il Fleet Hub non permette di modificare la velocità")
+        await asyncio.to_thread(c.set_speed, pct)
 
     # ------------------------------------------------------------------ stampe in arrivo
     def _watch_pending(self, p: dict):
@@ -299,7 +395,10 @@ class Service:
             elif p["state"] == "FAILED":
                 await self._close_job(job, p, "failed")
             elif p["state"] == "IDLE":
-                await self._close_job(job, p, "finished" if job.get("progress", 0) >= 99 else "cancelled")
+                if p.get("kind") == "duet" and p.get("last_result"):
+                    await self._close_job(job, p, p["last_result"])
+                else:
+                    await self._close_job(job, p, "finished" if job.get("progress", 0) >= 99 else "cancelled")
             elif not p["online"] and prev and prev["online"]:
                 pass  # resta aperto: potrebbe tornare online e continuare
 
@@ -423,7 +522,8 @@ class Service:
         if hit and time.time() - hit[0] < max_age:
             return hit[1]
         try:
-            img = await asyncio.to_thread(self.hub.snapshot, sn)
+            c = self.direct.get(sn)
+            img = await asyncio.to_thread(c.snapshot if c else (lambda: self.hub.snapshot(sn)))
         except HubError:
             img = None
         if img:
@@ -453,6 +553,22 @@ class Service:
             "filament_slot": slots,
         }
 
+    async def _start_direct(self, f: dict, pl: dict, sn: str, user_id: int | None, queue: dict | None) -> dict:
+        """Carica il .gcode sulla stampante diretta e lo avvia."""
+        task = task_name_for(f["filename"], 1, 1)
+        plan = [{"type": x["type"], "brand": "", "color": x["color"], "tray_info_idx": "", "grams": x["used_g"],
+                 "meters": x["used_m"], "ams_id": None, "slot_id": x.get("tool")} for x in pl["filaments"] if x["used_g"] or x["used_m"]]
+        self._set_pending(sn, {"file_id": f["id"], "plate": 1, "task_name": task, "user_id": user_id,
+                               "planned_g": pl["weight_g"], "plan": plan, "queue": queue})
+        try:
+            await asyncio.to_thread(self.direct[sn].start, str(self.cfg.path(f["path"])), Path(f["filename"]).name)
+        except Exception:
+            self.db.x("DELETE FROM pending_prints WHERE printer_sn=?", (sn,))
+            raise
+        self._cooldown[sn] = time.time() + 20
+        log.info("Stampa inviata a %s (Duet): %s", sn, f["filename"])
+        return {"ok": True, "cached": False, "warnings": [], "print_cmd": {"file": f["filename"]}, "hub": {}}
+
     async def start_print(self, file_id: int, plate: int, sn: str, slots: list[dict] | None,
                           options: dict | None = None, user_id: int | None = None, queue: dict | None = None) -> dict:
         f = self.db.file(file_id)
@@ -464,6 +580,11 @@ class Service:
         p = self.printers.get(sn)
         if not p:
             raise HubError(key="Stampante sconosciuta o offline")
+        gcode_file = f["meta"].get("kind") == "gcode"
+        if gcode_file != (sn in self.direct):
+            raise HubError(key="Questo file non è adatto a questa stampante: i .gcode.3mf vanno alle Bambu, i .gcode alle altre")
+        if gcode_file:
+            return await self._start_direct(f, pl, sn, user_id, queue)
         warnings: list[str] = []
         slots, warnings = resolve_slots(slots, pl["filaments"], p)
         if slots is None:
@@ -525,8 +646,10 @@ class Service:
                 if not p or sn in busy or not is_ready(p) or self._cooldown.get(sn, 0) > time.time() \
                         or self.has_pending(sn):
                     continue
+                if (f["meta"].get("kind") == "gcode") != (sn in self.direct):
+                    continue   # .gcode.3mf solo alle Bambu, .gcode solo alle stampanti dirette
                 raw = json.loads(it["mapping"]) if it["mapping"] else None
-                slots, _w = resolve_slots(raw, pl["filaments"] if pl else [], p)
+                slots, _w = ([], []) if sn in self.direct else resolve_slots(raw, pl["filaments"] if pl else [], p)
                 if slots is None:
                     # filamento non ancora caricato: la stampa resta in coda finché non lo è
                     if it["printer_sn"]:
@@ -559,4 +682,8 @@ class Service:
                                   (qmsg(e.key, **{k: str(v) for k, v in e.params.items()}) if e.key else str(e), it["id"]))
                     self.toast("Coda: errore su {printer}: {error}", "error", sn=sn, printer=p["name"],
                                error=e.localized(self.notify_lang))
+                except Exception as e:  # noqa: BLE001 - un errore imprevisto blocca solo questa voce, non la coda
+                    log.exception("Coda: errore imprevisto inviando la voce %s a %s", it["id"], sn)
+                    self._cooldown[sn] = time.time() + 120
+                    self.db.x("UPDATE queue SET status='error', message=? WHERE id=?", (str(e)[:300], it["id"]))
                 break
