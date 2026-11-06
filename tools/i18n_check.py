@@ -21,9 +21,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from app.i18n import CATALOG_DIR, LANGS  # noqa: E402
 
-PY_FUNCS = {"_": 0, "tr": 1, "T": 0, "nt": 0, "toast": 0, "qmsg": 0, "sh": 0, "N_": 0}
+PY_FUNCS = {"_": 0, "tr": 1, "T": 0, "nt": 0, "toast": 0, "qmsg": 0, "sh": 0, "N_": 0, "_msg": 0}
 PY_DICTS = {"ERROR_HINTS", "STATUS_IT", "JOB_TOASTS", "JOB_TITLES"}
-JS_MAPS = ("STATES", "JOBS", "ROLES", "SPEEDS", "FLOW", "MATERIAL", "DIRECT_HINTS", "CONSUMPTION_SRC")
+JS_MAPS = ("STATES", "JOBS", "ROLES", "SPEEDS", "FLOW", "MATERIAL", "DIRECT_HINTS", "CONSUMPTION_SRC", "PRIO", "USTATE", "PSTATE", "ZOOM_LABEL")
 PLACEHOLDER = re.compile(r"\{(\w+)\}")
 
 
@@ -82,7 +82,8 @@ def py_keys(source: str) -> set[str]:
 
 def all_keys() -> set[str]:
     keys: set[str] = set()
-    keys |= js_keys((ROOT / "static" / "app.js").read_text(encoding="utf-8"))
+    for js in sorted((ROOT / "static").glob("*.js")):
+        keys |= js_keys(js.read_text(encoding="utf-8"))
     keys |= html_keys((ROOT / "static" / "index.html").read_text(encoding="utf-8"))
     for p in sorted((ROOT / "app").rglob("*.py")):
         if p.name != "i18n.py":

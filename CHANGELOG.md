@@ -3,6 +3,22 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.14.0] – 2026-11-07
+
+### Novità
+- Produzione: ordini di produzione con uno o più modelli dell'archivio, numero di copie, stampanti abilitate e
+  priorità (bassa, normale, alta, urgente). I pezzi vengono assegnati automaticamente alla prima stampante abilitata
+  che si libera, nell'ordine priorità → posizione dell'ordine → sequenza; la coda manuale mantiene la precedenza.
+- Pianificazione a Gantt: per ogni stampante la stampa in corso (riempita secondo l'avanzamento), la coda manuale,
+  i pezzi pianificati e i cambi piatto; saturazione delle stampanti, linea "adesso", fine stimata di ogni ordine,
+  zoom (12 ore, 24 ore, 3 giorni, 7 giorni) ed evidenziazione di un ordine. Calcolata dallo stato reale delle
+  stampanti con lo stesso criterio dell'assegnazione.
+- Pezzi falliti o annullati rilanciati automaticamente in testa al loro ordine (disattivabile per ordine): il piano
+  slitta. Un ordine più urgente passa davanti senza interrompere le stampe in corso.
+- Ordini scambiabili con ↑ e ↓, priorità modificabile, pausa, ripresa, annullamento; pezzi rilanciabili o saltabili.
+- Nuovo ordine con anteprima immediata: pezzi, ore macchina, distribuzione sulle stampanti e fine stimata.
+- Tempo di cambio piatto configurabile (predefinito 10 minuti).
+
 ## [0.13.1] – 2026-11-07
 
 ### Novità

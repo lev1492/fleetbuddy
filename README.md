@@ -12,6 +12,7 @@ ma passando **esclusivamente dal Bambu Fleet Hub** (HTTP API v1.0.0) invece che 
 | Funzione | Come è realizzata con il Fleet Hub |
 |---|---|
 | Altre stampanti | OctoPrint, Klipper (Moonraker), PrusaLink, Duet / RepRapFirmware 3 e Repetier-Server collegate direttamente, senza Fleet Hub |
+| Produzione | ordini di produzione con modelli, copie, stampanti e priorità; assegnazione automatica e pianificazione a Gantt con fine stimata |
 | Multilingua | italiano, inglese, francese, tedesco, spagnolo e portoghese: interfaccia, messaggi di errore, file Excel e notifiche; ogni utente sceglie la propria lingua |
 | Utenti e permessi | accesso con utente e password; ruoli Amministratore / Operatore / Osservatore; l'admin decide quali stampanti (singole o per gruppo) e quali progetti vede ogni utente |
 | Gruppi di stampanti | filtro nel cruscotto e nelle statistiche, coda "sulla prima libera del gruppo", permessi per gruppo |
@@ -175,6 +176,24 @@ sudo systemctl restart fleetbuddy
 - Password admin dimenticata: `.venv/bin/python -m tools.users reset-password admin`.
 - Le password sono salvate con PBKDF2-SHA256; le sessioni durano 30 giorni; dopo 5 tentativi errati
   l'accesso da quell'indirizzo è sospeso per 5 minuti.
+
+## Produzione
+La pagina *Produzione* gestisce ordini di produzione: uno o più modelli dell'archivio con il numero di copie,
+le stampanti abilitate e una priorità (bassa, normale, alta, urgente).
+
+- **Assegnazione automatica:** ogni copia è un pezzo; quando una stampante abilitata è pronta prende il primo pezzo
+  compatibile, nell'ordine priorità → posizione dell'ordine → sequenza. La coda manuale ha la precedenza.
+- **Pianificazione (Gantt):** una riga per stampante con la stampa in corso, la coda manuale, i pezzi pianificati e i
+  cambi piatto; saturazione di ogni stampante, linea "adesso", fine stimata di ogni ordine; zoom da 12 ore a 7 giorni.
+  Il piano è calcolato dallo stato reale delle stampanti e dalla durata stimata di ogni piatto.
+- **Imprevisti:** un pezzo fallito o annullato torna in testa al suo ordine (se l'ordine lo prevede) e il piano slitta;
+  un ordine più urgente passa davanti agli altri senza interrompere le stampe in corso.
+- **Ordine degli ordini:** con ↑ e ↓ si scambiano due ordini (passando sopra un ordine di priorità diversa se ne
+  prende la priorità); ogni ordine si può mettere in pausa, riprendere o annullare; i singoli pezzi si possono
+  rilanciare o saltare.
+- **Anteprima:** creando un ordine si vedono subito pezzi, ore macchina, distribuzione sulle stampanti e fine stimata.
+- **Cambio piatto:** tempo aggiunto tra una stampa e la successiva (predefinito 10 minuti), modificabile
+  dall'amministratore nella pianificazione.
 
 ## Altre stampanti (senza Fleet Hub)
 In *Amministrazione → Altre stampanti* si collegano stampanti che non passano dal Fleet Hub. Compaiono nell'elenco

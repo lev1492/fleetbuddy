@@ -22,6 +22,7 @@ from .i18n import LANGS, _, current_lang, from_accept_language, normalize
 from .hub_client import HubError
 from .printers import FILAMENT_PRESETS, auto_map, firmware_below_min, is_ready
 from .service import Service, qmsg
+from . import production
 from .connectors import KINDS, make_client
 from .gcodemeta import is_gcode, parse_gcode, thumbnail_png
 from .threemf import md5_file, parse_3mf, thumbnail
@@ -1239,6 +1240,169 @@ async def admin_update_install(request: Request):
     return {"ok": True}
 
 
+# ====================================================================== produzione
+def _prod_visible(u: User, row: dict) -> bool:
+    return u.is_admin or any(u.sees_printer(sn) for sn in json.loads(row["printers"] or "[]"))
+
+
+def _prod_row(u: User, pid: int) -> dict:
+    row = S().db.one("SELECT * FROM productions WHERE id=?", (pid,))
+    if not row or not _prod_visible(u, row):
+        raise HTTPException(404, _("Produzione non trovata"))
+    return row
+
+
+def _prod_body(u: User, body: dict) -> dict:
+    """Controlla file e stampanti dell'ordine rispetto ai permessi dell'utente."""
+    items = []
+    for it in body.get("items") or []:
+        f = file_for(u, int(it["file_id"]))
+        copies = max(0, min(999, int(it.get("copies") or 0)))
+        if copies:
+            items.append({"file_id": f["id"], "plate": int(it.get("plate") or 1), "copies": copies})
+    printers = [sn for sn in body.get("printers") or [] if u.sees_printer(sn) and sn in S().printers]
+    return {**body, "items": items, "printers": printers}
+
+
+@app.get("/api/productions")
+async def productions_list(request: Request):
+    u = U(request)
+    db = S().db
+    pl = production.plan(S(), u)
+    out = []
+    rows = production.ordered_productions(db)
+    active = [r for r in rows if r["status"] in ("active", "paused")]
+    closed = [r for r in rows if r["status"] not in ("active", "paused")]
+    closed.sort(key=lambda r: -(r["completed_at"] or r["created_at"] or 0))
+    names = {p["sn"]: p["name"] for p in S().printers.values()}
+    for r in active + closed[:30]:
+        if not _prod_visible(u, r):
+            continue
+        units = db.q("""SELECT u.id, u.file_id, u.plate, u.seq, u.status, u.printer_sn, u.attempts, u.message, u.job_id,
+                               f.filename FROM production_units u LEFT JOIN files f ON f.id=u.file_id
+                        WHERE u.production_id=? ORDER BY u.seq""", (r["id"],))
+        items: dict[tuple, dict] = {}
+        for x in units:
+            k = (x["file_id"], x["plate"])
+            it = items.setdefault(k, {"file_id": x["file_id"], "plate": x["plate"], "filename": x["filename"] or "?", "copies": 0, "done": 0})
+            it["copies"] += 1
+            it["done"] += x["status"] == "done"
+            x["printer_name"] = names.get(x["printer_sn"] or "", x["printer_sn"] or "")
+        out.append({**{k: r[k] for k in ("id", "name", "priority", "color", "status", "auto_retry", "created_at", "completed_at")},
+                    "printers": json.loads(r["printers"] or "[]"), "summary": production.summary(db, r["id"]),
+                    "items": list(items.values()), "units": units, "eta": pl["eta"].get(str(r["id"])),
+                    "unplaced": pl["unplaced"].get(str(r["id"]), 0)})
+    return {"productions": out, "changeover_min": production.changeover_s(db) // 60, "now": time.time()}
+
+
+@app.post("/api/productions")
+async def productions_create(request: Request, body: dict):
+    u = U(request)
+    need_operator(u)
+    try:
+        pid = production.create(S().db, _prod_body(u, body), u.id)
+    except ValueError as e:
+        raise HTTPException(400, _(str(e)))
+    return {"id": pid}
+
+
+@app.post("/api/productions/preview")
+async def productions_preview(request: Request, body: dict):
+    """Pianificazione con l'ordine in preparazione, per vedere fine stimata e saturazione prima di salvarlo."""
+    u = U(request)
+    b = _prod_body(u, body)
+    pl = production.plan(S(), u, draft=b)
+    mine = [x for x in pl["bars"] if x.get("production_id") == 0]
+    return {"pieces": sum(int(it["copies"]) for it in b["items"]), "scheduled": len(mine),
+            "unplaced": pl["unplaced"].get("0", 0), "eta": pl["eta"].get("0"),
+            "hours": round(sum(x["end"] - x["start"] for x in mine) / 3600, 1),
+            "per_printer": {sn: sum(1 for x in mine if x["sn"] == sn) for sn in {x["sn"] for x in mine}}}
+
+
+@app.patch("/api/productions/{pid}")
+async def productions_edit(request: Request, pid: int, body: dict):
+    u = U(request)
+    need_operator(u)
+    row = _prod_row(u, pid)
+    if "name" in body:
+        S().db.x("UPDATE productions SET name=? WHERE id=?", (str(body["name"]).strip()[:80] or row["name"], pid))
+    if "priority" in body:
+        S().db.x("UPDATE productions SET priority=? WHERE id=?", (max(0, min(3, int(body["priority"]))), pid))
+    if body.get("status") in ("active", "paused") and row["status"] in ("active", "paused"):
+        S().db.x("UPDATE productions SET status=? WHERE id=?", (body["status"], pid))
+    if "auto_retry" in body:
+        S().db.x("UPDATE productions SET auto_retry=? WHERE id=?", (1 if body["auto_retry"] else 0, pid))
+    if "printers" in body:
+        sns = [sn for sn in body["printers"] if u.sees_printer(sn) and sn in S().printers]
+        if sns:
+            S().db.x("UPDATE productions SET printers=? WHERE id=?", (json.dumps(sns), pid))
+    return {"ok": True}
+
+
+@app.post("/api/productions/{pid}/move")
+async def productions_move(request: Request, pid: int, body: dict):
+    u = U(request)
+    need_operator(u)
+    _prod_row(u, pid)
+    production.move(S().db, pid, "up" if body.get("direction") == "up" else "down")
+    return {"ok": True}
+
+
+@app.post("/api/productions/{pid}/cancel")
+async def productions_cancel(request: Request, pid: int):
+    """Annulla i pezzi non ancora avviati; quelli in stampa terminano normalmente."""
+    u = U(request)
+    need_operator(u)
+    _prod_row(u, pid)
+    S().db.x("UPDATE production_units SET status='cancelled' WHERE production_id=? AND status='pending'", (pid,))
+    S().db.x("UPDATE productions SET status='cancelled', completed_at=? WHERE id=?", (time.time(), pid))
+    return {"ok": True}
+
+
+@app.delete("/api/productions/{pid}")
+async def productions_delete(request: Request, pid: int):
+    u = U(request)
+    need_operator(u)
+    row = _prod_row(u, pid)
+    if row["status"] in ("active", "paused"):
+        raise HTTPException(409, _("Annulla la produzione prima di eliminarla"))
+    S().db.x("DELETE FROM production_units WHERE production_id=?", (pid,))
+    S().db.x("DELETE FROM productions WHERE id=?", (pid,))
+    return {"ok": True}
+
+
+@app.post("/api/productions/units/{uid}/{action}")
+async def productions_unit(request: Request, uid: int, action: str):
+    u = U(request)
+    need_operator(u)
+    unit = S().db.one("SELECT * FROM production_units WHERE id=?", (uid,))
+    if not unit:
+        raise HTTPException(404)
+    row = _prod_row(u, unit["production_id"])
+    if action == "retry" and unit["status"] in ("failed", "cancelled"):
+        S().db.x("UPDATE production_units SET status='pending', message='' WHERE id=?", (uid,))
+        if row["status"] in ("completed", "cancelled"):
+            S().db.x("UPDATE productions SET status='active', completed_at=NULL WHERE id=?", (row["id"],))
+    elif action == "skip" and unit["status"] == "pending":
+        S().db.x("UPDATE production_units SET status='cancelled' WHERE id=?", (uid,))
+        production._check_completed(S(), row["id"])
+    else:
+        raise HTTPException(400, _("Azione non disponibile per questo pezzo"))
+    return {"ok": True}
+
+
+@app.get("/api/production/plan")
+async def production_plan(request: Request, hours: float = 72):
+    return production.plan(S(), U(request), horizon_h=max(6, min(24 * 14, hours)))
+
+
+@app.put("/api/production/settings")
+async def production_settings(request: Request, body: dict):
+    _admin(request)
+    S().db.set_setting("production_changeover_min", max(0, min(240, int(body.get("changeover_min", 10)))))
+    return {"ok": True}
+
+
 # ====================================================================== stampanti dirette (solo admin)
 DIRECT_KINDS = tuple(KINDS)
 
@@ -1489,6 +1653,6 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 async def index():
     # versione nei link di script e stili: dopo un aggiornamento il browser carica sempre i file nuovi
     html = (BASE_DIR / "static" / "index.html").read_text(encoding="utf-8")
-    for asset in ("/static/app.js", "/static/style.css"):
+    for asset in ("/static/app.js", "/static/production.js", "/static/style.css"):
         html = html.replace(f'"{asset}"', f'"{asset}?v={__version__}"')
     return Response(html, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-cache"})

@@ -1,0 +1,363 @@
+"""Produzione: ordini con più modelli e copie, assegnati automaticamente alle stampanti scelte.
+
+Ogni copia di un piatto è un "pezzo" (production_units). I pezzi in attesa sono ordinati per
+priorità dell'ordine, posizione dell'ordine (scambiabile dall'utente) e sequenza; quando una stampante
+abilitata è pronta, prende il primo pezzo compatibile. Il pianificatore simula lo stesso criterio nel tempo,
+partendo dallo stato reale delle stampanti (stampa in corso, piatto da liberare, coda manuale), e produce
+il Gantt, la saturazione delle stampanti e la fine stimata di ogni ordine.
+
+Un pezzo fallito o annullato torna in attesa (se l'ordine lo prevede) davanti agli altri pezzi del suo
+ordine: il piano slitta di conseguenza.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import time
+
+from .hub_client import HubError
+from .printers import is_ready, resolve_slots
+
+log = logging.getLogger("fleetbuddy.production")
+
+PRIORITIES = (0, 1, 2, 3)            # bassa, normale, alta, urgente
+PALETTE = ["#3B82F6", "#F59E0B", "#10B981", "#EF4444", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316", "#6366F1", "#84CC16"]
+DEFAULT_PRINT_S = 3600               # durata usata quando il file non indica il tempo stimato
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS productions (
+    id INTEGER PRIMARY KEY, name TEXT, priority INTEGER DEFAULT 1, position REAL, color TEXT,
+    status TEXT DEFAULT 'active', printers TEXT, options TEXT, auto_retry INTEGER DEFAULT 1,
+    created_by INTEGER, created_at REAL, completed_at REAL, note TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS production_units (
+    id INTEGER PRIMARY KEY, production_id INTEGER, file_id INTEGER, plate INTEGER, seq INTEGER,
+    status TEXT DEFAULT 'pending', printer_sn TEXT, job_id INTEGER, attempts INTEGER DEFAULT 0,
+    message TEXT DEFAULT '', started_at REAL, ended_at REAL
+);
+CREATE INDEX IF NOT EXISTS pu_prod ON production_units(production_id);
+CREATE INDEX IF NOT EXISTS pu_job ON production_units(job_id);
+"""
+
+
+def init(db):
+    db._conn.executescript(SCHEMA)
+    db._conn.commit()
+
+
+def N_(s: str) -> str:
+    """Segna una frase da tradurre."""
+    return s
+
+
+def _msg(key: str, **params) -> str:
+    return json.dumps({"msg": key, "params": params}, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------- compatibilità e durate
+def compatible(svc, f: dict, sn: str) -> bool:
+    """Il file può andare su questa stampante? .gcode.3mf → Bambu; .gcode/.bgcode → dirette che accettano file;
+    .ufp → solo UltiMaker."""
+    kind, fmt = f["meta"].get("kind"), f["meta"].get("format")
+    c = svc.direct.get(sn)
+    if kind != "gcode":
+        return c is None
+    if c is None or not c.caps.get("upload", True):
+        return False
+    return fmt != "ufp" or bool(c.caps.get("ufp"))
+
+
+def plate_of(f: dict, plate: int) -> dict:
+    return next((x for x in f["meta"].get("plates", []) if x["index"] == plate), (f["meta"].get("plates") or [{}])[0])
+
+
+def duration_s(f: dict | None, plate: int) -> int:
+    if not f:
+        return DEFAULT_PRINT_S
+    return int(plate_of(f, plate).get("prediction_s") or DEFAULT_PRINT_S)
+
+
+def changeover_s(db) -> int:
+    return int(float(db.get_setting("production_changeover_min", 10) or 0) * 60)
+
+
+# ---------------------------------------------------------------------- ordini
+def create(db, body: dict, user_id: int | None) -> int:
+    items = [it for it in body.get("items") or [] if int(it.get("copies") or 0) > 0 and it.get("file_id")]
+    if not items:
+        raise ValueError(N_("Aggiungi almeno un modello con almeno una copia"))
+    printers = [str(x) for x in body.get("printers") or []]
+    if not printers:
+        raise ValueError(N_("Scegli almeno una stampante"))
+    pos = (db.one("SELECT MAX(position) AS m FROM productions") or {}).get("m") or 0
+    used = {r["color"] for r in db.q("SELECT color FROM productions WHERE status IN ('active','paused')")}
+    color = body.get("color") or next((c for c in PALETTE if c not in used), PALETTE[int(pos) % len(PALETTE)])
+    pid = db.x("INSERT INTO productions(name, priority, position, color, status, printers, options, auto_retry, created_by, "
+               "created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+               (str(body.get("name") or "").strip()[:80] or "Produzione", max(0, min(3, int(body.get("priority", 1)))),
+                pos + 1, color, "paused" if body.get("paused") else "active", json.dumps(printers),
+                json.dumps(body.get("options") or {}), 1 if body.get("auto_retry", True) else 0, user_id, time.time()))
+    seq = 0
+    for it in items:
+        for _ in range(min(999, int(it["copies"]))):
+            seq += 1
+            db.x("INSERT INTO production_units(production_id, file_id, plate, seq) VALUES(?,?,?,?)",
+                 (pid, int(it["file_id"]), int(it.get("plate") or 1), seq))
+    log.info("Produzione %s creata: %d pezzi su %d stampanti", pid, seq, len(printers))
+    return pid
+
+
+def ordered_pending(db, include_paused=False) -> list[dict]:
+    """Pezzi in attesa nell'ordine in cui verranno stampati."""
+    st = "('active','paused')" if include_paused else "('active')"
+    return db.q(f"""SELECT u.*, p.priority, p.position, p.printers, p.options, p.created_by, p.name AS prod_name,
+                          p.color, p.status AS prod_status
+                   FROM production_units u JOIN productions p ON p.id=u.production_id
+                   WHERE u.status='pending' AND p.status IN {st}
+                   ORDER BY p.priority DESC, p.position, u.seq""")
+
+
+def ordered_productions(db) -> list[dict]:
+    return db.q("SELECT * FROM productions ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 0 ELSE 1 END, "
+                "priority DESC, position, id")
+
+
+def move(db, pid: int, direction: str):
+    """Scambia l'ordine con quello prima o dopo. Se il vicino ha un'altra priorità, l'ordine ne prende la priorità
+    (così "sali" porta davvero davanti, anche oltre il confine di priorità)."""
+    rows = [r for r in ordered_productions(db) if r["status"] in ("active", "paused")]
+    idx = next((i for i, r in enumerate(rows) if r["id"] == pid), None)
+    if idx is None:
+        return
+    j = idx - 1 if direction == "up" else idx + 1
+    if not 0 <= j < len(rows):
+        return
+    me, other = rows[idx], rows[j]
+    if me["priority"] != other["priority"]:
+        db.x("UPDATE productions SET priority=? WHERE id=?", (other["priority"], pid))
+    db.x("UPDATE productions SET position=? WHERE id=?", (other["position"], me["id"]))
+    db.x("UPDATE productions SET position=? WHERE id=?", (me["position"], other["id"]))
+
+
+def summary(db, pid: int) -> dict:
+    counts = {r["status"]: r["n"] for r in db.q(
+        "SELECT status, COUNT(*) AS n FROM production_units WHERE production_id=? GROUP BY status", (pid,))}
+    return {"total": sum(counts.values()), "done": counts.get("done", 0), "pending": counts.get("pending", 0),
+            "printing": counts.get("printing", 0) + counts.get("starting", 0), "failed": counts.get("failed", 0),
+            "cancelled": counts.get("cancelled", 0)}
+
+
+def _check_completed(svc, pid: int):
+    s = summary(svc.db, pid)
+    if s["pending"] or s["printing"]:
+        return
+    row = svc.db.one("SELECT name, status FROM productions WHERE id=?", (pid,))
+    if row and row["status"] in ("active", "paused"):
+        svc.db.x("UPDATE productions SET status='completed', completed_at=? WHERE id=?", (time.time(), pid))
+        svc.toast("Produzione completata: {name} ({n} pezzi)", "ok", name=row["name"], n=s["done"])
+
+
+# ---------------------------------------------------------------------- eventi delle stampe
+def on_job_started(db, unit_id: int | None, job_id: int, sn: str):
+    if unit_id:
+        db.x("UPDATE production_units SET status='printing', job_id=?, printer_sn=?, started_at=?, message='' WHERE id=?",
+             (job_id, sn, time.time(), unit_id))
+
+
+def on_job_closed(svc, job_id: int, status: str, printer_name: str):
+    u = svc.db.one("SELECT u.*, p.auto_retry, p.name AS prod_name FROM production_units u "
+                   "JOIN productions p ON p.id=u.production_id WHERE u.job_id=?", (job_id,))
+    if not u:
+        return
+    if status == "finished":
+        svc.db.x("UPDATE production_units SET status='done', ended_at=? WHERE id=?", (time.time(), u["id"]))
+    elif u["auto_retry"]:
+        # torna in attesa davanti agli altri pezzi del suo ordine: il piano slitta
+        svc.db.x("UPDATE production_units SET status='pending', job_id=NULL, printer_sn=NULL, attempts=attempts+1, "
+                 "message=? WHERE id=?", (_msg("non riuscita su {printer}: verrà rilanciata", printer=printer_name), u["id"]))
+        svc.toast("Produzione {name}: pezzo non riuscito su {printer}, verrà rilanciato", "error",
+                  name=u["prod_name"], printer=printer_name)
+    else:
+        svc.db.x("UPDATE production_units SET status='failed', ended_at=?, message=? WHERE id=?",
+                 (time.time(), _msg("non riuscita su {printer}", printer=printer_name), u["id"]))
+    _check_completed(svc, u["production_id"])
+
+
+def on_not_started(db, unit_id: int, reason: str):
+    db.x("UPDATE production_units SET status='pending', printer_sn=NULL, job_id=NULL, attempts=attempts+1, message=? "
+         "WHERE id=? AND status='starting'", (reason, unit_id))
+
+
+def reconcile(svc):
+    """All'avvio: pezzi rimasti "in invio" senza stampa in arrivo tornano in attesa; pezzi "in stampa" la cui stampa
+    si è chiusa mentre FleetBuddy era spento vengono aggiornati."""
+    db = svc.db
+    for u in db.q("SELECT * FROM production_units WHERE status='starting'"):
+        if not (u["printer_sn"] and svc.has_pending(u["printer_sn"])):
+            on_not_started(db, u["id"], _msg("invio interrotto: verrà ritentato"))
+    for u in db.q("SELECT u.id, u.job_id, j.status, j.printer_name FROM production_units u LEFT JOIN jobs j ON j.id=u.job_id "
+                  "WHERE u.status='printing'"):
+        if u["status"] and u["status"] != "running":
+            on_job_closed(svc, u["job_id"], u["status"], u["printer_name"] or "")
+
+
+# ---------------------------------------------------------------------- assegnazione automatica
+async def dispatch(svc):
+    """Avvia i pezzi in attesa sulle stampanti abilitate e pronte. La coda manuale ha la precedenza: una stampante con
+    voci della coda indirizzate a lei non riceve pezzi finché quelle non sono partite."""
+    db = svc.db
+    units = ordered_pending(db)
+    if not units:
+        return
+    queue_targets = {r["printer_sn"] for r in db.q("SELECT printer_sn FROM queue WHERE status='queued' AND printer_sn IS NOT NULL")}
+    if not db.get_setting("queue_paused", False):
+        queue_any = db.one("SELECT COUNT(*) AS n FROM queue WHERE status='queued' AND printer_sn IS NULL") or {}
+    else:
+        queue_any = {"n": 0}
+    busy: set[str] = set()
+    files: dict[int, dict | None] = {}
+    for u in units:
+        f = files.setdefault(u["file_id"], db.file(u["file_id"]))
+        if not f:
+            db.x("UPDATE production_units SET status='failed', message=? WHERE id=?", (_msg("file rimosso dall'archivio"), u["id"]))
+            continue
+        pl = plate_of(f, u["plate"])
+        note = None
+        for sn in json.loads(u["printers"] or "[]"):
+            p = svc.printers.get(sn)
+            if not p or sn in busy or sn in queue_targets or not is_ready(p) or svc._cooldown.get(sn, 0) > time.time() \
+                    or svc.has_pending(sn) or not compatible(svc, f, sn):
+                continue
+            if queue_any.get("n") and not svc.direct.get(sn):
+                continue   # voci della coda per "qualsiasi stampante": prima quelle
+            if sn in svc.direct:
+                slots = []
+            else:
+                slots, _w = resolve_slots(None, pl.get("filaments") or [], p)
+                if slots is None:
+                    note = _msg("in attesa del filamento su {printer}", printer=p["name"])
+                    continue
+            try:
+                await svc.start_print(u["file_id"], u["plate"], sn, slots, json.loads(u["options"] or "{}"),
+                                      user_id=u["created_by"], queue={"unit": u["id"]})
+            except HubError as e:
+                svc._cooldown[sn] = time.time() + 120
+                note = _msg("errore su {printer}: {e}", printer=p["name"], e=e.localized(svc.notify_lang))
+                continue
+            except Exception as e:  # noqa: BLE001 - un errore blocca solo questo pezzo
+                log.exception("Produzione: invio del pezzo %s a %s non riuscito", u["id"], sn)
+                svc._cooldown[sn] = time.time() + 120
+                note = _msg("errore su {printer}: {e}", printer=p["name"], e=str(e)[:200])
+                continue
+            db.x("UPDATE production_units SET status='starting', printer_sn=?, message='' WHERE id=?", (sn, u["id"]))
+            busy.add(sn)
+            note = None
+            break
+        if note is not None and note != u.get("message"):
+            db.x("UPDATE production_units SET message=? WHERE id=?", (note, u["id"]))
+
+
+# ---------------------------------------------------------------------- pianificazione (Gantt)
+def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72) -> dict:
+    """Simula la produzione nel tempo con lo stesso criterio dell'assegnazione reale.
+    draft: ordine non ancora salvato, per l'anteprima (stesso formato della creazione)."""
+    db = svc.db
+    now = time.time()
+    co = changeover_s(db)
+    files: dict[int, dict | None] = {}
+
+    def file(fid):
+        if fid not in files:
+            files[fid] = db.file(fid)
+        return files[fid]
+
+    visible = [p for p in svc.printers.values() if user is None or user.sees_printer(p["sn"])]
+    printers = {p["sn"]: p for p in visible}
+    rows: dict[str, dict] = {}
+    free_at: dict[str, float | None] = {}
+    bars: list[dict] = []
+    unit_of_job = {r["job_id"]: r for r in db.q(
+        "SELECT u.id, u.job_id, u.production_id, p.color, p.name FROM production_units u JOIN productions p ON p.id=u.production_id "
+        "WHERE u.status='printing'")}
+    for sn, p in printers.items():
+        state = p["state"] if p["online"] else "OFFLINE"
+        rows[sn] = {"sn": sn, "name": p["name"], "online": p["online"], "state": state, "brand": p.get("brand", ""),
+                    "model": p.get("printer_model") or p.get("model", "")}
+        if not p["online"]:
+            free_at[sn] = None
+            continue
+        t = now
+        job = svc._open_jobs.get(sn)
+        if p["active"]:
+            rem = (p.get("remaining_min") or 0) * 60
+            start = (job or {}).get("started_at") or now - 60
+            end = now + max(rem, 60)
+            u = unit_of_job.get((job or {}).get("id"))
+            bars.append({"sn": sn, "start": start, "end": end, "kind": "current", "label": p.get("task_name") or "",
+                         "progress": p.get("progress", 0), "production_id": u["production_id"] if u else None,
+                         "color": u["color"] if u else None, "paused": p["state"] == "PAUSE"})
+            t = end + co
+        elif p["state"] in ("FINISH", "FAILED"):
+            bars.append({"sn": sn, "start": now, "end": now + co, "kind": "clear", "label": ""})
+            t = now + co
+        elif svc.has_pending(sn):
+            pend = svc._take_pending(sn, consume=False) or {}
+            f = file(pend.get("file_id")) if pend.get("file_id") else None
+            d = duration_s(f, pend.get("plate") or 1)
+            uid = (pend.get("queue") or {}).get("unit")
+            u = db.one("SELECT p.color, p.id FROM production_units x JOIN productions p ON p.id=x.production_id WHERE x.id=?", (uid,)) if uid else None
+            bars.append({"sn": sn, "start": now, "end": now + d, "kind": "starting", "label": pend.get("task_name") or "",
+                         "production_id": u["id"] if u else None, "color": u["color"] if u else None})
+            t = now + d + co
+        free_at[sn] = t
+    # coda manuale indirizzata a una stampante: ha la precedenza
+    for q in db.q("SELECT * FROM queue WHERE status='queued' AND printer_sn IS NOT NULL ORDER BY position, id"):
+        sn = q["printer_sn"]
+        if free_at.get(sn) is None:
+            continue
+        f = file(q["file_id"])
+        for _ in range(max(1, q.get("copies") or 1)):
+            d = duration_s(f, q["plate"])
+            bars.append({"sn": sn, "start": free_at[sn], "end": free_at[sn] + d, "kind": "queue",
+                         "label": f["filename"] if f else "?"})
+            free_at[sn] += d + co
+    # pezzi della produzione (più l'eventuale ordine in anteprima)
+    units = [dict(u) for u in ordered_pending(db)]
+    if draft:
+        dprio = int(draft.get("priority", 1))
+        seq, extra = 0, []
+        for it in draft.get("items") or []:
+            for _ in range(min(999, int(it.get("copies") or 0))):
+                seq += 1
+                extra.append({"id": -seq, "production_id": 0, "file_id": int(it["file_id"]), "plate": int(it.get("plate") or 1),
+                              "seq": seq, "priority": dprio, "position": 1e12, "printers": json.dumps(draft.get("printers") or []),
+                              "color": "#94A3B8", "prod_name": draft.get("name") or "", "message": ""})
+        units = sorted(units + extra, key=lambda u: (-u["priority"], u["position"], u["seq"]))
+    eta: dict[int, float] = {}
+    unplaced: dict[int, int] = {}
+    for u in units:
+        f = file(u["file_id"])
+        cands = [sn for sn in json.loads(u["printers"] or "[]") if free_at.get(sn) is not None and f and compatible(svc, f, sn)]
+        if not cands:
+            unplaced[u["production_id"]] = unplaced.get(u["production_id"], 0) + 1
+            continue
+        sn = min(cands, key=lambda s: (free_at[s], rows[s]["name"]))
+        d = duration_s(f, u["plate"])
+        start = max(free_at[sn], now)
+        bars.append({"sn": sn, "start": start, "end": start + d, "kind": "plan", "label": f["filename"] if f else "?",
+                     "production_id": u["production_id"], "unit_id": u["id"], "color": u["color"]})
+        free_at[sn] = start + d + co
+        eta[u["production_id"]] = max(eta.get(u["production_id"], 0), start + d)
+    # pezzi in stampa: la fine stimata dell'ordine non può essere prima della loro fine
+    for b in bars:
+        if b.get("production_id") and b["kind"] in ("current", "starting"):
+            eta[b["production_id"]] = max(eta.get(b["production_id"], 0), b["end"])
+    horizon = now + horizon_h * 3600
+    for sn, r in rows.items():
+        busy = sum(max(0, min(b["end"], horizon) - max(b["start"], now)) for b in bars if b["sn"] == sn and b["kind"] != "clear")
+        r["saturation"] = round(100 * busy / (horizon - now)) if r["online"] else None
+        r["free_at"] = free_at.get(sn)
+        r["used"] = any(b["sn"] == sn for b in bars)
+    return {"now": now, "changeover_s": co, "horizon_h": horizon_h, "rows": list(rows.values()), "bars": bars,
+            "eta": {str(k): v for k, v in eta.items()}, "unplaced": {str(k): v for k, v in unplaced.items()},
+            "end": max([b["end"] for b in bars] + [now])}

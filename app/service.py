@@ -10,6 +10,7 @@ from pathlib import Path
 from . import notifier
 from .config import Config
 from .db import DB
+from . import production
 from .connectors import DirectClient, make_client
 from .gcodemeta import is_gcode
 from .hub_client import FleetHubClient, HubError
@@ -133,6 +134,12 @@ class Service:
         self._task: asyncio.Task | None = None
         for sub in ("archive", "snapshots", "tmp"):
             (cfg.data_path / sub).mkdir(exist_ok=True)
+        # produzione: tabelle e riallineamento dei pezzi (dopo che tutto il resto è pronto)
+        production.init(self.db)
+        try:
+            production.reconcile(self)
+        except Exception:  # noqa: BLE001 - non deve impedire l'avvio
+            log.exception("Produzione: riallineamento all'avvio non riuscito")
 
     # ------------------------------------------------------------------ eventi
     def subscribe(self) -> asyncio.Queue:
@@ -210,6 +217,7 @@ class Service:
                 self.printers = {**self.hub_printers, **direct_new}
                 self.last_poll = time.time()
                 await self._dispatch_queue()
+                await production.dispatch(self)
             except Exception as e:  # noqa: BLE001 - il ciclo non deve mai morire
                 self.hub_ok, self.hub_error = False, f"Errore interno: {e}"
                 self.hub_error_obj = HubError(key="Errore interno: {e}", params={"e": e})
@@ -311,6 +319,9 @@ class Service:
         data["warned"] = True
         self.db.x("UPDATE pending_prints SET data=? WHERE printer_sn=?", (json.dumps(data), p["sn"]))
         q = data.get("queue") or {}
+        if q.get("unit"):
+            production.on_not_started(self.db, q["unit"], qmsg("non partita su {printer}: {e}", printer=p["name"], e=reason)
+                                      if reason else qmsg("non partita su {printer} entro 2 minuti", printer=p["name"]))
         if q.get("id"):
             why = qmsg("non partita su {printer}: {e}", printer=p["name"], e=reason) if reason else \
                 qmsg("non partita su {printer} entro 2 minuti", printer=p["name"])
@@ -404,6 +415,7 @@ class Service:
                     planned_g=info.get("planned_g", 0), started_by=info.get("user_id"),
                     filaments=json.dumps(info.get("plan") or []), start_trays=json.dumps(start_info))
                 self._open_jobs[sn] = self.db.one("SELECT * FROM jobs WHERE id=?", (jid,))
+                production.on_job_started(self.db, ((pend or {}).get("queue") or {}).get("unit"), jid, sn)
                 self.toast("{printer}: stampa avviata – {task}", sn=sn, printer=p["name"], task=p["task_name"])
             else:
                 upd = {"progress": p["progress"]}
@@ -412,6 +424,7 @@ class Service:
                     late = self._take_pending(sn)
                     self._queue_started(late)
                     if late:
+                        production.on_job_started(self.db, (late.get("queue") or {}).get("unit"), job["id"], sn)
                         upd.update(file_id=late.get("file_id"), plate=late.get("plate"),
                                    planned_g=late.get("planned_g", 0), started_by=late.get("user_id"),
                                    filaments=json.dumps(late.get("plan") or []))
@@ -476,6 +489,10 @@ class Service:
         self.db.update_job(job["id"], status=status, ended_at=time.time(), progress=progress,
                            filament_g=grams, snapshot=snap, error=err)
         self._open_jobs.pop(p["sn"], None)
+        try:
+            production.on_job_closed(self, job["id"], status, p["name"])
+        except Exception:  # noqa: BLE001
+            log.exception("Produzione: aggiornamento del pezzo non riuscito")
         name = job.get("task_name") or p["task_name"]
         dur = int((time.time() - (job.get("started_at") or time.time())) / 60)
         msg = JOB_TOASTS.get(status, JOB_TOASTS["unknown"])
