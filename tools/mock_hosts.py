@@ -430,7 +430,6 @@ def r3d_auth(token: str):
     return token and token == R3D["token"]
 
 
-@app.get("/v1/login")
 def r3d_login(sign: str, timestamp: str):
     import hashlib as h
     exp = h.md5(h.sha1(f"password=segreta&timestamp={timestamp}".encode()).hexdigest().encode()).hexdigest()
@@ -442,6 +441,10 @@ def r3d_login(sign: str, timestamp: str):
 
 @app.api_route("/v1/{path:path}", methods=["GET", "POST"])
 async def r3d_api(path: str, req: Request, token: str = ""):
+    if path == "login":                       # la rota generica /v1/... è registrata prima di /v1/login
+        return it_login_or_r3d(req)
+    if K["kind"] == "intamsys":
+        return intamsys_api(path, req, {})
     if not r3d_auth(token):
         return {"error": {"code": 401, "msg": "token error"}, "status": 0}
     tick()
@@ -501,18 +504,222 @@ def r3d_cam(req: Request):
     return sdcp_video()
 
 
+# ------------------------------------------------------------------ UltiMaker (API /api/v1 + Connect facoltativo)
+UM = {"auth": {}, "approve_after": 0, "connect": True}
+UM_NONCE = secrets.token_hex(8)
+
+
+def um_digest_ok(req: Request) -> bool:
+    h = req.headers.get("authorization", "")
+    if not h.startswith("Digest "):
+        return False
+    f = dict(re.findall(r'(\w+)="?([^",]+)"?', h))
+    key = UM["auth"].get(f.get("username"), {}).get("key")
+    if not key or UM["auth"][f["username"]]["status"] != "authorized":
+        return False
+    H = lambda x: hashlib.sha256(x.encode()).hexdigest()
+    ha1, ha2 = H(f"{f['username']}:Jedi-API:{key}"), H(f"{req.method}:{f.get('uri')}")
+    return f.get("response") == H(f"{ha1}:{f['nonce']}:{f['nc']}:{f['cnonce']}:{f['qop']}:{ha2}")
+
+
+def um_challenge():
+    return Response(status_code=401, headers={"WWW-Authenticate": f'Digest realm="Jedi-API", nonce="{UM_NONCE}", qop="auth", algorithm="SHA-256"'})
+
+
+@app.post("/api/v1/auth/request")
+async def um_auth_request(req: Request):
+    form = await req.form()
+    aid, key = secrets.token_hex(16), secrets.token_hex(32)
+    UM["auth"][aid] = {"key": key, "status": "unknown", "t": time.time(), "user": form.get("user")}
+    return {"id": aid, "key": key}
+
+
+@app.get("/api/v1/auth/check/{aid}")
+def um_auth_check(aid: str):
+    a = UM["auth"].get(aid)
+    if not a:
+        return {"message": "unknown"}
+    if a["status"] == "unknown" and time.time() - a["t"] > UM["approve_after"]:   # l'utente approva sul display
+        a["status"] = "authorized"
+    return {"message": a["status"]}
+
+
+@app.get("/api/v1/system/{what}")
+def um_system(what: str):
+    return {"name": "UM-S5-Officina", "firmware": "8.3.0", "variant": "Ultimaker S5"}.get(what, "")
+
+
+@app.get("/api/v1/printer")
+def um_printer():
+    tick()
+    return {"status": "printing" if P["state"] in ("printing", "paused") else "idle",
+            "bed": {"temperature": {"current": round(P["bed"][0], 1), "target": P["bed"][1]}, "type": "glass"},
+            "heads": [{"extruders": [{"hotend": {"id": "AA 0.4", "temperature": {"current": round(P["tool"][0], 1), "target": P["tool"][1]}}},
+                                     {"hotend": {"id": "BB 0.4", "temperature": {"current": round(P["chamber"][0], 1), "target": P["chamber"][1]}}}]}]}
+
+
+@app.get("/api/v1/print_job")
+def um_job():
+    tick()
+    if not P["file"]:
+        return JSONResponse({"message": "No printer job running"}, 404)
+    st = {"printing": "printing", "paused": "paused"}.get(P["state"]) or "wait_cleanup"
+    return {"name": P["file"], "state": st, "progress": round(progress(), 3), "time_elapsed": int(progress() * K["dur"]),
+            "time_total": K["dur"], "uuid": f"job-{P['jobid']}", "result": {"complete": "Finished", "cancelled": "Aborted"}.get(P["result"], "")}
+
+
+@app.put("/api/v1/print_job/state")
+async def um_state(req: Request):
+    if not um_digest_ok(req):
+        return um_challenge()
+    tgt = (await req.json())["target"]
+    {"pause": pause, "print": resume, "abort": cancel}[tgt]()
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/print_job")
+async def um_upload(req: Request):
+    if not um_digest_ok(req):
+        return um_challenge()
+    form = await req.form()
+    start(form["jobname"])
+    return JSONResponse({"message": "Print job accepted", "uuid": f"job-{P['jobid']}"}, 201)
+
+
+@app.put("/api/v1/printer/bed/temperature")
+async def um_bed(req: Request):
+    if not um_digest_ok(req):
+        return um_challenge()
+    P["bed"][1] = float((await req.form())["temperature"])
+    return Response(status_code=204)
+
+
+@app.put("/api/v1/printer/heads/0/extruders/{n}/hotend/temperature")
+async def um_hotend(n: int, req: Request):
+    if not um_digest_ok(req):
+        return um_challenge()
+    (P["tool"] if n == 0 else P["chamber"])[1] = float((await req.form())["temperature"])
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/camera/0/snapshot")
+def um_cam():
+    return Response(b"\xff\xd8\xff\xe0umcam\xff\xd9", media_type="image/jpeg")
+
+
+@app.get("/cluster-api/v1/printers/")
+def um_cluster_printers():
+    if not UM["connect"]:
+        return JSONResponse({"message": "not found"}, 404)
+    return [{"uuid": "p-uuid-1", "ip_address": "127.0.0.1", "friendly_name": "UM-S5-Officina", "machine_variant": "Ultimaker S5",
+             "status": "printing" if P["file"] else "idle", "firmware_version": "8.3.0", "maintenance_required": False,
+             "configuration": [{"extruder_index": 0, "print_core_id": "AA 0.4", "material": {"brand": "UltiMaker", "material": "PLA", "color": "Red"}},
+                               {"extruder_index": 1, "print_core_id": "BB 0.4", "material": {"brand": "UltiMaker", "material": "PVA", "color": "Natural"}}],
+             "material_station": {"supported": True, "status": "available", "material_slots": [
+                 {"slot_index": i, "extruder_index": i % 2, "print_core_id": "AA 0.4", "compatible": True, "material_remaining": r,
+                  "material": {"brand": "UltiMaker", "material": m, "color": c} if m else {}}
+                 for i, (m, c, r) in enumerate([("PLA", "Red", 0.8), ("PVA", "Natural", 0.45), ("Tough PLA", "Black", 1.0), ("", "", -1),
+                                                ("PETG", "Blue", 0.1), ("", "", -1)])]},
+             "faults": []}]
+
+
+@app.get("/cluster-api/v1/print_jobs/printing")
+def um_cluster_jobs():
+    if not UM["connect"]:
+        return JSONResponse({}, 404)
+    return [{"uuid": f"job-{P['jobid']}", "name": P["file"], "printer_uuid": "p-uuid-1", "status": "printing"}] if P["file"] and P["state"] in ("printing", "paused") else []
+
+
+@app.get("/cluster-api/v1/print_jobs/{uid}/preview_image")
+def um_preview(uid: str):
+    return Response(PNG, media_type="image/png")
+
+
+@app.get("/fault-api/v1/faults/")
+def um_faults():
+    if not UM["connect"]:
+        return JSONResponse({}, 404)
+    return [{"code": "air_manager_filter_needs_replacement", "severity": "WARNING", "message": "Filter needs replacement",
+             "uuid": "f1", "timestamp": "2026-11-06T08:00:00", "data": {}}]
+
+
+@app.get("/material-station-api/v1/material-station/")
+def um_misp():
+    if not UM["connect"]:
+        return JSONResponse({}, 404)
+    return {"status": "available", "current_humidity": 23.4, "dehumidifier_status": "operational", "door_opened": False, "slots": []}
+
+
+# ------------------------------------------------------------------ INTAMSYS (INTAMTOUCH, porta 5588)
+IT = {"token": "", "files": ["FPRO610HT_Tensile-1B.gcode", "staffa_PEEK.gcode"]}
+
+
+def it_err(code, msg):
+    return {"error": {"err_code": code, "message": msg}, "status": 0}
+
+
+@app.get("/v1/login")
+def it_login_or_r3d(req: Request):
+    if K["kind"] == "raise3d":
+        return r3d_login(req.query_params.get("sign", ""), req.query_params.get("timestamp", ""))
+    if req.query_params.get("signin") != hashlib.md5(b"password=segreta").hexdigest():
+        return it_err(50001, "error password")
+    IT["token"] = secrets.token_hex(16)
+    return {"data": {"token": IT["token"]}, "status": 1}
+
+
+def intamsys_api(path: str, req: Request, body: dict):
+    if req.query_params.get("token") != IT["token"]:
+        return it_err(50000, "token is invalid")
+    tick()
+    temp = lambda h: {"current_temperature": round(h[0], 1), "target_temperature": str(h[1])}
+    if path == "printer/system":
+        return {"data": {"model": "FUNMAT PRO 610HT", "firmware_version": "PRO610_V1.0.5.16", "software_version": "V1.2.4.19", "api_version": "v1"}, "status": 1}
+    if path == "printer/runningstatus":
+        return {"data": {"running_status": {"printing": "printing", "paused": "paused"}.get(P["state"], "idle")}, "status": 1}
+    if path == "printer/basictemperature":
+        return {"data": {"buildplate": temp(P["bed"]), "chamber": temp(P["chamber"]), "nozzle1": temp(P["tool"]), "nozzle2": temp([22, 0]),
+                         **{f"filament{i}": {"current_temperature": 49, "target_temperature": 50} for i in range(1, 5)},
+                         "water_cooling": {"current_temperature": 18}}, "status": True}
+    if path == "printer/filamentweight":
+        return {"data": {f"filament{i}": {"current_weight": w} for i, w in enumerate([820, 410, 0, 1150], 1)}, "status": True}
+    if path == "printer/currentalarm":
+        return {"data": {"code": 0, "description": "Printer runs well", "action": "No action"}, "status": 1}
+    if path == "job/currentjob":
+        js = {"printing": "printing", "paused": "paused"}.get(P["state"]) or {"complete": "completed", "cancelled": "aborted"}.get(P["result"], "aborted")
+        return {"data": {"file_name": P["file"] or "", "job_status": js, "print_progress": round(progress() * 100, 1),
+                         "estimated_total_time": K["dur"], "real_printed_time": int(progress() * K["dur"])}, "status": 1}
+    if path == "fileops/printfiles":
+        return {"data": {"file_list": IT["files"]}, "status": 1}
+    if path == "job/newjob/start":
+        name = req.query_params.get("name")
+        if name not in IT["files"]:
+            return it_err(50002, "file name or file path is wrong")
+        if P["state"] in ("printing", "paused"):
+            return it_err(50003, "printer is running a job")
+        start(name)
+        return {"status": 1}
+    if path in ("job/currentjob/pause", "job/currentjob/resume", "job/currentjob/abort"):
+        {"pause": pause, "resume": resume, "abort": cancel}[path.rsplit("/", 1)[1]]()
+        return {"status": 1}
+    return JSONResponse({"status": 0}, 404)
+
+
 PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
                     "1f15c4890000000d49444154789c63f8cfc0f00f0004850180848a8c210000000049454e44ae426082")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kind", required=True, choices=["octoprint", "moonraker", "prusalink", "repetier", "elegoo", "raise3d"])
+    ap.add_argument("--kind", required=True, choices=["octoprint", "moonraker", "prusalink", "repetier", "elegoo", "raise3d", "ultimaker", "intamsys"])
+    ap.add_argument("--no-connect", action="store_true", help="UltiMaker senza UltiMaker Connect (solo /api/v1)")
+    ap.add_argument("--approve-after", type=int, default=4, help="UltiMaker: secondi prima dell'approvazione sul display")
     ap.add_argument("--udp-port", type=int, default=3000)
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--duration", type=int, default=30)
     a = ap.parse_args()
     K.update(kind=a.kind, dur=a.duration, port=a.port)
+    UM.update(connect=not a.no_connect, approve_after=a.approve_after)
     if a.kind == "elegoo":
         threading.Thread(target=udp_discovery, args=(a.udp_port,), daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=a.port, log_level="warning")

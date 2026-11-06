@@ -189,6 +189,8 @@ insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova co
 | Repetier-Server | ✓ | ✓ | .gcode | ✓ | ✓ | indirizzo manuale |
 | Elegoo (SDCP) – Centauri Carbon, resine Saturn/Mars recenti | ✓ | ✓ | .gcode (con livellamento e timelapse) | — | — | automatica (MJPEG) |
 | Raise3D (Raise Touch Remote Access API) – Pro2/Pro3, E2, N2 | ✓ | ✓ | solo file già sulla stampante (l'API non permette di caricarne) | ✓ | ✓ | automatica |
+| UltiMaker – UM3, S3, S5, S7, S6, S8, Factor 4 (API della stampante + UltiMaker Connect) | ✓ | ✓ | .gcode / .ufp | ✓ | — | automatica |
+| INTAMSYS (INTAMTOUCH) – FUNMAT PRO 610HT / 410 | ✓ | ✓ | solo file già sulla stampante | — | — | — |
 
 - Le stampe si inviano dall'archivio: i file `.gcode`/`.bgcode` vanno alle stampanti dirette, i `.gcode.3mf` alle Bambu.
   Tempo, filamenti, colori e miniatura sono letti dai commenti dello slicer (PrusaSlicer, OrcaSlicer, SuperSlicer, Cura)
@@ -201,6 +203,9 @@ insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova co
   Bambu (senza timelapse sulla P1P) ed Elegoo; per le altre valgono le impostazioni del G-code.
 - Duet: compatibile con RepRapFirmware 3.7 (`bedHeaterMapping`/`chamberHeaterMapping`); sensori di temperatura guasti
   segnalati come tali; con FabbrixOS mostra ugello, tipo, sensori del filamento e ore di riscaldamento per utensile.
+- UltiMaker: la stessa connessione usa l'API della stampante (`/api/v1`, valida per tutti i modelli) e, se risponde,
+  UltiMaker Connect (`cluster-api`, `material-station-api`, `fault-api`) per materiali, Material Station, avvisi e
+  anteprima del lavoro. Per i comandi serve un'autorizzazione approvata sul display: il modulo la richiede da solo.
 - Marca e modello: scelti quando si aggiunge la stampante, da un catalogo delle principali marche e modelli dei profili
   di OrcaSlicer (`static/catalog.json`, si può scrivere anche una marca o un modello diversi); per le Bambu sono automatici.
 - Vista delle stampanti a schede, elenco o tabella, con ricerca e ordinamento per nome, marca, modello, stato o

@@ -348,6 +348,9 @@ tr.bhead td{font-weight:700;color:var(--muted);text-transform:uppercase;letter-s
 .slot .pc{max-width:760px}
 .rfiles{display:flex;flex-direction:column;gap:4px;max-height:50vh;overflow:auto}
 .rfiles button{justify-content:flex-start;text-align:left}
+.umauth{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.umauth[hidden]{display:none}
+
 @media (max-width:760px){.prow{grid-template-columns:auto 1fr auto}.prow .pr-prog,.prow .pr-temp{display:none}}
 
 @media (max-width:760px){

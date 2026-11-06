@@ -298,9 +298,11 @@ function cardBody(p) {
     else tiles.push(tile(t("Piatto|letto"), p.bed, p.bed_target, "bed", p.beds && p.beds[0] && p.beds[0].fault));
     if (p.chamber != null) tiles.push(tile(t("Camera"), p.chamber, p.chamber_target, "chamber"));
     // dati dell'ugello per utensile, quando la stampante li comunica (es. variabili FabbrixOS sulla Duet)
-    if (p.nozzles.some(n => n.diameter || n.type_name || n.filament_sensor))
+    (p.extra_temps || []).forEach(x => tiles.push(`<div class="tile"><span>${x.kind === "water" ? t("Raffreddamento ad acqua") : t("Camera filamento {n}", {n: x.n})}</span>
+      <b>${deg(x.temp, x.target)}</b>${x.weight != null ? `<small>${Math.round(x.weight)} g</small>` : ""}</div>`));
+    if (p.nozzles.some(n => n.diameter || n.type_name || n.filament_sensor || n.material_label))
       tiles.push(`<div class="tile wide"><span>${t("Utensili")}</span>${p.nozzles.map(n => `<div class="hot"><b class="side">${esc(n.label)}</b>
-        ${n.diameter ? `<b>${n.diameter} mm</b>` : ""} <small>${[n.type_name ? esc(n.type_name) : "", n.abrasive ? t("per abrasivi") : "",
+        ${n.diameter ? `<b>${n.diameter} mm</b>` : ""} <small>${[n.material_label ? `<span class="sw" style="--c:${esc(n.material_color || "#888")}"></span> ${esc(n.material_label)}` : "", n.type_name ? esc(n.type_name) : "", n.abrasive ? t("per abrasivi") : "",
           n.filament_sensor ? (n.filament_sensor === "ok" ? t("filamento presente") : `<span class="warn">${t("filamento assente")}</span>`) : "",
           n.hot_hours != null ? t("{h} h di riscaldamento", {h: n.hot_hours}) : "", n.present === false ? `<span class="warn">${t("utensile non montato")}</span>` : ""].filter(Boolean).join(" · ")}</small></div>`).join("")}</div>`);
   } else if (dual) {
@@ -334,7 +336,7 @@ function cardBody(p) {
     <div class="ctrls">${caps.remote_files && canOperate() && p.online ? `<button type="button" data-remote>${t("File sulla stampante")}</button>` : ""}${direct ? (caps.speed ? `<button type="button" class="bdg edit" data-speed="${p.speed_pct}" ${canOperate() && p.online ? "" : "disabled"}>${t("Velocità")} · ${p.speed_pct}% ✎</button>`
       : `<span class="bdg">${t("Velocità")} · ${p.speed_pct}%</span>`)
       : `<span class="bdg">${t("Velocità")} · ${esc(t(SPEEDS[p.speed_lvl] || "—"))}</span>`}<span class="grow"></span>${btns.join("") || `<span class="muted small">${t("Nessun comando disponibile in questo stato")}</span>`}</div>
-    ${direct ? "" : `<div class="sec">${t("Filamenti")}</div>
+    ${direct && !p.trays.length ? "" : `<div class="sec">${t("Filamenti")}</div>
     ${filamentCards(p)}`}
     ${alerts ? `<div class="alerts">${alerts}</div>` : ""}
     ${p.last_cmd_error ? `<div class="warn">${t("Ultimo invio fallito: {e}", {e: esc(p.last_cmd_error)})}</div>` : ""}
@@ -570,7 +572,7 @@ $("#v-printers").addEventListener("click", async e => {
     closeMenus();
     const n = prompt(t("Nuovo nome della stampante"), p.name);
     if (n) await act(() => api(`/api/printers/${sn}/name`, {method: "PUT", body: {name: n}}), t("Nome aggiornato"));
-  } else if (b.classList.contains("sp")) {
+  } else if (b.classList.contains("sp") && !p.direct) {
     if (canOperate()) editTray(p, +b.dataset.ams, +b.dataset.slot);
   }
 });
@@ -620,7 +622,7 @@ RENDER.archive = async function renderArchive() {
     </div>
     ${sel ? `<div class="projhead"><div><h2 style="margin:0">${esc(projName(sel))}</h2>${sel.id === null ? `<p>${t("Visibili solo agli amministratori")}</p>` : sel.description ? `<p>${esc(sel.description)}</p>` : ""}</div>
       ${sel.id !== null ? `<div class="row admin-only"><button id="editproj">${t("Modifica")}</button><button class="danger" id="delproj">${t("Elimina progetto")}</button></div>` : ""}</div>` : ""}
-    ${canOperate() ? `<div class="drop" id="drop">${dropText}<input type="file" id="fpick" accept=".3mf,.gcode,.gco,.g" multiple hidden></div>` : ""}
+    ${canOperate() ? `<div class="drop" id="drop">${dropText}<input type="file" id="fpick" accept=".3mf,.gcode,.gco,.g,.bgcode,.ufp" multiple hidden></div>` : ""}
     <div class="list" id="flist"><div class="empty">${t("Caricamento…")}</div></div>`;
   $("#pchips").onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; projFilter = c.dataset.p; localStorage.setItem("fb_proj", projFilter); RENDER.archive(); };
   if ($("#newproj")) $("#newproj").onclick = () => projectDialog();
@@ -645,7 +647,7 @@ RENDER.archive = async function renderArchive() {
     return `<div class="item" data-id="${f.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${f.id}/thumb/${p0.index || 1}">
       <div><div class="t" title="${esc(f.filename)}">${esc(f.filename)}</div>
-        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.name)}</span> · <span class="bdg">${f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
+        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.name)}</span> · <span class="bdg">${f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
         <div class="m">${t("Caricato il {d}", {d: fmtDate(f.uploaded_at)})} · ${t("stampato {n} volte", {n: f.prints})}${f.prints ? " " + t("({n} riuscite)", {n: f.ok}) : ""}</div></div>
       <div class="a">${canOperate() ? `<button class="primary" data-print>${t("Stampa")}</button><button data-move>${t("Sposta")}</button>` : ""}
         <a class="btn" href="/api/files/${f.id}/download">${t("Scarica")}</a>${canDel ? `<button class="danger" data-del>${t("Elimina")}</button>` : ""}</div></div>`;
@@ -695,7 +697,8 @@ async function uploadFiles(list, pid) {
 async function printDialog(f, presetPrinter) {
   const plates = f.meta.plates;
   const isG = f.meta.kind === "gcode";   // .gcode → stampanti dirette (Duet); .gcode.3mf → Bambu
-  const online = S.printers.filter(p => p.online && !!p.direct === isG && (p.caps || {}).upload !== false);
+  const online = S.printers.filter(p => p.online && !!p.direct === isG && (p.caps || {}).upload !== false
+    && (f.meta.format !== "ufp" || (p.caps || {}).ufp));
   const myGroups = GROUPS.filter(g => isAdmin() || (g.printers.length && g.printers.every(sn => S.printers.some(p => p.sn === sn))));
   openDialog(`<h3>${t("Stampa {f}", {f: esc(f.filename)})}</h3>
     <div class="printhead"><img class="platethumb" id="platethumb" alt="${esc(t("Anteprima del piatto"))}" src="/api/files/${f.id}/thumb/${plates[0].index}">
@@ -1099,6 +1102,8 @@ const DIRECT_KINDS = {
   repetier: {label: "Repetier-Server", fields: ["api!", "slug"], host: "192.168.1.80:3344"},
   elegoo: {label: "Elegoo (SDCP)", fields: [], host: "192.168.1.90"},
   raise3d: {label: "Raise3D (Raise Touch)", fields: ["pass"], host: "192.168.1.100"},
+  ultimaker: {label: "UltiMaker", fields: ["umauth", "user", "pass"], host: "192.168.1.110"},
+  intamsys: {label: "INTAMSYS (INTAMTOUCH)", fields: ["pass"], host: "192.168.1.120"},
 };
 // suggerimenti mostrati nel modulo (frasi del catalogo traduzioni)
 const DIRECT_HINTS = {
@@ -1107,6 +1112,8 @@ const DIRECT_HINTS = {
   prusalink: "Utente maker e password mostrati sulla stampante (Impostazioni → Rete → PrusaLink). Firmware 5 o successivo.",
   duet: "Lo stesso indirizzo di Duet Web Control; password solo se impostata con M551.",
   repetier: "Chiave API: Repetier-Server → Impostazioni globali → Connettività. Stampante: lo slug, se il server ne gestisce più di una.",
+  ultimaker: "Tutti i modelli (UM3, S3, S5, S7, Factor 4). Per i comandi serve un'autorizzazione: premi «Richiedi autorizzazione» e approvala sul display della stampante. Con UltiMaker Connect attivo si vedono anche materiali, Material Station e anteprima.",
+  intamsys: "FUNMAT PRO 610HT / 410 e altre con INTAMTOUCH: attiva l'accesso remoto sulla stampante e usa la password impostata lì. L'API non permette di caricare file né di cambiare temperature.",
   raise3d: "Attiva sulla stampante Impostazioni → Remote Access API e usa la password impostata lì. L'API non permette di caricare file: si avviano quelli già presenti nella stampante.",
   elegoo: "Centauri Carbon e resine Elegoo recenti (protocollo SDCP): basta l'indirizzo IP. Le porte 3000 (UDP) e 3030 devono essere raggiungibili.",
 };
@@ -1127,7 +1134,8 @@ RENDER.direct = async function renderDirect() {
     <div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Stato")}</th><th>${t("Pausa / stop")}</th><th>${t("Invio file")}</th><th>${t("Temperature")}</th><th>${t("Velocità")}</th><th>${t("Camera")}</th></tr></thead><tbody>
       ${[["OctoPrint", 1, 1, ".gcode", 1, 1, t("automatica")], ["Klipper (Moonraker)", 1, 1, ".gcode", 1, 1, t("automatica")],
          ["PrusaLink", 1, 1, ".bgcode / .gcode", 0, 0, t("manuale")], ["Duet / RepRapFirmware 3", 1, 1, ".gcode", 1, 1, t("manuale")],
-         ["Repetier-Server", 1, 1, ".gcode", 1, 1, t("manuale")], ["Elegoo (SDCP)", 1, 1, ".gcode", 0, 0, t("automatica")], ["Raise3D (Raise Touch)", 1, 1, t("solo file già sulla stampante"), 1, 1, t("automatica")]].map(([n, a, b, c, d, e2, f]) =>
+         ["Repetier-Server", 1, 1, ".gcode", 1, 1, t("manuale")], ["Elegoo (SDCP)", 1, 1, ".gcode", 0, 0, t("automatica")], ["Raise3D (Raise Touch)", 1, 1, t("solo file già sulla stampante"), 1, 1, t("automatica")],
+         ["UltiMaker", 1, 1, ".gcode / .ufp", 1, 0, t("automatica")], ["INTAMSYS (INTAMTOUCH)", 1, 1, t("solo file già sulla stampante"), 0, 0, "—"]].map(([n, a, b, c, d, e2, f]) =>
         `<tr><td><b>${n}</b></td><td>${a ? "✓" : "—"}</td><td>${b ? "✓" : "—"}</td><td>${c}</td><td>${d ? "✓" : "—"}</td><td>${e2 ? "✓" : "—"}</td><td>${f}</td></tr>`).join("")}
     </tbody></table></div>
     <p class="sub" style="margin-top:8px">${t("PrusaLink e SDCP (Elegoo) non hanno comandi di rete per temperature e velocità: si cambiano dalla stampante. \"Automatica\": l'indirizzo della webcam viene letto dalla stampante; \"manuale\": va indicato nel modulo. Senza camera, la scheda mostra l'anteprima della stampa.")}</p>`;
@@ -1154,6 +1162,7 @@ function directDialog(r) {
     <label data-f="user">${t("Utente")}<input name="user" value="${esc(r ? r.username || "" : "")}" placeholder="maker" autocomplete="off"></label>
     <label data-f="pass"><span data-pl></span><input name="pw" type="password" autocomplete="new-password"></label>
     <label data-f="api"><span data-al></span><input name="api" type="password" autocomplete="off"></label>
+    <div data-f="umauth" class="umauth"><button type="button" id="umreq">${t("Richiedi autorizzazione alla stampante")}</button> <span id="umst" class="small"></span></div>
     <label data-f="slug">${t("Stampante su Repetier-Server (slug, facoltativo)")}<input name="slug" value="${esc(r ? r.extra || "" : "")}" placeholder="ender3"></label>
     <label>${t("Indirizzo della foto della webcam (facoltativo)")}<input name="snap" value="${esc(r ? r.snapshot_url : "")}" placeholder="http://192.168.1.179:8080/?action=snapshot"></label>
     ${r ? `<label class="inline"><input type="checkbox" name="en" ${r.enabled ? "checked" : ""}> ${t("Attiva")}</label>` : ""}
@@ -1169,9 +1178,27 @@ function directDialog(r) {
     $("#dlgbody [data-al]").textContent = r && r.has_api_key ? t("Chiave API (lascia vuoto per non cambiarla)")
       : d.fields.includes("api!") ? t("Chiave API") : t("Chiave API (facoltativa)");
   };
-  const KIND_BRAND = {prusalink: "Prusa", elegoo: "Elegoo", raise3d: "Raise3D"};
+  const KIND_BRAND = {prusalink: "Prusa", elegoo: "Elegoo", raise3d: "Raise3D", ultimaker: "UltiMaker", intamsys: "INTAMSYS"};
   const fillModels = () => { $("#dl-models").innerHTML = ((CATALOG.brands || {})[val("brand").value] || []).map(m => `<option value="${esc(m)}">`).join(""); };
   val("brand").oninput = fillModels; fillModels();
+  // UltiMaker: richiesta di autorizzazione da approvare sul display; ID e chiave diventano utente e password
+  $("#umreq").onclick = async () => {
+    const host = val("host").value.trim();
+    if (!host) return toast(t("Indica l'indirizzo della stampante"), "error");
+    let req;
+    try { req = await api("/api/direct/ultimaker/auth", {method: "POST", body: {host}}); }
+    catch (e) { $("#umst").innerHTML = `<span class="warn">${esc(e.message)}</span>`; return; }
+    val("user").value = req.id; val("pw").value = req.key;
+    $("#umst").innerHTML = `<span class="muted">${t("Approva la richiesta sul display della stampante…")}</span>`;
+    for (let i = 0; i < 90; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      if (!$("#umst")) return;   // modulo chiuso
+      let st; try { st = (await api(`/api/direct/ultimaker/auth?host=${encodeURIComponent(host)}&id=${encodeURIComponent(req.id)}`)).status; } catch { continue; }
+      if (st === "authorized") { $("#umst").innerHTML = `<span class="st finished">✓ ${t("Autorizzata: ora salva la stampante")}</span>`; return; }
+      if (st === "unauthorized") { $("#umst").innerHTML = `<span class="warn">✗ ${t("Richiesta rifiutata sulla stampante")}</span>`; val("user").value = ""; val("pw").value = ""; return; }
+    }
+    $("#umst").innerHTML = `<span class="warn">${t("Nessuna risposta dalla stampante: riprova")}</span>`;
+  };
   val("kind").onchange = () => { showFields(); if (!r && (!val("brand").value || Object.values(KIND_BRAND).includes(val("brand").value))) { val("brand").value = KIND_BRAND[val("kind").value] || ""; fillModels(); } };
   showFields(); if (!r && !val("brand").value) { val("brand").value = KIND_BRAND[val("kind").value] || ""; fillModels(); }
   const body = () => ({id: r ? r.id : undefined, name: val("dname").value || val("host").value, kind: val("kind").value, host: val("host").value,

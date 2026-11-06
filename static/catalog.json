@@ -128,6 +128,12 @@
   "InfiMech": [
    "TX"
   ],
+  "INTAMSYS": [
+   "FUNMAT PRO 610HT",
+   "FUNMAT PRO 410",
+   "FUNMAT PRO 310",
+   "FUNMAT HT"
+  ],
   "Kingroon": [
    "KP3S",
    "KP3S Pro",
@@ -199,11 +205,16 @@
   ],
   "UltiMaker": [
    "2+ Connect",
+   "Factor 4",
+   "Method",
+   "Method X",
    "S3",
    "S5",
+   "S6",
    "S7",
-   "Method",
-   "Method X"
+   "S8",
+   "Ultimaker 3",
+   "Ultimaker 3 Extended"
   ],
   "Voron": [
    "0.2",

@@ -37,7 +37,7 @@ class _NoHub:
 def task_name_for(filename: str, plate: int, plates: int) -> str:
     """Nome del lavoro inviato al Hub: lo stesso usato per riconoscere la stampa nello storico."""
     task = Path(filename).name.replace(".gcode.3mf", "").replace(".3mf", "")
-    for ext in (".bgcode", ".gcode", ".gco", ".g"):
+    for ext in (".bgcode", ".ufp", ".gcode", ".gco", ".g"):
         if task.lower().endswith(ext):
             task = task[: -len(ext)]
             break
@@ -229,12 +229,19 @@ class Service:
             old = self.direct.get(sn)
             if old and getattr(old, "_sig", None) == sig:   # stessi dati di collegamento: si tiene la sessione
                 old.name = r["name"] or sn
+                old.brand = (r.get("brand") or "").strip() or old.default_brand    # marca e modello cambiano subito
+                old.printer_model = (r.get("printer_model") or "").strip()
                 keep[sn] = old
             else:
                 c = make_client(r)
                 c._sig = sig
                 keep[sn] = c
         self.direct = keep
+        # nome, marca e modello aggiornati subito nello stato mostrato (senza attendere la lettura successiva)
+        for sn, c in keep.items():
+            st = getattr(self, "printers", {}).get(sn)   # all'avvio l'elenco non esiste ancora
+            if st:
+                st.update(name=c.name, brand=c.brand, printer_model=c.printer_model or st.get("model") or "")
 
     async def _poll_direct(self) -> dict[str, dict]:
         async def one(c: DirectClient):
@@ -643,6 +650,8 @@ class Service:
         if gcode_file:
             if not self.direct[sn].caps.get("upload", True):
                 raise HubError(key="Questa stampante non accetta file dalla rete: avvia un file presente nella sua memoria")
+            if f["meta"].get("format") == "ufp" and not self.direct[sn].caps.get("ufp"):
+                raise HubError(key="I file .ufp si possono stampare solo sulle UltiMaker")
             return await self._start_direct(f, pl, sn, user_id, queue, options)
         warnings: list[str] = []
         slots, warnings = resolve_slots(slots, pl["filaments"], p)
@@ -709,6 +718,8 @@ class Service:
                     continue   # .gcode.3mf solo alle Bambu, .gcode solo alle stampanti dirette
                 if sn in self.direct and not self.direct[sn].caps.get("upload", True):
                     continue   # stampante che non accetta file dalla rete (es. Raise3D)
+                if f["meta"].get("format") == "ufp" and not (sn in self.direct and self.direct[sn].caps.get("ufp")):
+                    continue   # i .ufp solo alle UltiMaker
                 raw = json.loads(it["mapping"]) if it["mapping"] else None
                 slots, _w = ([], []) if sn in self.direct else resolve_slots(raw, pl["filaments"] if pl else [], p)
                 if slots is None:

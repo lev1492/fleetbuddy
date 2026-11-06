@@ -3,6 +3,24 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.12.0] – 2026-11-06
+
+### Novità
+- UltiMaker (UM3, S3, S5, S7, S6, S8, Factor 4): un unico collegamento che unisce l'API della stampante (`/api/v1`) e
+  UltiMaker Connect quando disponibile. Stato, temperature di ugelli e piano (modificabili), pausa, ripresa, stop,
+  invio e avvio di file .gcode e .ufp, camera; con Connect anche materiali caricati per estrusore, Material Station
+  (bobine, residuo, umidità), avvisi della stampante e anteprima del lavoro. Autorizzazione richiesta dal modulo e
+  approvata sul display della stampante.
+- INTAMSYS (INTAMTOUCH Remote Access API, porta 5588): stato, ugelli, piano, camera, camere filamento riscaldate con
+  peso del filamento, raffreddamento ad acqua, allarmi; pausa, ripresa, annullamento e avvio di file presenti sulla
+  stampante (l'API non permette caricamenti né modifiche di temperatura).
+- Archivio: file .ufp (pacchetti di Cura per UltiMaker) e lettura dell'intestazione "Griffin" dei G-code UltiMaker.
+- Catalogo: modelli INTAMSYS e UltiMaker aggiornati.
+
+### Correzioni
+- Modificando marca o modello di una stampante, la vista delle stampanti si aggiorna subito; prima restava la marca
+  precedente (o "Altra marca" per le stampanti aggiunte prima della 0.11.0) finché non cambiavano indirizzo o password.
+
 ## [0.11.0] – 2026-11-06
 
 ### Novità

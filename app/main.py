@@ -688,7 +688,8 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
         raise HTTPException(403, _("Scegli un progetto a cui hai accesso"))
     data = S().cfg.data_path
     gcode_file = is_gcode(file.filename or "")
-    ext = (".bgcode" if (file.filename or "").lower().endswith(".bgcode") else ".gcode") if gcode_file else ".3mf"
+    low = (file.filename or "").lower()
+    ext = (".bgcode" if low.endswith(".bgcode") else ".ufp" if low.endswith(".ufp") else ".gcode") if gcode_file else ".3mf"
     tmp = data / "tmp" / f"{uuid.uuid4().hex}{ext}"
     with tmp.open("wb") as out:
         shutil.copyfileobj(file.file, out, 1 << 20)
@@ -1258,6 +1259,31 @@ async def direct_test(request: Request, body: dict):
         raise HTTPException(400, str(e))
     return {"ok": True, **info, "snapshot_configured": c.has_snapshot(),
             "snapshot": c.has_snapshot() and bool(await asyncio.to_thread(c.snapshot))}
+
+
+@app.post("/api/direct/ultimaker/auth")
+async def ultimaker_auth_request(request: Request, body: dict):
+    """Chiede l'autorizzazione alla stampante UltiMaker: va approvata sul suo display."""
+    _admin(request)
+    u = U(request)
+    from .connectors.ultimaker import UltimakerClient
+    c = UltimakerClient({"id": 0, "host": str(body.get("host", ""))})
+    try:
+        d = await asyncio.to_thread(c.request_auth, u.username)
+    except HubError as e:
+        raise HTTPException(400, e.localized(current_lang.get()))
+    return {"id": d.get("id"), "key": d.get("key")}
+
+
+@app.get("/api/direct/ultimaker/auth")
+async def ultimaker_auth_check(request: Request, host: str, id: str):
+    _admin(request)
+    from .connectors.ultimaker import UltimakerClient
+    c = UltimakerClient({"id": 0, "host": host})
+    try:
+        return {"status": await asyncio.to_thread(c.check_auth, id)}
+    except HubError as e:
+        raise HTTPException(400, e.localized(current_lang.get()))
 
 
 @app.post("/api/direct")
