@@ -73,6 +73,57 @@ class DirectClient:
         """Miniatura PNG della stampa in corso fornita dalla stampante, se l'API la espone."""
         return None
 
+    # ------------------------------------------------------------------ consumo di filamento (facoltativo)
+    def job_plan(self, raw: dict | None) -> list[dict] | None:
+        """Consumo previsto dell'intero lavoro in corso, ricavato dalla stampante (metadati o G-code scaricato).
+        Serve per le stampe non avviate dall'archivio; per quelle non terminate si scala con l'avanzamento."""
+        return None
+
+    def usage_snapshot(self, raw: dict | None) -> dict | None:
+        """Valori misurati a inizio stampa (es. peso delle bobine), da confrontare a fine stampa."""
+        return None
+
+    def usage_since(self, snapshot: dict | None, raw: dict | None) -> list[dict] | None:
+        """Consumo reale misurato dalla stampante dall'inizio della stampa (anche se fallita o annullata)."""
+        return None
+
+    def fetch_gcode_meta(self, path: str, name: str, headers: dict | None = None) -> dict | None:
+        """Scarica inizio e fine del G-code in stampa (richieste Range, senza trasferire tutto il file quando la
+        stampante lo consente) e ne legge tempo, filamenti, tipi e colori come per i file dell'archivio."""
+        import os
+        import tempfile
+        from ..gcodemeta import CHUNK, parse_gcode
+        url = path if path.startswith("http") else self.base + path
+        try:
+            r = self._s.get(url, headers={**(headers or {}), "Range": f"bytes=0-{CHUNK - 1}"}, timeout=30, stream=True)
+            if r.status_code == 206:
+                data = r.content
+                t = self._s.get(url, headers={**(headers or {}), "Range": f"bytes=-{CHUNK}"}, timeout=30)
+                if t.status_code == 206:
+                    data += b"\n" + t.content
+            elif r.status_code == 200:            # la stampante ignora Range: si legge tutto (fino a 200 MB)
+                buf = bytearray()
+                for chunk in r.iter_content(1 << 16):
+                    buf += chunk
+                    if len(buf) > 200 * 1024 * 1024:
+                        return None
+                data = bytes(buf)
+            else:
+                return None
+        except requests.RequestException:
+            return None
+        suffix = ".bgcode" if name.lower().endswith(".bgcode") else ".gcode"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as fh:
+            fh.write(data)
+            tmp = fh.name
+        try:
+            return parse_gcode(tmp)
+        except Exception:  # noqa: BLE001 - file non leggibile: nessun dato
+            return None
+        finally:
+            os.unlink(tmp)
+
+
     def set_temperature(self, target: str, value: float):
         raise HubError(key="Comando non disponibile per questa stampante")
 
@@ -150,3 +201,20 @@ def base_state(client: DirectClient, online: bool, error: str = "", **kw) -> dic
     if st["beds"] and st["bed"] is None:
         st["bed"], st["bed_target"] = st["beds"][0]["temp"], st["beds"][0]["target"]
     return st
+
+
+def plan_from_meta(meta: dict | None) -> list[dict] | None:
+    """Piano di consumo dai metadati di un G-code (stessa forma usata per i file dell'archivio)."""
+    fils = ((meta or {}).get("plates") or [{}])[0].get("filaments") or []
+    plan = [{"type": f.get("type") or "?", "brand": "", "color": f.get("color") or "", "tray_info_idx": "",
+             "grams": float(f.get("used_g") or 0), "meters": float(f.get("used_m") or 0), "ams_id": None,
+             "slot_id": f.get("tool")} for f in fils if f.get("used_g") or f.get("used_m")]
+    for f in plan:
+        if not f["grams"] and f["meters"]:            # solo la lunghezza: peso stimato (1,75 mm, 1,24 g/cm³)
+            f["grams"] = round(mm_to_grams(f["meters"] * 1000), 2)
+    return plan or None
+
+
+def mm_to_grams(mm: float, diameter: float = 1.75, density: float = 1.24) -> float:
+    """Peso di un filamento di cui si conosce solo la lunghezza (densità tipica del PLA se non indicata)."""
+    return mm * 3.14159 * (diameter / 2) ** 2 * density / 1000

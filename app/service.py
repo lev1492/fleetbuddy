@@ -79,6 +79,8 @@ def ams_usage(start_json: str | None, printer: dict) -> list[dict]:
         start = json.loads(start_json or "[]")
     except ValueError:
         return []
+    if not isinstance(start, list):
+        return []
     now = {(t["ams_id"], t["slot_id"]): t for t in printer.get("trays", [])}
     out = []
     for s in start:
@@ -379,12 +381,28 @@ class Service:
                 pend = self._take_pending(sn)
                 self._queue_started(pend)
                 info = self._plan_for_job(pend, p["task_name"])
+                start_info: object = tray_levels(p)
+                c = self.direct.get(sn)
+                if c:
+                    raw = self.raw.get(sn)
+                    if not info.get("plan"):
+                        try:
+                            plan = await asyncio.to_thread(c.job_plan, raw)
+                        except Exception:  # noqa: BLE001 - dato facoltativo
+                            plan = None
+                        if plan:
+                            info["plan"], info["planned_g"] = plan, round(sum(x["grams"] for x in plan), 1)
+                            log.info("%s: consumo previsto letto dalla stampante: %s g", sn, info["planned_g"])
+                    try:
+                        start_info = {"usage": await asyncio.to_thread(c.usage_snapshot, raw)}
+                    except Exception:  # noqa: BLE001
+                        start_info = {"usage": None}
                 jid = self.db.start_job(
                     printer_sn=sn, printer_name=p["name"], task_id=key,
                     task_name=info.get("task_name") or p["task_name"],
                     file_id=info.get("file_id"), plate=info.get("plate"),
                     planned_g=info.get("planned_g", 0), started_by=info.get("user_id"),
-                    filaments=json.dumps(info.get("plan") or []), start_trays=json.dumps(tray_levels(p)))
+                    filaments=json.dumps(info.get("plan") or []), start_trays=json.dumps(start_info))
                 self._open_jobs[sn] = self.db.one("SELECT * FROM jobs WHERE id=?", (jid,))
                 self.toast("{printer}: stampa avviata – {task}", sn=sn, printer=p["name"], task=p["task_name"])
             else:
@@ -437,7 +455,16 @@ class Service:
             status = "cancelled"
         self.stopped_by_user.discard(p["sn"])
         progress = 100 if status == "finished" else max(job.get("progress") or 0, p["progress"])
-        grams = self._record_filaments(job, progress if status != "finished" else 100, printer=p)
+        measured = None
+        c = self.direct.get(p["sn"])
+        if c:
+            try:
+                snap0 = json.loads(job.get("start_trays") or "{}")
+                measured = await asyncio.to_thread(c.usage_since, snap0.get("usage") if isinstance(snap0, dict) else None,
+                                                   self.raw.get(p["sn"]))
+            except Exception:  # noqa: BLE001 - dato facoltativo
+                measured = None
+        grams = self._record_filaments(job, progress if status != "finished" else 100, printer=p, measured=measured)
         snap = ""
         img = None
         if self.cfg.app.snapshot_on_finish and status in ("finished", "failed"):
@@ -459,8 +486,10 @@ class Service:
             body = name + "\n" + self.nt("Durata {h} h {m} min, {g} g", h=dur // 60, m=dur % 60, g=grams)
             await self._notify(status, f"{icon} {title}", body, p["name"], img)
 
-    def _record_filaments(self, job: dict, progress: float, printer: dict | None = None) -> float:
-        """Registra il consumo per filamento (in proporzione all'avanzamento se la stampa non è finita)."""
+    def _record_filaments(self, job: dict, progress: float, printer: dict | None = None,
+                          measured: list[dict] | None = None) -> float:
+        """Registra il consumo per filamento: quello misurato dalla stampante se c'è (anche per le stampe fallite),
+        altrimenti quello previsto, in proporzione all'avanzamento se la stampa non è finita."""
         factor = max(0.0, min(1.0, (progress or 0) / 100))
         try:
             plan = json.loads(job.get("filaments") or "[]")
@@ -468,6 +497,20 @@ class Service:
             plan = []
         self.db.x("DELETE FROM job_filaments WHERE job_id=?", (job["id"],))
         total = 0.0
+        if measured:
+            # tipo e colore dal piano, se la misura non li conosce (es. bilance INTAMSYS)
+            for i, f in enumerate(measured):
+                ref = plan[i] if i < len(plan) else (plan[0] if len(plan) == 1 else {})
+                g = round(float(f.get("grams") or 0), 1)
+                if g <= 0:
+                    continue
+                total += g
+                self.db.x("INSERT INTO job_filaments(job_id, type, brand, color, tray_info_idx, grams, meters, ams_id, slot_id, "
+                          "source) VALUES(?,?,?,?,?,?,?,?,?,'measured')",
+                          (job["id"], f.get("type") if f.get("type") not in (None, "", "?") else ref.get("type", "?"),
+                           f.get("brand") or ref.get("brand", ""), (f.get("color") or ref.get("color") or "").upper(), "",
+                           g, f.get("meters") or 0, None, ref.get("slot_id")))
+            return round(total, 1)
         for f in plan:
             g = round(f["grams"] * factor, 1)
             if g <= 0:

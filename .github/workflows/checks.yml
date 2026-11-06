@@ -17,6 +17,20 @@ jobs:
         run: |
           python -m compileall -q app tools
           python -c "import app.main"
+      - name: Connettori completi
+        run: |
+          python - <<'PY'
+          from app.connectors import KINDS
+          from app.connectors.base import DirectClient
+          need = [m for m in vars(DirectClient) if not m.startswith("__")]
+          for kind, cls in KINDS.items():
+              c = cls({"id": 0, "kind": kind, "host": "192.0.2.1"})
+              missing = [m for m in need if not hasattr(c, m)]
+              assert not missing, f"{kind}: mancano {missing}"
+              st = c.normalize(None, "prova")
+              assert st["sn"] and st["state"] == "OFFLINE", kind
+          print("connettori ok:", ", ".join(KINDS))
+          PY
       - name: Traduzioni complete
         run: python -m tools.i18n_check --strict
       - name: Sintassi JavaScript

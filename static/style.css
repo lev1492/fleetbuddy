@@ -357,6 +357,10 @@ tr.bhead td{font-weight:700;color:var(--muted);text-transform:uppercase;letter-s
 .bar.amf{display:block;height:5px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:4px}
 .bar.amf i{display:block;height:100%;background:var(--run)}
 
+.hubstate small{display:block;font-size:11px;color:var(--muted);font-weight:500;margin-top:1px}
+.hubstate.warn::before,.hubstate.ko::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:var(--pause)}
+.hubstate.ko::before{background:var(--err)}
+
 @media (max-width:760px){.prow{grid-template-columns:auto 1fr auto}.prow .pr-prog,.prow .pr-temp{display:none}}
 
 @media (max-width:760px){

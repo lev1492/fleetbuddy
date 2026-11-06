@@ -3,6 +3,27 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.13.0] – 2026-11-07
+
+### Novità
+- Consumo di filamento anche per le stampe non avviate dall'archivio, ricavato da ciò che ogni stampante espone:
+  - Klipper (Moonraker): consumo reale da `print_stats.filament_used`, convertito in grammi con i metadati del file
+    (tipo e colore compresi);
+  - INTAMSYS: consumo reale dal calo di peso misurato dalle bilance delle camere filamento;
+  - Duet e OctoPrint: dati del G-code in stampa, scaricandone solo inizio e fine (richieste Range); in alternativa
+    la lunghezza prevista indicata dalla stampante;
+  - PrusaLink: metadati del file in stampa.
+  Per le stampe fallite o annullate si registra il consumo reale dove misurato, altrimenti quello previsto in
+  proporzione all'avanzamento. Nello storico il consumo misurato è segnato con ✓.
+- Amministrazione → Altre stampanti: nuova colonna "Consumo" con la fonte del dato per ogni tipo.
+- Barra laterale: numero di stampanti connesse a FleetBuddy (online su totali), con lo stato del Fleet Hub a parte.
+- Le schede delle stampanti dirette mostrano l'indirizzo IP al posto dell'identificativo interno.
+
+### Correzioni
+- Klipper: strato attuale e totale calcolati anche quando lo slicer non usa `SET_PRINT_STATS_INFO` (es. Elegoo
+  OrangeStorm Giga e Neptune): totale dai metadati del file, strato attuale dall'altezza Z, come Mainsail e Fluidd.
+- Controllo automatico su GitHub: ogni connettore deve crearsi e avere tutti i metodi dell'interfaccia comune.
+
 ## [0.12.2] – 2026-11-07
 
 ### Novità

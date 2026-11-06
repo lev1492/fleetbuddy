@@ -12,7 +12,7 @@ from __future__ import annotations
 import urllib.parse
 
 from ..hub_client import HubError
-from .base import DirectClient, base_state, bed, nozzle
+from .base import DirectClient, base_state, bed, mm_to_grams, nozzle, plan_from_meta
 
 STATE = {"printing": "RUNNING", "paused": "PAUSE", "standby": "IDLE", "complete": "IDLE", "cancelled": "IDLE", "error": "IDLE"}
 RESULT = {"complete": "finished", "cancelled": "cancelled", "error": "failed"}
@@ -32,6 +32,7 @@ class MoonrakerClient(DirectClient):
         self._chamber = ""            # oggetto Klipper della camera (heater_generic / temperature_sensor)
         self._beds: list[str] = []    # piani riscaldati: heater_bed più eventuali heater_generic "…bed…" (piani a zone)
         self._thumb: tuple[str, bytes | None] = ("", None)
+        self._meta: tuple[str, dict] = ("", {})   # metadati del file in stampa (strati, filamento, peso)
 
     def _discover(self):
         objs = self.request("GET", "/printer/objects/list").json()["result"]["objects"]
@@ -61,7 +62,14 @@ class MoonrakerClient(DirectClient):
             want.append(self._chamber)
         q = "&".join(urllib.parse.quote(o) for o in want)
         status = self.request("GET", f"/printer/objects/query?{q}").json()["result"]["status"]
-        return {"info": info, "status": status}
+        fname = (status.get("print_stats") or {}).get("filename") or ""
+        if fname and fname != self._meta[0]:            # nuovo file: metadati letti una volta sola
+            try:
+                meta = self.request("GET", "/server/files/metadata", params={"filename": fname}).json()["result"]
+            except (HubError, KeyError, ValueError):
+                meta = {}
+            self._meta = (fname, meta)
+        return {"info": info, "status": status, "meta": self._meta[1] if fname == self._meta[0] else {}}
 
     def normalize(self, raw: dict | None, error: str = "") -> dict:
         if not raw:
@@ -85,6 +93,15 @@ class MoonrakerClient(DirectClient):
         ch = s.get(self._chamber) or {} if self._chamber else {}
         layer = ((ps.get("info") or {}).get("current_layer")) or 0
         total = ((ps.get("info") or {}).get("total_layer")) or 0
+        meta = raw.get("meta") or {}
+        if not total and meta:
+            # lo slicer non usa SET_PRINT_STATS_INFO (es. stampanti Elegoo): come Mainsail/Fluidd, strati dai
+            # metadati del file e strato attuale dall'altezza Z
+            lh, flh, oh = meta.get("layer_height"), meta.get("first_layer_height"), meta.get("object_height")
+            total = meta.get("layer_count") or (int(round((oh - flh) / lh)) + 1 if lh and flh and oh else 0)
+            z = ((s.get("gcode_move") or {}).get("gcode_position") or [0, 0, 0, 0])[2]
+            if total and lh and flh and state in ("RUNNING", "PAUSE") and z:
+                layer = max(1, min(total, int(round((z - flh) / lh)) + 1))
         fan = (s.get("fan") or {}).get("speed")
         return base_state(
             self, True, error, state=state, task_name=task if state in ("RUNNING", "PAUSE") or kstate in RESULT else "",
@@ -122,6 +139,34 @@ class MoonrakerClient(DirectClient):
             img = None
         self._thumb = (fname, img)
         return img
+
+    def _filament(self, meta: dict) -> tuple[str, str, float | None, float | None]:
+        """(tipo, colore, peso totale g, lunghezza totale mm) dai metadati di Moonraker."""
+        t = str(meta.get("filament_type") or meta.get("filament_name") or "?").split(";")[0].strip() or "?"
+        colors = meta.get("filament_colors") or meta.get("extruder_colors") or []
+        color = (colors[0] if isinstance(colors, list) and colors else str(colors).split(";")[0] if colors else "") or ""
+        return t, color.upper(), meta.get("filament_weight_total"), meta.get("filament_total")
+
+    def job_plan(self, raw: dict | None) -> list[dict] | None:
+        meta = (raw or {}).get("meta") or {}
+        if meta.get("filament_weight_total") or meta.get("filament_total"):
+            t, color, g, mm = self._filament(meta)
+            return [{"type": t, "brand": "", "color": color, "tray_info_idx": "", "grams": float(g or mm_to_grams(mm or 0)),
+                     "meters": round((mm or 0) / 1000, 2), "ams_id": None, "slot_id": 0}]
+        fname = (((raw or {}).get("status") or {}).get("print_stats") or {}).get("filename") or ""
+        return plan_from_meta(self.fetch_gcode_meta("/server/files/gcodes/" + urllib.parse.quote(fname), fname)) if fname else None
+
+    def usage_since(self, snapshot: dict | None, raw: dict | None) -> list[dict] | None:
+        """Consumo reale: print_stats.filament_used (mm estrusi davvero), convertito in grammi con il rapporto
+        peso/lunghezza del file (o con i valori tipici se il file non li indica)."""
+        ps = ((raw or {}).get("status") or {}).get("print_stats") or {}
+        used = ps.get("filament_used")
+        if not used:
+            return None
+        meta = (raw or {}).get("meta") or {}
+        t, color, g, mm = self._filament(meta)
+        grams = used * g / mm if g and mm else mm_to_grams(used)
+        return [{"type": t, "brand": "", "color": color, "grams": round(grams, 1), "meters": round(used / 1000, 2)}]
 
     def _gcode(self, script: str):
         self.request("POST", "/printer/gcode/script", params={"script": script}, timeout=30)

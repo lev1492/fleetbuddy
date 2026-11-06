@@ -89,6 +89,25 @@ class PrusaLinkClient(DirectClient):
         except HubError:
             return None
 
+    def job_plan(self, raw: dict | None) -> list[dict] | None:
+        f = ((raw or {}).get("job") or {}).get("file") or {}
+        meta = f.get("meta") or {}
+        if not meta and f.get("path"):
+            try:
+                path = f["path"] if f["path"].endswith(f.get("name", "")) else f"{f['path'].rstrip('/')}/{f.get('name', '')}"
+                meta = (self.request("GET", "/api/v1/files" + urllib.parse.quote(path)).json() or {}).get("meta") or {}
+            except (HubError, ValueError):
+                meta = {}
+        grams = meta.get("filament used [g]") or meta.get("filament_used_g")
+        if not grams:
+            return None
+        types = str(meta.get("filament_type") or "?").split(";")
+        colors = str(meta.get("filament_colour") or meta.get("extruder_colour") or "").split(";")
+        g = [float(x) for x in str(grams).replace(",", ";").split(";") if x.strip()] if isinstance(grams, str) else [float(grams)]
+        return [{"type": (types[i] if i < len(types) else types[0]).strip() or "?", "brand": "", "tray_info_idx": "",
+                 "color": (colors[i] if i < len(colors) else "").strip().upper(), "grams": v, "meters": 0, "ams_id": None,
+                 "slot_id": i} for i, v in enumerate(g) if v] or None
+
     def _job_id(self) -> int:
         jid = ((self.model().get("status") or {}).get("job") or {}).get("id")
         if not jid:

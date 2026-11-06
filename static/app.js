@@ -184,8 +184,10 @@ function connect() {
       const oldRefresh = S.settings && S.settings.camera_refresh_s;
       S = m.data;
       const hs = $("#hubstate");
-      hs.className = "hubstate " + (S.hub_ok ? "ok" : "ko");
-      hs.textContent = S.hub_ok ? t("Hub connesso · {n} stampanti", {n: S.printers.filter(p => !p.direct).length}) : (S.hub_error || t("Hub non raggiungibile"));
+      const online = S.printers.filter(p => p.online).length, hubUsed = S.printers.some(p => !p.direct) || S.hub_ok || S.hub_error;
+      hs.className = "hubstate " + (online === S.printers.length && (S.hub_ok || !hubUsed) ? "ok" : online ? "warn" : "ko");
+      hs.innerHTML = `${t("{a} di {b} stampanti connesse", {a: online, b: S.printers.length})}`
+        + (hubUsed ? `<small>${S.hub_ok ? t("Fleet Hub connesso") : esc(S.hub_error || t("Hub non raggiungibile"))}</small>` : "");
       $("#qbadge").textContent = S.queue_count || "";
       if (S.settings && S.settings.camera_refresh_s !== oldRefresh) startCamTimer();
       if (view === "printers") RENDER.printers();
@@ -238,7 +240,7 @@ function cardTop(p) {
     p.firmware ? `<span class="bdg ${p.fw_min ? "warn" : ""}" title="${p.fw_min ? esc(t("Firmware {v} inferiore al minimo supportato dal Hub ({min}).", {v: p.firmware, min: p.fw_min})) : ""}">fw ${esc(p.firmware)}</span>` : "",
   ].join("");
   return `<div class="pc-title"><div class="pc-name">${esc(p.name)}</div>
-      <div class="pc-model">${esc([p.brand, p.printer_model || p.model].filter(Boolean).join(" "))}${diam ? " · " + esc(diam) : ""} · ${esc(p.sn)}</div></div>
+      <div class="pc-model">${esc([p.brand, p.printer_model || p.model].filter(Boolean).join(" "))}${diam ? " · " + esc(diam) : ""} · ${esc(p.direct ? (p.ip || "").replace(/\/.*$/, "") : p.sn)}</div></div>
     <div class="bdgs">${badges}</div>`;
 }
 function statusInfo(p) {
@@ -1115,6 +1117,11 @@ const DIRECT_KINDS = {
   ultimaker: {label: "UltiMaker", fields: ["umauth", "user", "pass"], host: "192.168.1.110"},
   intamsys: {label: "INTAMSYS (INTAMTOUCH)", fields: ["pass"], host: "192.168.1.120"},
 };
+// da dove arriva il consumo di filamento per le stampe non avviate dall'archivio
+const CONSUMPTION_SRC = {measured: "misurato dalla stampante", gcode: "dal G-code in stampa", meta: "dai dati del file in stampa", archive: "solo con il file in archivio"};
+const CONSUMPTION_OF = {"OctoPrint": "gcode", "Klipper (Moonraker)": "measured", "PrusaLink": "meta", "Duet / RepRapFirmware 3": "gcode",
+  "Repetier-Server": "archive", "Elegoo (SDCP)": "archive", "Raise3D (Raise Touch)": "archive", "UltiMaker": "archive", "INTAMSYS (INTAMTOUCH)": "measured"};
+const CONSUMPTION = new Proxy({}, {get: (_, k) => CONSUMPTION_OF[k] ? t(CONSUMPTION_SRC[CONSUMPTION_OF[k]]) : undefined});
 // suggerimenti mostrati nel modulo (frasi del catalogo traduzioni)
 const DIRECT_HINTS = {
   octoprint: "Chiave API: OctoPrint → Impostazioni → Application Keys (o API).",
@@ -1141,12 +1148,12 @@ RENDER.direct = async function renderDirect() {
         <td style="white-space:nowrap"><button data-edit>${t("Modifica")}</button> <button class="danger" data-del>${t("Elimina")}</button></td></tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">${t("Nessuna stampante collegata direttamente. Con \"Aggiungi stampante\" puoi collegare per esempio una stampante con scheda Duet.")}</div>`}
     <h2>${t("Tipi supportati")}</h2>
-    <div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Stato")}</th><th>${t("Pausa / stop")}</th><th>${t("Invio file")}</th><th>${t("Temperature")}</th><th>${t("Velocità")}</th><th>${t("Camera")}</th></tr></thead><tbody>
+    <div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Stato")}</th><th>${t("Pausa / stop")}</th><th>${t("Invio file")}</th><th>${t("Temperature")}</th><th>${t("Velocità")}</th><th>${t("Camera")}</th><th>${t("Consumo")}</th></tr></thead><tbody>
       ${[["OctoPrint", 1, 1, ".gcode", 1, 1, t("automatica")], ["Klipper (Moonraker)", 1, 1, ".gcode", 1, 1, t("automatica")],
          ["PrusaLink", 1, 1, ".bgcode / .gcode", 0, 0, t("manuale")], ["Duet / RepRapFirmware 3", 1, 1, ".gcode", 1, 1, t("manuale")],
          ["Repetier-Server", 1, 1, ".gcode", 1, 1, t("manuale")], ["Elegoo (SDCP)", 1, 1, ".gcode", 0, 0, t("automatica")], ["Raise3D (Raise Touch)", 1, 1, t("solo file già sulla stampante"), 1, 1, t("automatica")],
          ["UltiMaker", 1, 1, ".gcode / .ufp", 1, 0, t("automatica")], ["INTAMSYS (INTAMTOUCH)", 1, 1, t("solo file già sulla stampante"), 0, 0, "—"]].map(([n, a, b, c, d, e2, f]) =>
-        `<tr><td><b>${n}</b></td><td>${a ? "✓" : "—"}</td><td>${b ? "✓" : "—"}</td><td>${c}</td><td>${d ? "✓" : "—"}</td><td>${e2 ? "✓" : "—"}</td><td>${f}</td></tr>`).join("")}
+        `<tr><td><b>${n}</b></td><td>${a ? "✓" : "—"}</td><td>${b ? "✓" : "—"}</td><td>${c}</td><td>${d ? "✓" : "—"}</td><td>${e2 ? "✓" : "—"}</td><td>${f}</td><td>${CONSUMPTION[n] || "—"}</td></tr>`).join("")}
     </tbody></table></div>
     <p class="sub" style="margin-top:8px">${t("PrusaLink e SDCP (Elegoo) non hanno comandi di rete per temperature e velocità: si cambiano dalla stampante. \"Automatica\": l'indirizzo della webcam viene letto dalla stampante; \"manuale\": va indicato nel modulo. Senza camera, la scheda mostra l'anteprima della stampa.")}</p>`;
   $("#dadd").onclick = () => directDialog();
@@ -1289,8 +1296,8 @@ RENDER.admin = async function renderAdmin() {
   });
 };
 const filCell = j => j.filaments && j.filaments.length
-  ? `<div class="fils">${j.filaments.map(f => { const est = f.source === "ams";
-      return `<span title="${esc([f.type, f.brand, f.color].filter(Boolean).join(" · ") + (est ? " – " + t("Stima dal calo del residuo delle bobine AMS") : ""))}"><i style="--c:${esc(f.color)}"></i>${esc(f.type)} ${est ? "≈" : ""}${f.grams} g</span>`; }).join("")}</div>`
+  ? `<div class="fils">${j.filaments.map(f => { const est = f.source === "ams", meas = f.source === "measured";
+      return `<span title="${esc([f.type, f.brand, f.color].filter(Boolean).join(" · ") + (est ? " – " + t("Stima dal calo del residuo delle bobine AMS") : meas ? " – " + t("Consumo misurato dalla stampante") : ""))}"><i style="--c:${esc(f.color)}"></i>${esc(f.type && f.type !== "?" ? f.type : (f.brand || "?"))} ${est ? "≈" : ""}${f.grams} g${meas ? " ✓" : ""}</span>`; }).join("")}</div>`
   : (j.filament_g ? `${j.filament_g} g` : `<span class="muted" title="${esc(t("Consumo non disponibile: la stampa non è partita da FleetBuddy e il file non è nell'archivio"))}">—</span>`);
 const fullName = u => [u.first_name, u.last_name].filter(Boolean).join(" ");
 // Password casuale di 14 caratteri (lettere, numeri e simboli), senza caratteri che si confondono (0/O, 1/l/I)

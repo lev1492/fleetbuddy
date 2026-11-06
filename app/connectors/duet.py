@@ -17,7 +17,7 @@ from pathlib import PurePosixPath
 import requests
 
 from ..hub_client import HubError
-from .base import DirectClient, base_state, bed, nozzle
+from .base import DirectClient, base_state, bed, mm_to_grams, nozzle, plan_from_meta
 
 log = logging.getLogger("fleetbuddy.duet")
 
@@ -175,6 +175,30 @@ class DuetClient(DirectClient):
             return qoi_to_png(img) if (t.get("format") or "").lower() == "qoi" or img[:4] == b"qoif" else img
         except Exception:  # noqa: BLE001 - miniatura danneggiata: semplicemente non la si mostra
             return None
+
+    def job_plan(self, raw: dict | None) -> list[dict] | None:
+        jf = ((raw or {}).get("job") or {}).get("file") or {}
+        fname = jf.get("fileName") or ""
+        if not fname:
+            return None
+        if self.mode == "sbc":
+            path = "/machine/file/" + urllib.parse.quote(fname, safe="")
+        else:
+            path = "/rr_download?name=" + urllib.parse.quote(fname)
+        plan = plan_from_meta(self.fetch_gcode_meta(path, fname, headers=self._headers()))
+        if plan:
+            return plan
+        # ripiego: filamento previsto in mm per estrusore (object model), con il diametro configurato
+        exts = ((raw or {}).get("move") or {}).get("extruders") or []
+        out = []
+        for i, mm in enumerate(jf.get("filament") or []):
+            if not mm:
+                continue
+            dia = (exts[i] or {}).get("filamentDiameter") if i < len(exts) and exts[i] else 1.75
+            out.append({"type": ((exts[i] or {}).get("filament") if i < len(exts) and exts[i] else "") or "?", "brand": "",
+                        "color": "", "tray_info_idx": "", "grams": round(mm_to_grams(mm, dia or 1.75), 2),
+                        "meters": round(mm / 1000, 2), "ams_id": None, "slot_id": i})
+        return out or None
 
     def pause(self):
         self.gcode("M25")

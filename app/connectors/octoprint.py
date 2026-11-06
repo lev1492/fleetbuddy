@@ -9,7 +9,9 @@ Foto:       snapshotUrl della webcam letto da GET /api/settings (se la chiave ha
 from __future__ import annotations
 
 from ..hub_client import HubError
-from .base import DirectClient, base_state, nozzle
+import urllib.parse
+
+from .base import DirectClient, base_state, mm_to_grams, nozzle, plan_from_meta
 
 
 class OctoPrintClient(DirectClient):
@@ -75,6 +77,23 @@ class OctoPrintClient(DirectClient):
         st = self.normalize(raw)
         return {"board": "OctoPrint", "firmware": st["firmware"], "mode": None,
                 "status": st["state"].lower(), "tools": len(st["nozzles"])}
+
+    def job_plan(self, raw: dict | None) -> list[dict] | None:
+        jj = (((raw or {}).get("job") or {}).get("job") or {})
+        f = jj.get("file") or {}
+        path, origin = f.get("path") or f.get("name"), f.get("origin") or "local"
+        if path and origin == "local":
+            plan = plan_from_meta(self.fetch_gcode_meta(f"/downloads/files/local/{urllib.parse.quote(path)}", path))
+            if plan:
+                return plan
+        out = []
+        for k, v in sorted((jj.get("filament") or {}).items()):
+            if not isinstance(v, dict) or not (v.get("length") or v.get("volume")):
+                continue
+            grams = v["volume"] * 1.24 if v.get("volume") else mm_to_grams(v["length"])
+            out.append({"type": "?", "brand": "", "color": "", "tray_info_idx": "", "grams": round(grams, 2),
+                        "meters": round((v.get("length") or 0) / 1000, 2), "ams_id": None, "slot_id": int(k[4:] or 0) if k.startswith("tool") else 0})
+        return out or None
 
     def pause(self):
         self.request("POST", "/api/job", json={"command": "pause", "action": "pause"})

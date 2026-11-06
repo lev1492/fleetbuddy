@@ -137,6 +137,33 @@ class IntamsysClient(DirectClient):
                 "status": (raw.get("running") or {}).get("running_status"),
                 "tools": len([k for k in (raw.get("temps") or {}) if k.startswith("nozzle")])}
 
+    def _fresh_weights(self) -> dict:
+        try:
+            w = self._api("GET", "/printer/filamentweight")
+        except HubError:
+            return {}
+        self._weights = (time.time(), w)
+        return {k: (v or {}).get("current_weight") for k, v in w.items() if isinstance(v, dict)}
+
+    def usage_snapshot(self, raw: dict | None) -> dict | None:
+        """Peso delle bobine a inizio stampa (le camere filamento hanno una bilancia)."""
+        return self._fresh_weights() or None
+
+    def usage_since(self, snapshot: dict | None, raw: dict | None) -> list[dict] | None:
+        if not snapshot:
+            return None
+        now = self._fresh_weights()
+        out = []
+        for k, before in sorted(snapshot.items()):
+            after = now.get(k)
+            try:
+                drop = float(before) - float(after)
+            except (TypeError, ValueError):
+                continue
+            if 0.5 <= drop < 5000:                     # sotto mezzo grammo: rumore della bilancia
+                out.append({"type": "?", "brand": f"#{k[8:]}", "color": "", "grams": round(drop, 1), "meters": 0})
+        return out or None
+
     def pause(self):
         self._api("POST", "/job/currentjob/pause")
 

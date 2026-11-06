@@ -98,6 +98,17 @@ def o_settings(req: Request):
     return {"webcam": {"webcamEnabled": True, "snapshotUrl": "/webcam/?action=snapshot"}} if key_ok(req) else JSONResponse({}, 403)
 
 
+@app.get("/downloads/files/local/{path:path}")
+def o_download(path: str, req: Request):
+    data = open("/tmp/prusa.gcode", "rb").read()
+    rng = req.headers.get("range", "")
+    if m := re.match(r"bytes=(\d+)-(\d+)", rng):
+        return Response(data[int(m.group(1)):int(m.group(2)) + 1], status_code=206)
+    if m := re.match(r"bytes=-(\d+)", rng):
+        return Response(data[-int(m.group(1)):], status_code=206)
+    return Response(data)
+
+
 @app.get("/webcam/")
 def o_cam():
     return Response(b"\xff\xd8\xff\xe0fakejpeg", media_type="image/jpeg")
@@ -122,7 +133,8 @@ def o_job(req: Request):
         return JSONResponse({}, 403)
     tick()
     pr = progress()
-    return {"job": {"file": {"name": P["file"], "size": 1000}}, "state": P["state"],
+    return {"job": {"file": {"name": P["file"], "path": P["file"], "origin": "local", "size": 1000},
+                    "filament": {"tool0": {"length": 1520.3, "volume": 3.65}} if P["file"] else {}}, "state": P["state"],
             "progress": {"completion": round(pr * 100, 2) if P["file"] else None, "printTime": 10,
                          "printTimeLeft": int(K["dur"] * (1 - pr)) if P["state"] != "idle" else 0}}
 
@@ -174,7 +186,9 @@ def m_objects():
 
 @app.get("/server/files/metadata")
 def m_meta(filename: str):
-    return {"result": {"filename": filename, "thumbnails": [{"width": 32, "height": 32, "relative_path": ".thumbs/x-32x32.png"}]}}
+    return {"result": {"filename": filename, "thumbnails": [{"width": 32, "height": 32, "relative_path": ".thumbs/x-32x32.png"}],
+                       "slicer": "ElegooSlicer", "object_height": 30.0, "layer_height": 0.2, "first_layer_height": 0.3,
+                       "filament_type": "PETG", "filament_colors": ["#FF8000"], "filament_total": 6700.0, "filament_weight_total": 20.0}}
 
 
 @app.get("/server/files/gcodes/{path:path}")
@@ -193,13 +207,15 @@ def m_query():
     st = {"idle": "complete" if P["result"] == "complete" else "cancelled" if P["result"] == "cancelled" else "standby"}.get(P["state"], P["state"])
     return {"result": {"status": {
         "print_stats": {"state": st, "filename": P["file"] or "", "print_duration": max(1, progress() * K["dur"]),
-                        "info": {"current_layer": int(progress() * 100), "total_layer": 100}},
+                        "filament_used": round(progress() * 6700, 1) if P["file"] else 0,
+                        "info": {} if K.get("no_layerinfo") else {"current_layer": int(progress() * 100), "total_layer": 100}},
         "virtual_sdcard": {"progress": progress()}, "display_status": {"progress": progress()},
         "extruder": {"temperature": round(P["tool"][0], 1), "target": P["tool"][1]},
         "heater_bed": {"temperature": round(P["bed"][0], 1), "target": P["bed"][1]},
         "heater_generic chamber": {"temperature": round(P["chamber"][0], 1), "target": P["chamber"][1]},
         **{f"heater_generic heater_bed{i}": {"temperature": round(P["bed"][0] - i, 1), "target": P.get(f"bed{i}", 0)} for i in (1, 2, 3)},
-        "gcode_move": {"speed_factor": P["speed"] / 100}, "fan": {"speed": 0.5 if P["state"] == "printing" else 0}}}}
+        "gcode_move": {"speed_factor": P["speed"] / 100, "gcode_position": [10, 10, round(0.3 + progress() * 29.7, 2), 0]},
+        "fan": {"speed": 0.5 if P["state"] == "printing" else 0}}}}
 
 
 @app.post("/printer/print/{what}")
@@ -672,7 +688,7 @@ def um_misp():
 
 
 # ------------------------------------------------------------------ INTAMSYS (INTAMTOUCH, porta 5588)
-IT = {"token": "", "files": ["FPRO610HT_Tensile-1B.gcode", "staffa_PEEK.gcode"]}
+IT = {"tokens": set(), "files": ["FPRO610HT_Tensile-1B.gcode", "staffa_PEEK.gcode"]}
 
 
 def it_err(code, msg):
@@ -687,12 +703,13 @@ def it_login_or_r3d(req: Request):
     expected = hashlib.md5(b"password=segreta").hexdigest() if K.get("md5") else "segreta"
     if req.query_params.get("signin") != expected:
         return it_err(50001, "error password")
-    IT["token"] = secrets.token_hex(16)
-    return {"data": {"token": IT["token"]}, "status": 1}
+    tok = secrets.token_hex(16)
+    IT["tokens"].add(tok)
+    return {"data": {"token": tok}, "status": 1}
 
 
 def intamsys_api(path: str, req: Request, body: dict):
-    if req.query_params.get("token") != IT["token"]:
+    if req.query_params.get("token") not in IT["tokens"]:
         return it_err(50000, "token is invalid")
     tick()
     temp = lambda h: {"current_temperature": round(h[0], 1), "target_temperature": str(h[1])}
@@ -705,7 +722,9 @@ def intamsys_api(path: str, req: Request, body: dict):
                          **{f"filament{i}": {"current_temperature": 49, "target_temperature": 50} for i in range(1, 5)},
                          "water_cooling": {"current_temperature": 18}}, "status": True}
     if path == "printer/filamentweight":
-        return {"data": {f"filament{i}": {"current_weight": w} for i, w in enumerate([820, 410, 0, 1150], 1)}, "status": True}
+        used = progress() * 35 if P["file"] else 0          # il filamento consumato resta consumato
+        base = [820 - used * 0.7, 410 - used * 0.3, 0, 1150]
+        return {"data": {f"filament{i}": {"current_weight": round(w, 1)} for i, w in enumerate(base, 1)}, "status": True}
     if path == "printer/currentalarm":
         return {"data": {"code": 0, "description": "Printer runs well", "action": "No action"}, "status": 1}
     if path == "job/currentjob":
@@ -736,6 +755,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--kind", required=True, choices=["octoprint", "moonraker", "prusalink", "repetier", "elegoo", "raise3d", "ultimaker", "intamsys"])
     ap.add_argument("--no-connect", action="store_true", help="UltiMaker senza UltiMaker Connect (solo /api/v1)")
+    ap.add_argument("--no-layerinfo", action="store_true", help="Moonraker senza SET_PRINT_STATS_INFO (come le Elegoo)")
     ap.add_argument("--md5", action="store_true", help="INTAMSYS: accesso con la formula del documento invece della password in chiaro")
     ap.add_argument("--newfw", action="store_true", help="UltiMaker recente (S6/S8/Factor 4): richiesta in JSON, letture protette")
     ap.add_argument("--cloud", action="store_true", help="UltiMaker in modalità di accesso cloud (Digital Factory)")
@@ -744,7 +764,7 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--duration", type=int, default=30)
     a = ap.parse_args()
-    K.update(kind=a.kind, dur=a.duration, port=a.port, md5=a.md5)
+    K.update(kind=a.kind, dur=a.duration, port=a.port, md5=a.md5, no_layerinfo=a.no_layerinfo)
     UM.update(connect=not a.no_connect, approve_after=a.approve_after, newfw=a.newfw, cloud=a.cloud)
     if a.kind == "elegoo":
         threading.Thread(target=udp_discovery, args=(a.udp_port,), daemon=True).start()

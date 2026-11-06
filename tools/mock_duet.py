@@ -11,7 +11,7 @@ import urllib.parse
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 app = FastAPI()
 CFG = {"password": "reprap", "sbc": False, "rrf37": False}
@@ -116,6 +116,26 @@ def rr_model(req: Request):
     if not authed(req):
         return JSONResponse({"err": 1}, 401)
     return {"key": "", "flags": "d99vno", "result": model()}
+
+
+def _gcode_file(req):
+    data = open("/tmp/prusa.gcode", "rb").read()
+    rng = req.headers.get("range", "")
+    if m := re.match(r"bytes=(\d+)-(\d+)", rng):
+        return Response(data[int(m.group(1)):int(m.group(2)) + 1], status_code=206)
+    if m := re.match(r"bytes=-(\d+)", rng):
+        return Response(data[-int(m.group(1)):], status_code=206)
+    return Response(data)
+
+
+@app.get("/rr_download")
+def rr_download(req: Request, name: str):
+    return _gcode_file(req) if authed(req) else JSONResponse({"err": 1}, 401)
+
+
+@app.get("/machine/file/{path:path}")
+def machine_file_get(req: Request, path: str):
+    return _gcode_file(req) if authed(req) else PlainTextResponse("Forbidden", 403)
 
 
 @app.get("/rr_thumbnail")
