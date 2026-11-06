@@ -528,7 +528,16 @@ def um_challenge():
 
 @app.post("/api/v1/auth/request")
 async def um_auth_request(req: Request):
-    form = await req.form()
+    if UM.get("cloud"):
+        return JSONResponse({"message": "Local authentication is disabled, use Digital Factory"}, 400)
+    if UM.get("newfw"):            # firmware recente simulato: vuole un corpo JSON
+        try:
+            body = await req.json()
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"message": "Expected a JSON body with 'application' and 'user'"}, 400)
+        form = body
+    else:
+        form = await req.form()
     aid, key = secrets.token_hex(16), secrets.token_hex(32)
     UM["auth"][aid] = {"key": key, "status": "unknown", "t": time.time(), "user": form.get("user")}
     return {"id": aid, "key": key}
@@ -544,8 +553,15 @@ def um_auth_check(aid: str):
     return {"message": a["status"]}
 
 
+@app.get("/cluster-api/v1/system/authentication_mode/")
+def um_auth_mode():
+    return {"mode": "cloud" if UM.get("cloud") else "open"}
+
+
 @app.get("/api/v1/system/{what}")
-def um_system(what: str):
+def um_system(what: str, req: Request):
+    if UM.get("newfw") and not um_digest_ok(req):     # sui modelli recenti simulati serve l'autorizzazione
+        return um_challenge()
     return {"name": "UM-S5-Officina", "firmware": "8.3.0", "variant": "Ultimaker S5"}.get(what, "")
 
 
@@ -608,7 +624,9 @@ def um_cam():
 
 
 @app.get("/cluster-api/v1/printers/")
-def um_cluster_printers():
+def um_cluster_printers(req: Request):
+    if UM.get("newfw") and not um_digest_ok(req):
+        return um_challenge()
     if not UM["connect"]:
         return JSONResponse({"message": "not found"}, 404)
     return [{"uuid": "p-uuid-1", "ip_address": "127.0.0.1", "friendly_name": "UM-S5-Officina", "machine_variant": "Ultimaker S5",
@@ -713,13 +731,15 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--kind", required=True, choices=["octoprint", "moonraker", "prusalink", "repetier", "elegoo", "raise3d", "ultimaker", "intamsys"])
     ap.add_argument("--no-connect", action="store_true", help="UltiMaker senza UltiMaker Connect (solo /api/v1)")
+    ap.add_argument("--newfw", action="store_true", help="UltiMaker recente (S6/S8/Factor 4): richiesta in JSON, letture protette")
+    ap.add_argument("--cloud", action="store_true", help="UltiMaker in modalità di accesso cloud (Digital Factory)")
     ap.add_argument("--approve-after", type=int, default=4, help="UltiMaker: secondi prima dell'approvazione sul display")
     ap.add_argument("--udp-port", type=int, default=3000)
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--duration", type=int, default=30)
     a = ap.parse_args()
     K.update(kind=a.kind, dur=a.duration, port=a.port)
-    UM.update(connect=not a.no_connect, approve_after=a.approve_after)
+    UM.update(connect=not a.no_connect, approve_after=a.approve_after, newfw=a.newfw, cloud=a.cloud)
     if a.kind == "elegoo":
         threading.Thread(target=udp_discovery, args=(a.udp_port,), daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=a.port, log_level="warning")

@@ -84,6 +84,29 @@ class UltimakerClient(DirectClient):
         self._cache[key] = (time.time(), val)
         return val
 
+    def probe(self) -> dict:
+        """Codici di risposta degli endpoint principali e modalità di accesso: per capire le differenze tra modelli."""
+        out = {}
+        for path in ("/api/v1/printer", "/api/v1/system/name", "/cluster-api/v1/printers/",
+                     "/cluster-api/v1/system/authentication_mode/"):
+            try:
+                r = self._s.get(self.base + path, timeout=5)
+                out[path] = r.status_code
+                if path.endswith("authentication_mode/") and r.status_code == 200:
+                    out["mode"] = (r.json() or {}).get("mode")
+            except Exception:  # noqa: BLE001
+                out[path] = "—"
+        return out
+
+    def _probe_text(self) -> str:
+        p = self.probe()
+        parts = [f"{k.rstrip('/').rsplit('/', 2)[-2] + '/' + k.rstrip('/').rsplit('/', 1)[-1]}: {v}" for k, v in p.items() if k != "mode"]
+        return ", ".join(parts) + (f", modalità di accesso: {p['mode']}" if p.get("mode") else "")
+
+    @staticmethod
+    def _denied(e: HubError) -> bool:
+        return (e.key or "").startswith("Accesso negato")
+
     def _auth_error(self, e: HubError):
         if not self._s.auth:
             raise HubError(key="La stampante UltiMaker richiede l'autorizzazione: usa \"Richiedi autorizzazione\" in Amministrazione") from e
@@ -92,9 +115,25 @@ class UltimakerClient(DirectClient):
     # ------------------------------------------------------------------ lettura
     def model(self) -> dict:
         if not self.system:
-            self.system = {k: self._get(f"/api/v1/system/{k}") for k in ("name", "firmware", "variant")}
-        raw = {"system": self.system, "printer": self._get("/api/v1/printer", allow_404=False),
-               "job": self._get("/api/v1/print_job")}
+            sysd = {}
+            for k in ("name", "firmware", "variant"):        # sui modelli recenti possono richiedere l'autorizzazione
+                try:
+                    sysd[k] = self._get(f"/api/v1/system/{k}")
+                except HubError:
+                    sysd[k] = None
+            self.system = sysd
+        try:
+            printer = self._get("/api/v1/printer", allow_404=False)
+            job = self._get("/api/v1/print_job")
+        except HubError as e:
+            if not self._denied(e):
+                raise
+            if not self._s.auth:
+                raise HubError(key="La stampante UltiMaker chiede l'autorizzazione anche per leggere lo stato: usa \"Richiedi autorizzazione\" ({d})",
+                               params={"d": self._probe_text()}) from e
+            raise HubError(key="La stampante UltiMaker ha rifiutato l'autorizzazione salvata: richiedine una nuova ({d})",
+                           params={"d": self._probe_text()}) from e
+        raw = {"system": self.system, "printer": printer, "job": job}
         # UltiMaker Connect: facoltativo (risponde sulla stampante host del gruppo); si riprova ogni 5 minuti se manca
         if self._connect_ok is not False or time.time() > self._connect_retry:
             printers = self._cached("cluster_printers", 10, lambda: self._get("/cluster-api/v1/printers/"))
@@ -174,8 +213,9 @@ class UltimakerClient(DirectClient):
 
     def info(self, raw: dict) -> dict:
         s = raw.get("system") or {}
+        mode = self.probe().get("mode")
         return {"board": str(s.get("variant") or "UltiMaker"), "firmware": str(s.get("firmware") or ""),
-                "mode": "Connect" if self._connect_ok else "API /api/v1",
+                "mode": ("Connect" if self._connect_ok else "API /api/v1") + (f" · accesso {mode}" if mode else ""),
                 "status": (raw.get("printer") or {}).get("status"),
                 "tools": len((((raw.get("printer") or {}).get("heads") or [{}])[0] or {}).get("extruders") or [])}
 
@@ -244,8 +284,40 @@ class UltimakerClient(DirectClient):
 
     # ------------------------------------------------------------------ autorizzazione
     def request_auth(self, user: str) -> dict:
-        r = self.request("POST", "/api/v1/auth/request", data={"application": "FleetBuddy", "user": user[:60]})
-        return r.json()
+        """POST /api/v1/auth/request. Il formato dei parametri cambia tra firmware: la S5 accetta un modulo,
+        i modelli recenti (S6, S8, Factor 4) possono volere multipart, JSON o parametri nell'indirizzo."""
+        import requests as rq
+        fields = {"application": "FleetBuddy", "user": user[:60] or "FleetBuddy"}
+        attempts = (("form", {"data": fields}), ("multipart", {"files": {k: (None, v) for k, v in fields.items()}}),
+                    ("json", {"json": fields}), ("query", {"params": fields}))
+        last, tried = None, []
+        for name, kw in attempts:
+            try:
+                r = self._s.post(self.base + "/api/v1/auth/request", timeout=8, **kw)
+            except rq.RequestException as e:
+                raise HubError(key="Stampante non raggiungibile: {e}", params={"e": e}) from e
+            tried.append(f"{name} {r.status_code}")
+            if r.status_code in (200, 201):
+                try:
+                    d = r.json()
+                except ValueError:
+                    d = {}
+                if d.get("id") and d.get("key"):
+                    return d
+            last = r
+        detail = ""
+        if last is not None:
+            try:
+                j = last.json()
+                detail = str(j.get("message") or j.get("error") or j)[:200] if isinstance(j, dict) else str(j)[:200]
+            except ValueError:
+                detail = last.text.strip()[:200]
+        mode = self.probe().get("mode")
+        if mode == "cloud":
+            raise HubError(key="La stampante è in modalità di accesso \"cloud\" (UltiMaker Digital Factory) e non accetta autorizzazioni locali. Messaggio della stampante: {m}",
+                           params={"m": detail or "—"})
+        raise HubError(key="La stampante ha rifiutato la richiesta di autorizzazione ({t}). Messaggio della stampante: {m}",
+                       params={"t": ", ".join(tried), "m": detail or "—"})
 
     def check_auth(self, auth_id: str) -> str:
         d = self._get(f"/api/v1/auth/check/{auth_id}") or {}

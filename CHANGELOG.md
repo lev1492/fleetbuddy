@@ -3,6 +3,17 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.12.1] – 2026-11-06
+
+### Correzioni
+- UltiMaker S6, S8 e Factor 4: la richiesta di autorizzazione prova tutti i formati accettati dai diversi firmware
+  (modulo, multipart, JSON, parametri); se la stampante rifiuta, il messaggio riporta la sua risposta e indica se è
+  in modalità di accesso "cloud" (UltiMaker Digital Factory), che non accetta autorizzazioni locali.
+- UltiMaker recenti: la prova di connessione non fallisce più se i dati di sistema o UltiMaker Connect richiedono
+  l'autorizzazione; lo stato si legge comunque e il resto compare dopo l'autorizzazione. Se è lo stato stesso a
+  essere protetto, il messaggio lo dice e riporta i codici di risposta della stampante.
+- La prova di connessione mostra la modalità di accesso della stampante ("open" o "cloud").
+
 ## [0.12.0] – 2026-11-06
 
 ### Novità
