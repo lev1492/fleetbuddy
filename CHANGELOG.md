@@ -3,6 +3,18 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.13.1] – 2026-11-07
+
+### Novità
+- Nella scheda della stampante, dopo il tempo rimanente e lo strato, compaiono i materiali con cui si sta stampando
+  (con il colore): dal file in archivio, dai dati letti dalla stampante (es. Klipper), dalla bobina in uso sulle Bambu
+  (`ams.tray_now`) o dai materiali caricati negli estrusori (UltiMaker).
+
+### Correzioni
+- Raise3D: "File sulla stampante" dava l'errore "max_num out of the range (1~24)": la cartella si legge ora a pagine
+  da 24 elementi, il massimo accettato dall'API.
+- Lo strato non viene mostrato quando la stampante non lo comunica (prima appariva "strato 0/0").
+
 ## [0.13.0] – 2026-11-07
 
 ### Novità

@@ -152,6 +152,37 @@ def queue_visible(u: User, row: dict) -> bool:
     return False
 
 
+def job_materials(p: dict) -> list[dict]:
+    """Materiali del lavoro in corso: dal piano di consumo (file dell'archivio o dati letti dalla stampante),
+    altrimenti da ciò che la stampante indica (bobina in uso, materiali caricati negli estrusori)."""
+    if not p.get("active"):
+        return []
+    out, seen = [], set()
+
+    def add(t, color, label=""):
+        t = (t or "").strip()
+        if not t or t == "?" or (t, (color or "").upper()) in seen:
+            return
+        seen.add((t, (color or "").upper()))
+        out.append({"type": t, "color": (color or "").upper(), "label": label})
+    job = S()._open_jobs.get(p["sn"])
+    try:
+        plan = json.loads((job or {}).get("filaments") or "[]")
+    except ValueError:
+        plan = []
+    for f in plan:
+        add(f.get("type"), f.get("color"))
+    if not out:
+        for t in p.get("trays") or []:
+            if t.get("in_use"):
+                add(t.get("type"), t.get("color"))
+    if not out:
+        for n in p.get("nozzles") or []:
+            if n.get("material_label"):
+                add(n["material_label"], n.get("material_color"))
+    return out
+
+
 def state_for(u: User) -> dict:
     st = S().snapshot_state()
     st["printers"] = [dict(p) for p in st["printers"] if u.sees_printer(p["sn"])]   # copie: i dati aggiunti sono per utente
@@ -179,6 +210,7 @@ def state_for(u: User) -> dict:
                 (r["group_id"] and p["sn"] in members.get(r["group_id"], set())) or
                 (not r["printer_sn"] and not r["group_id"]))]
         p["next_job"] = {"filename": mine[0]["filename"], "more": len(mine) - 1} if mine else None
+        p["job_materials"] = job_materials(p)
     return st
 
 

@@ -361,6 +361,9 @@ tr.bhead td{font-weight:700;color:var(--muted);text-transform:uppercase;letter-s
 .hubstate.warn::before,.hubstate.ko::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:var(--pause)}
 .hubstate.ko::before{background:var(--err)}
 
+.jm{white-space:nowrap}
+.jm i{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--c);border:1px solid var(--line);margin-right:3px;vertical-align:-1px}
+
 @media (max-width:760px){.prow{grid-template-columns:auto 1fr auto}.prow .pr-prog,.prow .pr-temp{display:none}}
 
 @media (max-width:760px){

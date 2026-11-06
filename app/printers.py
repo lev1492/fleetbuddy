@@ -267,6 +267,14 @@ def normalize(d: dict) -> dict:
     ex = extruders(rs)
     noz = nozzles(rs, model, ex)
     tr = trays(rs, model)
+    tn = str((rs.get("ams") or {}).get("tray_now", ""))
+    if tn.isdigit() and tn != "255" or tn == "254":
+        n = int(tn)
+        for t in tr:
+            if (n >= 254 and t.get("kind") == "external" and t["ams_id"] == n) or \
+               (n < 128 and t.get("kind") == "ams" and t["ams_id"] == n // 4 and t["slot_id"] == n % 4) or \
+               (128 <= n < 254 and t.get("kind") == "ams" and t["ams_id"] == n):
+                t["in_use"] = True
     for t in tr:
         if t["kind"] == "external":
             t["nozzle"] = external_nozzle(t["ams_id"], noz)

@@ -254,7 +254,8 @@ function statusInfo(p) {
   return `<div class="st-line"><b>${p.online ? stateName(p.state) : t("Offline")}</b>${chip}${p.status_text ? `<span class="muted small">${esc(p.status_text)}</span>` : ""}</div>
     <div class="task" title="${esc(p.task_name)}">${showJob ? esc(p.task_name || t("Stampa")) : `<span class="muted">${t("Nessun lavoro in corso")}</span>`}</div>
     <div class="progrow"><div class="strand" style="${fc ? "--fc:" + fc : ""}"><i style="width:${showJob ? p.progress : 0}%"></i></div><b>${showJob ? p.progress + "%" : "—"}</b></div>
-    <div class="muted small">${p.active ? t("mancano {d}", {d: fmtDur(p.remaining_min * 60)}) + " · " + t("strato {a}/{b}", {a: p.layer, b: p.total_layers})
+    <div class="muted small">${p.active ? t("mancano {d}", {d: fmtDur(p.remaining_min * 60)}) + (p.total_layers ? " · " + t("strato {a}/{b}", {a: p.layer, b: p.total_layers}) : "")
+        + ((p.job_materials || []).length ? " · " + p.job_materials.map(m => `<span class="jm">${m.color ? `<i style="--c:${esc(m.color)}"></i>` : ""}${esc(m.type)}</span>`).join(", ") : "")
       : p.online ? (done ? t("Conferma che il piatto è libero per la prossima stampa") : t("Pronta per una nuova stampa")) : t("Non raggiungibile dal Hub")}</div>
     ${p.pending ? `<div class="small ${p.pending.warned ? "warn" : "muted"}">${p.pending.warned ? t("La stampa {f} non è partita: controlla la stampante", {f: esc(p.pending.task)})
       : t("Comando inviato: in attesa che la stampante scarichi {f} e parta…", {f: esc(p.pending.task)})}</div>` : ""}

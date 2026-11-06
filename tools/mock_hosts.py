@@ -435,7 +435,8 @@ def udp_discovery(port: int):
 
 
 # ------------------------------------------------------------------ Raise3D (Raise Touch Remote Access API)
-R3D = {"token": "", "files": {"Local": ["pezzo.gcode", "staffa.gcode"], "Local/clienti": ["ordine42.gcode"]}}
+R3D = {"token": "", "files": {"Local": ["pezzo.gcode", "staffa.gcode"] + [f"lotto_{i:02d}.gcode" for i in range(1, 29)],
+                              "Local/clienti": ["ordine42.gcode"]}}
 
 
 def r3d_ok(data=None):
@@ -506,7 +507,16 @@ async def r3d_api(path: str, req: Request, token: str = ""):
         start(body["file_path"])
         return r3d_ok()
     if path == "fileops/list":
+        mx = int(req.query_params.get("max_num", 0))
+        if not 1 <= mx <= 24:                       # come la stampante reale
+            return {"error": {"code": 10002, "msg": "max_num error, range(1~24) the value of max_num is out of the range (1~24)"}, "status": 0}
+        pos = int(req.query_params.get("start_pos", 0))
         d = req.query_params.get("dir", "Local")
+        subs = sorted({k[len(d) + 1:].split("/")[0] for k in R3D["files"] if k.startswith(d + "/")})
+        items = [("d", x) for x in subs] + [("f", f) for f in R3D["files"].get(d, [])]
+        page = items[pos:pos + mx]
+        return r3d_ok({"dir_list": [x for k, x in page if k == "d"], "file_list": [{"data_path": "", "file_name": x} for k, x in page if k == "f"]})
+    if False:
         subs = sorted({k[len(d) + 1:].split("/")[0] for k in R3D["files"] if k.startswith(d + "/")})
         return r3d_ok({"dir_list": subs, "file_list": [{"data_path": "", "file_name": f} for f in R3D["files"].get(d, [])]})
     return JSONResponse({"status": 0}, 404)

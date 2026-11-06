@@ -167,9 +167,20 @@ class Raise3DClient(DirectClient):
         self._api("POST", "/printer/feedrate/set", {"feedrate": max(1, min(350, int(pct)))})
 
     def list_files(self, folder: str = "Local") -> dict:
-        d = self._api("GET", "/fileops/list", params={"dir": folder, "start_pos": 0, "max_num": 500})
-        return {"dir": folder, "dirs": d.get("dir_list") or [],
-                "files": [f.get("file_name") for f in d.get("file_list") or [] if f.get("file_name")]}
+        """Elenco della cartella. L'API restituisce al massimo 24 elementi per richiesta (max_num 1–24):
+        si leggono pagine successive finché la stampante ne restituisce meno di 24."""
+        dirs, files, pos = [], [], 0
+        for _ in range(100):                                     # fino a 2400 elementi
+            d = self._api("GET", "/fileops/list", params={"dir": folder, "start_pos": pos, "max_num": 24})
+            page_dirs = d.get("dir_list") or []
+            page_files = [f.get("file_name") for f in d.get("file_list") or [] if f.get("file_name")]
+            dirs += [x for x in page_dirs if x not in dirs]
+            files += page_files
+            got = len(page_dirs) + len(d.get("file_list") or [])
+            if got < 24:
+                break
+            pos += got
+        return {"dir": folder, "dirs": dirs, "files": files}
 
     def start_remote(self, path: str):
         self._api("POST", "/job/newjob/set", {"file_path": path})
