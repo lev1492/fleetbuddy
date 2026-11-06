@@ -31,6 +31,19 @@ JOB_STATE = {"printing": "RUNNING", "pre_print": "PREPARE", "pausing": "PAUSE", 
 PRINTER_STATE = {"idle": "IDLE", "printing": "RUNNING", "error": "FAILED", "maintenance": "PREPARE", "booting": "PREPARE",
                  "pre_print": "PREPARE", "unreachable": "OFFLINE"}
 RESULT = {"finished": "finished", "aborted": "cancelled", "failed": "failed"}
+def N_(s: str) -> str:
+    """Segna una frase da tradurre (la traduzione avviene nell'interfaccia)."""
+    return s
+
+
+# codici di errore di UltiMaker Connect (PrinterError) → frasi del catalogo traduzioni
+ERRORS = {"air_manager_fan_speed_unexpected": N_("Air Manager: velocità della ventola anomala"),
+          "air_manager_filter_missing": N_("Filtro dell'Air Manager mancante"),
+          "air_manager_filter_needs_replacement": N_("Filtro dell'Air Manager da sostituire"),
+          "air_manager_missing": N_("Air Manager non collegato"),
+          "air_manager_not_configured": N_("Air Manager non configurato"),
+          "build_chamber_temp_critical": N_("Temperatura della camera di stampa critica"),
+          "build_chamber_too_hot": N_("Camera di stampa troppo calda")}
 COLORS = {"black": "#1A1A1A", "white": "#F5F5F5", "red": "#D32F2F", "blue": "#1E5BD8", "green": "#2E9E44", "yellow": "#F2C230",
           "orange": "#F07C1E", "grey": "#8C8C8C", "gray": "#8C8C8C", "silver": "#BDBDBD", "natural": "#EDE6D3",
           "transparent": "#E8F1F2", "purple": "#7B3FA0", "pink": "#E85A9B", "brown": "#7A4A2A", "magenta": "#C2187A"}
@@ -170,7 +183,9 @@ class UltimakerClient(DirectClient):
             core = hot.get("id") or (conf.get(i) or {}).get("print_core_id") or ""
             m = re.search(r"(\d+\.\d+)", core)
             mat = (conf.get(i) or {}).get("material") or {}
-            noz.append(nozzle(i, f"{i + 1}", temp.get("current"), temp.get("target"), type_name=core or None,
+            two = len(((pr.get("heads") or [{}])[0] or {}).get("extruders") or []) > 1
+            noz.append(nozzle(i, "" if two else f"{i + 1}", temp.get("current"), temp.get("target"), type_name=core or None,
+                              side=("left" if i == 0 else "right") if two else "tool",
                               diameter=float(m.group(1)) if m else None,
                               material_label=" ".join(x for x in (mat.get("brand"), mat.get("material"), mat.get("color")) if x) or None,
                               material_color=_color(mat.get("color")) if mat else None))
@@ -181,23 +196,58 @@ class UltimakerClient(DirectClient):
         slots = ms_c.get("material_slots") or []
         trays, units = [], []
         if slots or ms_s.get("slots"):
+            direction = {x.get("slot_index"): x.get("direction") for x in ms_s.get("slots") or []}
             for s_ in (slots or ms_s.get("slots") or []):
                 mat = s_.get("material") or {}
                 rem = s_.get("material_remaining")
                 loaded = bool(mat) or bool(s_.get("material_guid"))
-                trays.append({"ams_id": 0, "slot_id": s_.get("slot_index", len(trays)), "label": str(s_.get("slot_index", len(trays)) + 1),
+                idx = s_.get("slot_index", len(trays))
+                ext = s_.get("extruder_index", direction.get(idx))   # 0 = estrusore sinistro, 1 = destro
+                trays.append({"ams_id": 0, "slot_id": idx, "label": str(idx + 1),
                               "kind": "ams", "loaded": loaded, "type": mat.get("material") or ("?" if loaded else ""),
                               "color": _color(mat.get("color")) if loaded else "", "sub_brand": mat.get("brand") or "",
                               "remain": round(rem * 100) if isinstance(rem, (int, float)) and rem >= 0 else None,
-                              "remain_g": None, "rfid": False, "idx": ""})
-            units.append({"ams_id": 0, "kind": "Material Station", "letter": "", "nozzle": None, "temp": None,
+                              "remain_g": None, "rfid": (s_.get("material_selection_source") or "") == "RFID", "idx": "",
+                              "nozzle": ext if isinstance(ext, int) and ext >= 0 else None, "core": s_.get("print_core_id") or "",
+                              "empty_alert": bool(s_.get("material_empty"))})
+            units.append({"ams_id": 0, "kind": "Material Station", "letter": "", "nozzle": None, "temp": None, "row": True,
                           "humidity": round(ms_s["current_humidity"]) if isinstance(ms_s.get("current_humidity"), (int, float)) else None})
         alerts = []
+        seen = set()
+        for e in cp.get("errors") or []:                           # errori noti di Connect: tradotti
+            code = e.get("code") if isinstance(e, dict) else None
+            if code and code not in seen:
+                seen.add(code)
+                alerts.append({"msg": ERRORS.get(code, N_("Errore della stampante: {c}")), "params": {"c": code}})
         for f in (raw.get("faults") or []) + (cp.get("faults") or []):
-            if isinstance(f, dict) and (f.get("message") or f.get("code")):
-                alerts.append({"text": f"{f.get('code', '')}: {f.get('message', '')}".strip(": ")})
+            if isinstance(f, dict) and (f.get("message") or f.get("code")) and f.get("code") not in seen:
+                seen.add(f.get("code"))
+                sev = (f.get("severity") or "").upper()
+                alerts.append({"text": f"{'⚠ ' if sev in ('ERROR', 'CRITICAL') else ''}{f.get('code', '')}: {f.get('message', '')}".strip(": ")})
         if cp.get("maintenance_required"):
             alerts.append({"msg": "La stampante richiede manutenzione"})
+        if cp.get("firmware_update_status") == "update_available":
+            alerts.append({"msg": "Aggiornamento del firmware disponibile: {v}", "params": {"v": cp.get("latest_available_firmware") or ""}})
+        if ms_s.get("door_opened"):
+            alerts.append({"msg": "Sportello della Material Station aperto"})
+        if (ms_s.get("dehumidifier_status") or "") == "error":
+            alerts.append({"msg": "Errore del deumidificatore della Material Station"})
+        for t_ in trays:
+            if t_.get("empty_alert"):
+                alerts.append({"msg": "Bobina {n} della Material Station esaurita", "params": {"n": t_["label"]}})
+        # Air Manager (S5/S7/Factor 4): stato e usura del filtro
+        am = cp.get("air_manager") or {}
+        air = None
+        if am.get("supported") and am.get("status") not in (None, "unavailable"):
+            age, mx = am.get("filter_age"), am.get("filter_max_age")
+            air = {"status": am.get("status"), "filter_status": am.get("filter_status"),
+                   "filter_pct": round(100 * age / mx) if isinstance(age, (int, float)) and mx else None,
+                   "filter_hours_left": max(0, mx - age) if isinstance(age, (int, float)) and mx else None}
+            fs = am.get("filter_status")
+            if fs in ("replacement_near", "replacement_required", "missing") and "air_manager_filter_needs_replacement" not in seen:
+                alerts.append({"msg": {"replacement_near": N_("Filtro dell'Air Manager quasi da sostituire"),
+                                       "replacement_required": N_("Filtro dell'Air Manager da sostituire"),
+                                       "missing": N_("Filtro dell'Air Manager mancante")}[fs]})
         if jstate == "wait_user_action":
             alerts.append({"msg": "La stampante richiede un intervento sul display"})
         thumb_job = (raw.get("cluster_job") or {}).get("uuid") or ""
@@ -208,7 +258,8 @@ class UltimakerClient(DirectClient):
             nozzles=noz, beds=[bed(0, "", bt.get("current"), bt.get("target"))],
             trays=trays, ams_units=units, firmware=str(sysd.get("firmware") or cp.get("firmware_version") or ""),
             model=str(sysd.get("variant") or cp.get("machine_variant") or "UltiMaker"),
-            alerts=alerts + ([{"msg": "Rimuovi la stampa e conferma sul display della stampante"}] if jstate == "wait_cleanup" else []), last_result=result if name else None,
+            alerts=alerts + ([{"msg": "Rimuovi la stampa e conferma sul display della stampante"}] if jstate == "wait_cleanup" else []),
+            air_manager=air, dual_nozzle=len(noz) > 1, last_result=result if name else None,
             caps={**self.caps, "connect": bool(self._connect_ok), "authorized": bool(self._s.auth), "thumb_job": thumb_job})
 
     def info(self, raw: dict) -> dict:

@@ -3,6 +3,22 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.12.2] – 2026-11-07
+
+### Novità
+- UltiMaker: la Material Station è mostrata su una sola fila, con l'estrusore di riferimento di ogni bobina (SX per
+  `extruder_index` 0, DX per 1) e il print core; gli ugelli sono indicati come SX/DX.
+- UltiMaker: riquadro Air Manager (stato, condizione del filtro, percentuale di utilizzo e ore rimanenti) e avvisi da
+  UltiMaker Connect: errori noti tradotti (filtro, ventola, Air Manager, temperatura della camera), manutenzione
+  richiesta, aggiornamento firmware disponibile, sportello e deumidificatore della Material Station, bobine esaurite.
+
+### Correzioni
+- INTAMSYS: accesso con la password in chiaro, come il client web della stampante (il documento indica una formula
+  md5 che i firmware in uso non accettano); le varianti cifrate restano come alternativa e quella giusta viene ricordata.
+- Pagina Fleet Hub: conta ed elenca solo le Bambu Lab collegate al Hub, spiegando che le altre stampanti sono gestite
+  direttamente da FleetBuddy; l'aggiornamento firmware dal Hub propone solo le Bambu. In Informazioni il totale è
+  diviso tra Fleet Hub e stampanti dirette.
+
 ## [0.12.1] – 2026-11-06
 
 ### Correzioni

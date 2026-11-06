@@ -33,15 +33,23 @@ class IntamsysClient(DirectClient):
     def __init__(self, row: dict):
         super().__init__(row)
         self.token = ""
+        self._signin_ok = ""
         self.system: dict = {}
         self._weights: tuple[float, dict] = (0.0, {})
 
     def _login(self):
-        sign = hashlib.md5(f"password={self.password}".encode()).hexdigest()
-        d = self.request("GET", "/v1/login", params={"signin": sign}).json()
-        if "error" in d or not (d.get("data") or {}).get("token"):
-            raise HubError(key="Password della stampante INTAMSYS errata")
-        self.token = d["data"]["token"]
+        """Il documento indica signin=md5("password=…"), ma i firmware in uso accettano la password in chiaro
+        (come il client web di INTAMSYS): si prova prima così, poi le varianti cifrate; si ricorda quella giusta."""
+        variants = [self.password, hashlib.md5(f"password={self.password}".encode()).hexdigest(),
+                    hashlib.md5(self.password.encode()).hexdigest()]
+        order = [self._signin_ok] + [v for v in variants if v != self._signin_ok] if self._signin_ok else variants
+        for signin in order:
+            d = self.request("GET", "/v1/login", params={"signin": signin}).json()
+            tok = (d.get("data") or {}).get("token") if isinstance(d, dict) and "error" not in d else None
+            if tok:
+                self.token, self._signin_ok = tok, signin
+                return
+        raise HubError(key="Password della stampante INTAMSYS errata")
 
     def _api(self, method: str, path: str, params: dict | None = None, retry=True) -> dict:
         if not self.token:

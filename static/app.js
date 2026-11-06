@@ -185,7 +185,7 @@ function connect() {
       S = m.data;
       const hs = $("#hubstate");
       hs.className = "hubstate " + (S.hub_ok ? "ok" : "ko");
-      hs.textContent = S.hub_ok ? t("Hub connesso · {n} stampanti", {n: S.printers.length}) : (S.hub_error || t("Hub non raggiungibile"));
+      hs.textContent = S.hub_ok ? t("Hub connesso · {n} stampanti", {n: S.printers.filter(p => !p.direct).length}) : (S.hub_error || t("Hub non raggiungibile"));
       $("#qbadge").textContent = S.queue_count || "";
       if (S.settings && S.settings.camera_refresh_s !== oldRefresh) startCamTimer();
       if (view === "printers") RENDER.printers();
@@ -258,12 +258,12 @@ function statusInfo(p) {
       : t("Comando inviato: in attesa che la stampante scarichi {f} e parta…", {f: esc(p.pending.task)})}</div>` : ""}
     <div class="muted small camage">${snapAge(p)}</div>${next}`;
 }
-function slotBtn(x, num) {
+function slotBtn(x, num, side = "") {
   const pct = x.remain != null && x.remain >= 0 ? x.remain : null;
   return `<button class="sp slot ${x.loaded ? "" : "empty"}" data-ams="${x.ams_id}" data-slot="${x.slot_id}"
     title="${esc(trayLabel(x.label))}${x.loaded ? " · " + esc([x.type, x.sub_brand].filter(Boolean).join(" ")) : ""}${x.rfid ? " (RFID)" : ""}${pct != null ? " · " + esc(t("residuo {p}%", {p: pct})) + (x.remain_g ? ` (~${x.remain_g} g)` : "") : ""}">
     <span class="num" style="--c:${x.loaded ? x.color || "#888" : "transparent"}">${num}</span>
-    <span class="ty">${x.loaded ? esc(x.type) : t("Vuoto")}</span>
+    <span class="ty">${x.loaded ? esc(x.type) : t("Vuoto")}</span>${side ? `<span class="side" title="${esc(t("Estrusore di riferimento"))}${x.core ? " · " + esc(x.core) : ""}">${side}</span>` : ""}
     <span class="bar"><i style="width:${pct ?? 0}%;${pct != null && pct < 15 ? "background:var(--pause)" : ""}"></i></span></button>`;
 }
 function filamentCards(p) {
@@ -272,9 +272,10 @@ function filamentCards(p) {
   const cards = p.ams_units.map(u => {
     const spools = p.trays.filter(x => x.kind === "ams" && x.ams_id === u.ams_id);
     const side = dual && u.nozzle != null ? sideOf(u.nozzle) : "";
-    return `<div class="fcard"><div class="fcard-h"><b>${esc(u.kind)} ${esc(u.letter)}</b>${side ? `<span class="side">${side}</span>` : ""}
+    // Material Station: tutte le bobine su una fila, con l'estrusore a cui ognuna è destinata
+    return `<div class="fcard${u.row ? " row1" : ""}"><div class="fcard-h"><b>${esc(u.kind)} ${esc(u.letter)}</b>${side ? `<span class="side">${side}</span>` : ""}
         <span class="fcard-m">${u.humidity != null ? `<span>💧 ${u.humidity}%</span>` : ""}${u.temp ? `<span>🌡 ${u.temp}°C</span>` : ""}</span></div>
-      <div class="slots">${spools.map((x, i) => slotBtn(x, i + 1)).join("")}</div></div>`;
+      <div class="slots" ${u.row ? `style="grid-template-columns:repeat(${spools.length},minmax(0,1fr))"` : ""}>${spools.map((x, i) => slotBtn(x, i + 1, dual && x.nozzle != null ? sideOf(x.nozzle) : "")).join("")}</div></div>`;
   });
   const ext = p.trays.filter(x => x.kind === "external").sort((a, b) => (b.nozzle ?? 0) - (a.nozzle ?? 0));   // sinistra (1) prima
   if (ext.length) cards.push(`<div class="fcard"><div class="fcard-h"><b>${t("Bobina esterna")}</b></div>
@@ -298,10 +299,17 @@ function cardBody(p) {
     else tiles.push(tile(t("Piatto|letto"), p.bed, p.bed_target, "bed", p.beds && p.beds[0] && p.beds[0].fault));
     if (p.chamber != null) tiles.push(tile(t("Camera"), p.chamber, p.chamber_target, "chamber"));
     // dati dell'ugello per utensile, quando la stampante li comunica (es. variabili FabbrixOS sulla Duet)
+    if (p.air_manager) {
+      const am = p.air_manager, AMS = {available: t("Attivo"), error: t("Errore"), installing_firmware: t("Aggiornamento firmware")};
+      const FS = {peak_performance: t("Filtro in ottimo stato"), replacement_near: t("Filtro quasi da sostituire"), replacement_required: t("Filtro da sostituire"), missing: t("Filtro mancante"), unknown: t("Filtro: stato sconosciuto")};
+      tiles.push(`<div class="tile wide"><span>Air Manager</span><div class="hot"><b>${esc(AMS[am.status] || am.status || "—")}</b>
+        <small>${[FS[am.filter_status] || "", am.filter_pct != null ? t("filtro usato al {p}%", {p: am.filter_pct}) : "", am.filter_hours_left != null ? t("{h} h rimanenti", {h: am.filter_hours_left}) : ""].filter(Boolean).join(" · ")}</small></div>
+        ${am.filter_pct != null ? `<span class="bar amf"><i style="width:${Math.min(100, am.filter_pct)}%;${am.filter_pct >= 85 ? "background:var(--pause)" : ""}"></i></span>` : ""}</div>`);
+    }
     (p.extra_temps || []).forEach(x => tiles.push(`<div class="tile"><span>${x.kind === "water" ? t("Raffreddamento ad acqua") : t("Camera filamento {n}", {n: x.n})}</span>
       <b>${deg(x.temp, x.target)}</b>${x.weight != null ? `<small>${Math.round(x.weight)} g</small>` : ""}</div>`));
     if (p.nozzles.some(n => n.diameter || n.type_name || n.filament_sensor || n.material_label))
-      tiles.push(`<div class="tile wide"><span>${t("Utensili")}</span>${p.nozzles.map(n => `<div class="hot"><b class="side">${esc(n.label)}</b>
+      tiles.push(`<div class="tile wide"><span>${t("Utensili")}</span>${p.nozzles.map(n => `<div class="hot"><b class="side">${esc(n.label || sideLetter(n.side) || "")}</b>
         ${n.diameter ? `<b>${n.diameter} mm</b>` : ""} <small>${[n.material_label ? `<span class="sw" style="--c:${esc(n.material_color || "#888")}"></span> ${esc(n.material_label)}` : "", n.type_name ? esc(n.type_name) : "", n.abrasive ? t("per abrasivi") : "",
           n.filament_sensor ? (n.filament_sensor === "ok" ? t("filamento presente") : `<span class="warn">${t("filamento assente")}</span>`) : "",
           n.hot_hours != null ? t("{h} h di riscaldamento", {h: n.hot_hours}) : "", n.present === false ? `<span class="warn">${t("utensile non montato")}</span>` : ""].filter(Boolean).join(" · ")}</small></div>`).join("")}</div>`);
@@ -1018,7 +1026,8 @@ RENDER.hub = async function renderHub() {
     const ntpOn = h.ntp?.ntp_switch === "open";
     $("#hubinfo").innerHTML = `<div class="box"><dl><dt>${t("Nome")}</dt><dd>${esc(h.name)}</dd><dt>${t("Seriale")}</dt><dd>${esc(h.hub_sn)}</dd>
       <dt>${t("Attivazione")}</dt><dd>${h.activate_state === "Activate" ? t("Attivo") : t("Non attivato")}</dd><dt>${t("Firmware")}</dt><dd>${esc(h.version)}</dd>
-      <dt>${t("Stampanti")}</dt><dd>${t("{n} di {max}", {n: S.printers.length, max: h.max_bind_num})}</dd></dl></div>
+      <dt>${t("Stampanti")}</dt><dd>${t("{n} di {max}", {n: S.printers.filter(p => !p.direct).length, max: h.max_bind_num})}
+        <br><small class="muted">${t("Solo le Bambu Lab collegate al Hub. Le altre {n} stampanti sono gestite direttamente da FleetBuddy (Amministrazione → Altre stampanti).", {n: S.printers.filter(p => p.direct).length})}</small></dd></dl></div>
       <div class="box"><dl><dt>${t("Memoria interna")}</dt><dd>${t("{u} GB usati, {a} GB liberi", {u: h.internal?.used ?? 0, a: h.internal?.available ?? 0})}</dd></dl>
       <div class="meter"><i style="width:${pct(h.internal?.used || 0, h.internal?.available || 0)}%"></i></div>
       <p class="sub" style="margin:10px 0 0">${t("Sotto i 20 GB liberi il Hub elimina da solo i file non usati da 30 giorni.")}</p></div>
@@ -1055,8 +1064,9 @@ RENDER.hub = async function renderHub() {
   $("#found").onclick = async e => { const b = e.target.closest("[data-bind]"); if (!b) return; b.disabled = true;
     await act(() => api("/api/hub/bind", {method: "POST", body: {dev_id: b.dataset.bind, dev_ip: b.dataset.ip}}), t("Stampante collegata al Hub")); };
 
-  $("#bound").innerHTML = S.printers.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Nome")}</th><th>${t("Modello")}</th><th>IP</th><th>${t("Firmware")}</th><th>${t("Aggiornamento")}</th><th></th></tr></thead><tbody>
-    ${S.printers.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.model)}</td><td>${esc(p.ip)}</td><td>${esc(p.firmware)}</td><td>${esc(p.upgrade_state || "—")}</td>
+  const hubPrinters = S.printers.filter(p => !p.direct);
+  $("#bound").innerHTML = hubPrinters.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Nome")}</th><th>${t("Modello")}</th><th>IP</th><th>${t("Firmware")}</th><th>${t("Aggiornamento")}</th><th></th></tr></thead><tbody>
+    ${hubPrinters.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.model)}</td><td>${esc(p.ip)}</td><td>${esc(p.firmware)}</td><td>${esc(p.upgrade_state || "—")}</td>
     <td><button class="danger" data-unbind="${p.sn}">${t("Scollega")}</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="sub">${t("Nessuna stampante collegata.")}</p>`;
   $("#bound").onclick = async e => { const b = e.target.closest("[data-unbind]"); if (!b || !confirm(t("Scollegare la stampante dal Hub?"))) return;
     const r = await act(() => api("/api/hub/unbind", {method: "POST", body: {dev_ids: [b.dataset.unbind]}}));
@@ -1075,7 +1085,7 @@ RENDER.hub = async function renderHub() {
     const up = e.target.closest("[data-up]"), del = e.target.closest("[data-delfw]");
     if (del && confirm(t("Eliminare il firmware dal Hub?"))) { await act(() => api("/api/hub/firmwares", {method: "DELETE", body: {firmwares: [del.dataset.delfw]}})); loadFw(); }
     if (up) {
-      const cands = S.printers.filter(p => !p.active);
+      const cands = S.printers.filter(p => !p.active && !p.direct);   // il Hub aggiorna solo le Bambu collegate
       openDialog(`<h3>${t("Aggiorna con {f}", {f: esc(up.dataset.up)})}</h3><p class="sub" style="margin:0">${t("Seleziona le stampanti inattive da aggiornare. Il Hub verifica la compatibilità del modello.")}</p>
         ${cands.map(p => `<label class="inline"><input type="checkbox" value="${p.sn}"> ${esc(p.name)} (${esc(p.model)}, ${esc(p.firmware)})</label>`).join("") || t("Nessuna stampante inattiva.")}
         <div class="dlgfoot">${btnCancel()}<button class="primary" id="doup">${t("Avvia aggiornamento")}</button></div>`);
@@ -1258,7 +1268,7 @@ RENDER.admin = async function renderAdmin() {
     <div class="box"><dl><dt>${t("Applicazione")}</dt><dd>${esc(APP.name)} v${esc(APP.version)}</dd>
       <dt>${t("Aggiornamenti")}</dt><dd id="updbox">${updateBox(UPDATE)}</dd>
       ${APP.repo ? `<dt>${t("Repository")}</dt><dd><a href="${esc(APP.repo)}" target="_blank" rel="noopener">${esc(APP.repo)}</a></dd>` : ""}
-      <dt>${t("Utenti")}</dt><dd>${users.length}</dd><dt>${t("Stampanti collegate")}</dt><dd>${S.printers.length}</dd></dl></div>`;
+      <dt>${t("Utenti")}</dt><dd>${users.length}</dd><dt>${t("Stampanti collegate")}</dt><dd>${S.printers.length} <small class="muted">(${t("Fleet Hub: {a} · dirette: {b}", {a: S.printers.filter(p => !p.direct).length, b: S.printers.filter(p => p.direct).length})})</small></dd></dl></div>`;
 
   $("#uadd").onclick = () => userDialog();
   $("#gadd").onclick = () => groupDialog();

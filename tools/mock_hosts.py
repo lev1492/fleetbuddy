@@ -630,14 +630,17 @@ def um_cluster_printers(req: Request):
     if not UM["connect"]:
         return JSONResponse({"message": "not found"}, 404)
     return [{"uuid": "p-uuid-1", "ip_address": "127.0.0.1", "friendly_name": "UM-S5-Officina", "machine_variant": "Ultimaker S5",
-             "status": "printing" if P["file"] else "idle", "firmware_version": "8.3.0", "maintenance_required": False,
+             "status": "printing" if P["file"] else "idle", "firmware_version": "8.3.0", "maintenance_required": True,
+             "firmware_update_status": "update_available", "latest_available_firmware": "8.4.0",
+             "air_manager": {"supported": True, "status": "available", "filter_status": "replacement_near", "filter_age": 870, "filter_max_age": 1000},
+             "errors": [{"code": "air_manager_filter_needs_replacement", "uuid": "e1"}],
              "configuration": [{"extruder_index": 0, "print_core_id": "AA 0.4", "material": {"brand": "UltiMaker", "material": "PLA", "color": "Red"}},
                                {"extruder_index": 1, "print_core_id": "BB 0.4", "material": {"brand": "UltiMaker", "material": "PVA", "color": "Natural"}}],
              "material_station": {"supported": True, "status": "available", "material_slots": [
-                 {"slot_index": i, "extruder_index": i % 2, "print_core_id": "AA 0.4", "compatible": True, "material_remaining": r,
-                  "material": {"brand": "UltiMaker", "material": m, "color": c} if m else {}}
-                 for i, (m, c, r) in enumerate([("PLA", "Red", 0.8), ("PVA", "Natural", 0.45), ("Tough PLA", "Black", 1.0), ("", "", -1),
-                                                ("PETG", "Blue", 0.1), ("", "", -1)])]},
+                 {"slot_index": i, "extruder_index": e, "print_core_id": "AA 0.4" if e == 0 else "BB 0.4", "compatible": True,
+                  "material_remaining": r, "material_empty": r == 0, "material": {"brand": "UltiMaker", "material": m, "color": c} if m else {}}
+                 for i, (m, c, r, e) in enumerate([("PLA", "Red", 0.8, 0), ("PVA", "Natural", 0.45, 1), ("Tough PLA", "Black", 1.0, 0),
+                                                   ("", "", -1, -1), ("PETG", "Blue", 0.0, 0), ("PVA", "Natural", 0.9, 1)])]},
              "faults": []}]
 
 
@@ -680,7 +683,9 @@ def it_err(code, msg):
 def it_login_or_r3d(req: Request):
     if K["kind"] == "raise3d":
         return r3d_login(req.query_params.get("sign", ""), req.query_params.get("timestamp", ""))
-    if req.query_params.get("signin") != hashlib.md5(b"password=segreta").hexdigest():
+    # come il firmware reale in uso: password in chiaro (con --md5 si simula la formula del documento)
+    expected = hashlib.md5(b"password=segreta").hexdigest() if K.get("md5") else "segreta"
+    if req.query_params.get("signin") != expected:
         return it_err(50001, "error password")
     IT["token"] = secrets.token_hex(16)
     return {"data": {"token": IT["token"]}, "status": 1}
@@ -731,6 +736,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--kind", required=True, choices=["octoprint", "moonraker", "prusalink", "repetier", "elegoo", "raise3d", "ultimaker", "intamsys"])
     ap.add_argument("--no-connect", action="store_true", help="UltiMaker senza UltiMaker Connect (solo /api/v1)")
+    ap.add_argument("--md5", action="store_true", help="INTAMSYS: accesso con la formula del documento invece della password in chiaro")
     ap.add_argument("--newfw", action="store_true", help="UltiMaker recente (S6/S8/Factor 4): richiesta in JSON, letture protette")
     ap.add_argument("--cloud", action="store_true", help="UltiMaker in modalità di accesso cloud (Digital Factory)")
     ap.add_argument("--approve-after", type=int, default=4, help="UltiMaker: secondi prima dell'approvazione sul display")
@@ -738,7 +744,7 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--duration", type=int, default=30)
     a = ap.parse_args()
-    K.update(kind=a.kind, dur=a.duration, port=a.port)
+    K.update(kind=a.kind, dur=a.duration, port=a.port, md5=a.md5)
     UM.update(connect=not a.no_connect, approve_after=a.approve_after, newfw=a.newfw, cloud=a.cloud)
     if a.kind == "elegoo":
         threading.Thread(target=udp_discovery, args=(a.udp_port,), daemon=True).start()
