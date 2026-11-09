@@ -591,9 +591,23 @@ def um_system(what: str, req: Request):
     return {"name": "UM-S5-Officina", "firmware": "8.3.0", "variant": "Ultimaker S5"}.get(what, "")
 
 
+F4_TPLA = "03f24266-0291-43c2-a6da-5211892a2699"
+
+
+def f4_pre():
+    """Factor 4: i primi secondi dopo l'avvio sono la preparazione (pre_print)."""
+    return P["state"] == "printing" and time.time() - P["t0"] < UM.get("pre", 0)
+
+
 @app.get("/api/v1/printer")
 def um_printer():
     tick()
+    if UM.get("f4"):                                  # come i dati tecnici reali della Factor 4
+        ext = lambda guid, t: {"active_material": {"GUID": guid, "guid": guid, "length_remaining": -1},
+                               "hotend": {"id": "AA 0.4", "temperature": {"current": round(t[0], 1), "target": t[1]}}}
+        return {"status": "printing" if P["state"] in ("printing", "paused") else "idle",
+                "bed": {"temperature": {"current": round(P["bed"][0], 1), "target": P["bed"][1]}, "type": "flex"},
+                "heads": [{"extruders": [ext(F4_TPLA, P["tool"]), ext("", [31, 0])]}]}
     return {"status": "printing" if P["state"] in ("printing", "paused") else "idle",
             "bed": {"temperature": {"current": round(P["bed"][0], 1), "target": P["bed"][1]}, "type": "glass"},
             "heads": [{"extruders": [{"hotend": {"id": "AA 0.4", "temperature": {"current": round(P["tool"][0], 1), "target": P["tool"][1]}}},
@@ -605,6 +619,14 @@ def um_job():
     tick()
     if not P["file"]:
         return JSONResponse({"message": "No printer job running"}, 404)
+    if UM.get("f4"):
+        pre = f4_pre()
+        st = "pre_print" if pre else {"printing": "printing", "paused": "paused"}.get(P["state"]) or "wait_cleanup"
+        return {"name": "Untitled", "state": st, "progress": 0 if pre else round(progress(), 3),
+                "time_elapsed": 0 if pre else int(progress() * K["dur"]), "time_total": 0 if pre else K["dur"],
+                "uuid": f"job-{P['jobid']}", "reprint_original_uuid": "orig-1", "material_0_usage": -1,
+                "used_materials_0_guid": [{"UUID": F4_TPLA, "name": "Ultimaker Tough PLA Black"}], "used_materials_1_guid": [],
+                "result": {"complete": "Finished", "cancelled": "Aborted"}.get(P["result"], "")}
     st = {"printing": "printing", "paused": "paused"}.get(P["state"]) or "wait_cleanup"
     return {"name": P["file"], "state": st, "progress": round(progress(), 3), "time_elapsed": int(progress() * K["dur"]),
             "time_total": K["dur"], "uuid": f"job-{P['jobid']}", "result": {"complete": "Finished", "cancelled": "Aborted"}.get(P["result"], "")}
@@ -645,6 +667,9 @@ async def um_hotend(n: int, req: Request):
 
 
 UM_MATERIALS = {
+    "03f24266-0291-43c2-a6da-5211892a2699": ("Ultimaker", "Tough PLA", "Black", "#2a292a", 1.24),
+    "1cbfaeb3-1906-4b26-b2e7-6f777a8c197a": ("Generic", "PETG", "Generic", "#ffffff", 1.27),
+    "bde35fe0-4c90-31e5-860b-d6e4a626a228": ("Forward AM", "Ultrafuse TPU 64D", "Generic", "#F969BF", 1.157),
     "9cfe5bf1-bdc5-4beb-871a-52c70777842d": ("UltiMaker", "PLA", "Red", "#c8102e", 1.24),
     "86a89ceb-4159-47f6-ab97-e9953803d70f": ("UltiMaker", "PVA", "Natural", "#f2f2f2", 1.23),
 }
@@ -662,6 +687,16 @@ def um_material(guid: str):
 
 @app.get("/api/v1/history/print_jobs/{uid}")
 def um_history(uid: str):
+    if UM.get("f4"):
+        if uid == "orig-1":                       # stampa originale della ristampa "Untitled"
+            return {"uuid": uid, "name": "TestF4FleetBuddy", "result": "Finished", "material_0_amount": 2564,
+                    "material_0_guid": F4_TPLA, "time_elapsed": 905, "time_total": 905}
+        if uid != f"job-{P['jobid']}" or not P["result"]:
+            return JSONResponse({"message": "Not found"}, 404)
+        done = P["result"] == "complete"
+        te = K["dur"] if done else int((P.get("paused_at") or 0) * K["dur"])
+        return {"uuid": uid, "name": "Untitled", "result": "Finished" if done else "Aborted", "material_0_amount": 2564,
+                "material_0_guid": F4_TPLA, "material_1_amount": 0, "material_1_guid": "", "time_elapsed": te, "time_total": K["dur"]}
     # lo storico compare qualche secondo dopo la fine della stampa (per provare il recupero ritardato)
     if uid != f"job-{P['jobid']}" or not P["result"] or time.time() - P.get("ended", 0) < UM.get("history_delay", 0):
         return JSONResponse({"message": "Not found"}, 404)
@@ -681,6 +716,21 @@ def um_cam():
 def um_cluster_printers(req: Request):
     if UM.get("newfw") and not um_digest_ok(req):
         return um_challenge()
+    if UM.get("f4"):
+        slot = lambda i, e, m, rem: {"slot_index": i, "extruder_index": e, "print_core_id": "AA 0.4" if m else None, "material": m,
+                                     "material_empty": False, "material_remaining": rem, "compatible": bool(m)}
+        return [{"uuid": "p-uuid-1", "ip_address": "127.0.0.1", "machine_variant": "Ultimaker Factor 4", "firmware_version": "11.3.0.0",
+                 "status": "printing" if P["file"] else "idle", "maintenance_required": False, "firmware_update_status": "up_to_date",
+                 "air_manager": {"supported": True, "status": "available", "filter_status": "replacement_near", "filter_age": 2725, "filter_max_age": 3000},
+                 "material_station": {"supported": True, "status": "available", "material_slots": [
+                     slot(0, -1, None, -1), slot(1, -1, None, -1),
+                     slot(2, 0, {"guid": "1cbfaeb3-1906-4b26-b2e7-6f777a8c197a", "brand": "Generic", "material": "PETG", "color": "Generic"}, -1),
+                     slot(3, 1, {"guid": "bde35fe0-4c90-31e5-860b-d6e4a626a228", "brand": "Forward AM", "material": "Ultrafuse TPU 64D", "color": "Generic"}, -1),
+                     slot(4, -1, None, -1),
+                     slot(5, 0, {"guid": F4_TPLA, "brand": "Ultimaker", "material": "Tough PLA", "color": "Black"}, 0.7474)]},
+                 "configuration": [{"extruder_index": 0, "print_core_id": "AA 0.4", "material": {"guid": F4_TPLA, "brand": "Ultimaker", "material": "Tough PLA", "color": "Black"}},
+                                   {"extruder_index": 1, "print_core_id": "AA 0.4", "material": {"guid": "00000000-0000-0000-0000-000000000000", "brand": "empty", "material": "empty", "color": "empty"}}],
+                 "errors": [], "faults": []}]
     if not UM["connect"]:
         return JSONResponse({"message": "not found"}, 404)
     return [{"uuid": "p-uuid-1", "ip_address": "127.0.0.1", "friendly_name": "UM-S5-Officina", "machine_variant": "Ultimaker S5",
@@ -700,6 +750,13 @@ def um_cluster_printers(req: Request):
 
 @app.get("/cluster-api/v1/print_jobs/printing")
 def um_cluster_jobs():
+    if UM.get("f4"):
+        if not (P["file"] and P["state"] in ("printing", "paused")):
+            return []
+        return [{"uuid": "c-1", "external_uuid": f"job-{P['jobid']}", "name": "Untitled", "printer_uuid": "p-uuid-1",
+                 "status": "pre_print" if f4_pre() else "printing", "time_elapsed": 0 if f4_pre() else int(progress() * K["dur"]),
+                 "time_total": K["dur"], "configuration": [{"extruder_index": 0, "print_core_id": "AA 0.4", "material_used": 2564,
+                 "material": {"guid": F4_TPLA, "brand": "Ultimaker", "material": "Tough PLA", "color": "Black"}}]}]
     if not UM["connect"]:
         return JSONResponse({}, 404)
     return [{"uuid": f"job-{P['jobid']}", "name": P["file"], "printer_uuid": "p-uuid-1", "status": "printing"}] if P["file"] and P["state"] in ("printing", "paused") else []
@@ -720,6 +777,12 @@ def um_faults():
 
 @app.get("/material-station-api/v1/material-station/")
 def um_misp():
+    if UM.get("f4"):
+        sl = lambda i, g, d, rem_mm: {"slot_index": i, "material_guid": g, "direction": d, "material_remaining_mm": rem_mm,
+                                      "material_selection_source": "RFID" if rem_mm > 0 else "DBUS", "status": "loaded" if g else "empty"}
+        return {"status": "operational", "current_humidity": 53.4, "dehumidifier_status": "operational_regenerating", "door_opened": 0,
+                "slots": [sl(0, "", -1, -1), sl(1, "", -1, -1), sl(2, "1cbfaeb3-1906-4b26-b2e7-6f777a8c197a", 0, -1),
+                          sl(3, "bde35fe0-4c90-31e5-860b-d6e4a626a228", 1, -1), sl(4, "", -1, -1), sl(5, F4_TPLA, 0, 70863.4)]}
     if not UM["connect"]:
         return JSONResponse({}, 404)
     return {"status": "available", "current_humidity": 23.4, "dehumidifier_status": "operational", "door_opened": False, "slots": []}
@@ -799,12 +862,13 @@ if __name__ == "__main__":
     ap.add_argument("--cloud", action="store_true", help="UltiMaker in modalità di accesso cloud (Digital Factory)")
     ap.add_argument("--approve-after", type=int, default=4, help="UltiMaker: secondi prima dell'approvazione sul display")
     ap.add_argument("--history-delay", type=int, default=0, help="UltiMaker: secondi prima che la stampa compaia nello storico")
+    ap.add_argument("--f4", action="store_true", help="UltiMaker Factor 4 con i dati reali (pre_print, ristampa, Material Station)")
     ap.add_argument("--udp-port", type=int, default=3000)
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--duration", type=int, default=30)
     a = ap.parse_args()
     K.update(kind=a.kind, dur=a.duration, port=a.port, md5=a.md5, no_layerinfo=a.no_layerinfo)
-    UM.update(connect=not a.no_connect, approve_after=a.approve_after, newfw=a.newfw, cloud=a.cloud, history_delay=a.history_delay)
+    UM.update(connect=not a.no_connect, approve_after=a.approve_after, newfw=a.newfw, cloud=a.cloud, history_delay=a.history_delay, f4=a.f4, pre=8 if a.f4 else 0)
     if a.kind == "elegoo":
         threading.Thread(target=udp_discovery, args=(a.udp_port,), daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=a.port, log_level="warning")

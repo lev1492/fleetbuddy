@@ -1039,8 +1039,20 @@ async def jobs(request: Request, limit: int = 200, printer: str | None = None):
     rows = [r for r in rows if u.sees_printer(r["printer_sn"]) and (not printer or r["printer_sn"] == printer)][:limit]
     fil = job_filaments([r["id"] for r in rows])
     for r in rows:
-        r.pop("filaments", None)
+        plan = r.pop("filaments", None)
         r["filaments"] = fil.get(r["id"], [])
+        if r["status"] == "running" and not r["filaments"]:
+            # stampa in corso: materiali previsti (dal file o dalla stampante), il peso si registra alla fine
+            mats = []
+            try:
+                mats = [{"type": f.get("type"), "color": f.get("color"), "brand": f.get("brand", "")}
+                        for f in json.loads(plan or "[]") if f.get("type") and f.get("type") != "?"]
+            except ValueError:
+                pass
+            if not mats and r["printer_sn"] in S().printers:
+                mats = [{"type": m["type"], "color": m["color"], "brand": ""} for m in job_materials(S().printers[r["printer_sn"]])]
+            seen = set()
+            r["materials"] = [m for m in mats if not ((m["type"], m["color"]) in seen or seen.add((m["type"], m["color"])))]
     return rows
 
 

@@ -25,7 +25,7 @@ from requests.auth import HTTPDigestAuth
 
 from ..hub_client import HubError
 from ..gcodemeta import parse_fdm_material as parse_material
-from .base import DirectClient, base_state, bed, mm_to_grams, nozzle
+from .base import DirectClient, base_state, bed, nozzle
 
 JOB_STATE = {"printing": "RUNNING", "pre_print": "PREPARE", "pausing": "PAUSE", "paused": "PAUSE", "resuming": "RUNNING",
              "post_print": "RUNNING", "wait_cleanup": "FINISH", "wait_user_action": "PAUSE", "sent_to_printer": "PREPARE"}
@@ -50,6 +50,24 @@ COLORS = {"black": "#1A1A1A", "white": "#F5F5F5", "red": "#D32F2F", "blue": "#1E
           "transparent": "#E8F1F2", "purple": "#7B3FA0", "pink": "#E85A9B", "brown": "#7A4A2A", "magenta": "#C2187A"}
 
 
+AREA_285 = 3.14159 * (2.85 / 2) ** 2      # sezione del filamento da 2,85 mm (mm²)
+
+
+def _empty(mat: dict | None) -> bool:
+    """Estrusore senza materiale: UltiMaker lo indica con brand/material "empty" o GUID tutto zeri."""
+    if not mat:
+        return True
+    guid = (mat.get("guid") or mat.get("GUID") or "").strip("0-")
+    return (mat.get("material") or "").lower() in ("", "empty") and not guid
+
+
+def volume_to(mm3: float, m: dict) -> tuple[float, float]:
+    """(grammi, metri) di un volume di filamento in mm³, con densità e diametro del profilo del materiale.
+    UltiMaker indica le quantità come volume: header ;MATERIAL.VOLUME_USED, material_used, material_N_amount."""
+    dens, dia = m.get("density") or 1.24, m.get("diameter") or 2.85
+    return mm3 / 1000 * dens, mm3 / (3.14159 * (dia / 2) ** 2) / 1000
+
+
 def _color(name: str | None) -> str:
     if not name:
         return "#888888"
@@ -71,6 +89,7 @@ class UltimakerClient(DirectClient):
     def __init__(self, row: dict):
         super().__init__(row)
         self._materials: dict[str, dict] = {}
+        self._names: dict[str, str] = {}
         if self.username and self.password:
             self._s.auth = HTTPDigestAuth(self.username, self.password)
         self.system: dict = {}
@@ -163,6 +182,25 @@ class UltimakerClient(DirectClient):
                 raw["cluster_job"] = next((j for j in jobs if uid and uid in (j.get("printer_uuid"), j.get("assigned_to"))), None)
             else:
                 self._connect_retry = time.time() + 300
+        # profili dei materiali in uso (densità, colore), letti una volta e conservati
+        guids = {(ex.get("active_material") or {}).get("guid") for ex in
+                 (((raw["printer"] or {}).get("heads") or [{}])[0] or {}).get("extruders") or []}
+        for c in ((raw.get("cluster_job") or {}).get("configuration") or []) + ((raw.get("cluster_printer") or {}).get("configuration") or []):
+            guids.add((c.get("material") or {}).get("guid"))
+        for s_ in (raw.get("cluster_printer") or {}).get("material_station", {}).get("material_slots") or []:
+            guids.add((s_.get("material") or {}).get("guid"))
+        for g in guids:
+            if g and g.strip("0-") and g not in self._materials:
+                self.material(g)
+        # ristampa dal display: il nome è "Untitled", quello originale è nello storico della stampa di partenza
+        job = raw.get("job") or {}
+        orig = job.get("reprint_original_uuid")
+        if orig and (job.get("name") or "Untitled") == "Untitled" and orig not in self._names:
+            try:
+                h = self._get(f"/api/v1/history/print_jobs/{orig}")
+                self._names[orig] = (h or {}).get("name") or "" if isinstance(h, dict) else ""
+            except HubError:
+                self._names[orig] = ""
         raw["faults"] = self._cached("faults", 30, lambda: self._get("/fault-api/v1/faults/"))
         raw["material_station"] = self._cached("misp", 30, lambda: self._get("/material-station-api/v1/material-station/"))
         return raw
@@ -177,9 +215,15 @@ class UltimakerClient(DirectClient):
             state = JOB_STATE[jstate]
         else:
             state = PRINTER_STATE.get((pr.get("status") or "idle").lower(), "IDLE")
-        name = job.get("name") or ""
+        cj = raw.get("cluster_job") or {}
+        name = job.get("name") or cj.get("name") or ""
+        if name == "Untitled" and self._names.get(job.get("reprint_original_uuid") or ""):
+            name = self._names[job["reprint_original_uuid"]]          # ristampa: nome della stampa originale
         result = RESULT.get((job.get("result") or "").lower())
         conf = {c.get("extruder_index"): c for c in cp.get("configuration") or []}
+        # durante la preparazione /print_job indica tempo 0: il tempo previsto è nel lavoro del cluster
+        total = job.get("time_total") or cj.get("time_total") or job.get("time_estimated") or 0
+        elapsed = job.get("time_elapsed") or cj.get("time_elapsed") or 0
         noz = []
         for i, ex in enumerate(((pr.get("heads") or [{}])[0] or {}).get("extruders") or []):
             hot = ex.get("hotend") or {}
@@ -187,12 +231,17 @@ class UltimakerClient(DirectClient):
             core = hot.get("id") or (conf.get(i) or {}).get("print_core_id") or ""
             m = re.search(r"(\d+\.\d+)", core)
             mat = (conf.get(i) or {}).get("material") or {}
+            if _empty(mat):                                          # senza Connect o estrusore vuoto
+                prof = self._materials.get((ex.get("active_material") or {}).get("guid") or "") or {}
+                mat = {"brand": prof.get("brand"), "material": prof.get("material"), "color": prof.get("color"),
+                       "color_code": prof.get("color_code")} if prof.get("material") else {}
             two = len(((pr.get("heads") or [{}])[0] or {}).get("extruders") or []) > 1
             noz.append(nozzle(i, "" if two else f"{i + 1}", temp.get("current"), temp.get("target"), type_name=core or None,
                               side=("left" if i == 0 else "right") if two else "tool",
                               diameter=float(m.group(1)) if m else None,
                               material_label=" ".join(x for x in (mat.get("brand"), mat.get("material"), mat.get("color")) if x) or None,
-                              material_color=_color(mat.get("color")) if mat else None))
+                              material_color=(mat.get("color_code") or self._materials.get(mat.get("guid") or "", {}).get("color_code")
+                                              or _color(mat.get("color"))) if mat else None))
         bt = ((pr.get("bed") or {}).get("temperature") or {})
         # Material Station (S5/S7 Pro Bundle): bobine come slot, con umidità e residuo
         ms_c = cp.get("material_station") or {}
@@ -201,17 +250,24 @@ class UltimakerClient(DirectClient):
         trays, units = [], []
         if slots or ms_s.get("slots"):
             direction = {x.get("slot_index"): x.get("direction") for x in ms_s.get("slots") or []}
+            rem_mm = {x.get("slot_index"): x.get("material_remaining_mm") for x in ms_s.get("slots") or []}
             for s_ in (slots or ms_s.get("slots") or []):
                 mat = s_.get("material") or {}
+                if _empty(mat):
+                    mat = {}
                 rem = s_.get("material_remaining")
-                loaded = bool(mat) or bool(s_.get("material_guid"))
+                loaded = bool(mat) or bool((s_.get("material_guid") or "").strip("0-"))
                 idx = s_.get("slot_index", len(trays))
+                prof = self._materials.get(mat.get("guid") or s_.get("material_guid") or "", {})
+                mm = rem_mm.get(idx)
+                rem_g = round(mm * 3.14159 * ((prof.get("diameter") or 2.85) / 2) ** 2 * (prof.get("density") or 1.24) / 1000) \
+                    if isinstance(mm, (int, float)) and mm > 0 else None
                 ext = s_.get("extruder_index", direction.get(idx))   # 0 = estrusore sinistro, 1 = destro
                 trays.append({"ams_id": 0, "slot_id": idx, "label": str(idx + 1),
                               "kind": "ams", "loaded": loaded, "type": mat.get("material") or ("?" if loaded else ""),
-                              "color": _color(mat.get("color")) if loaded else "", "sub_brand": mat.get("brand") or "",
+                              "color": (prof.get("color_code") or _color(mat.get("color"))) if loaded else "", "sub_brand": mat.get("brand") or "",
                               "remain": round(rem * 100) if isinstance(rem, (int, float)) and rem >= 0 else None,
-                              "remain_g": None, "rfid": (s_.get("material_selection_source") or "") == "RFID", "idx": "",
+                              "remain_g": rem_g, "rfid": (s_.get("material_selection_source") or "") == "RFID", "idx": "",
                               "nozzle": ext if isinstance(ext, int) and ext >= 0 else None, "core": s_.get("print_core_id") or "",
                               "empty_alert": bool(s_.get("material_empty"))})
             units.append({"ams_id": 0, "kind": "Material Station", "letter": "", "nozzle": None, "temp": None, "row": True,
@@ -257,8 +313,8 @@ class UltimakerClient(DirectClient):
         thumb_job = (raw.get("cluster_job") or {}).get("uuid") or ""
         return base_state(
             self, True, error, state=state, task_name=name if (state in ("RUNNING", "PAUSE", "PREPARE", "FINISH") or result) else "",
-            task_id=job.get("uuid") or name, progress=int(round((job.get("progress") or 0) * 100)),
-            remaining_min=int(max(0, (job.get("time_total") or 0) - (job.get("time_elapsed") or 0)) // 60),
+            task_id=job.get("uuid") or name, progress=int(round((job.get("progress") or (elapsed / total if total else 0)) * 100)),
+            remaining_min=int(max(0, total - elapsed) // 60),
             nozzles=noz, beds=[bed(0, "", bt.get("current"), bt.get("target"))],
             trays=trays, ams_units=units, firmware=str(sysd.get("firmware") or cp.get("firmware_version") or ""),
             model=str(sysd.get("variant") or cp.get("machine_variant") or "UltiMaker"),
@@ -353,6 +409,21 @@ class UltimakerClient(DirectClient):
         self._materials[guid] = info
         return info
 
+    def job_plan(self, raw: dict | None) -> list[dict] | None:
+        """Consumo previsto del lavoro in corso, anche se non avviato da FleetBuddy: materiale e volume (mm³) per
+        estrusore dal lavoro del cluster (configuration[].material_used)."""
+        out = []
+        for c in ((raw or {}).get("cluster_job") or {}).get("configuration") or []:
+            mat, vol = c.get("material") or {}, c.get("material_used") or 0
+            if _empty(mat) or not vol:
+                continue
+            prof = self.material(mat.get("guid") or "")
+            g, m = volume_to(vol, prof)
+            out.append({"type": prof.get("material") or mat.get("material") or "?", "brand": prof.get("brand") or mat.get("brand") or "",
+                        "color": prof.get("color_code") or _color(mat.get("color")), "tray_info_idx": mat.get("guid") or "",
+                        "grams": round(g, 2), "meters": round(m, 2), "ams_id": None, "slot_id": c.get("extruder_index")})
+        return out or None
+
     def usage_snapshot(self, raw: dict | None) -> dict | None:
         uid = ((raw or {}).get("job") or {}).get("uuid")
         return {"uuid": uid} if uid else None
@@ -369,15 +440,22 @@ class UltimakerClient(DirectClient):
             return None
         if not isinstance(h, dict):
             return None
+        # material_N_amount è il VOLUME previsto del lavoro (mm³, come ;MATERIAL.VOLUME_USED): per una stampa non
+        # terminata si conta la parte stampata, in proporzione al tempo trascorso
+        finished = (h.get("result") or "").lower() == "finished"
+        frac = 1.0
+        if not finished:
+            te, tt = h.get("time_elapsed") or 0, h.get("time_total") or h.get("time_estimated") or 0
+            frac = max(0.0, min(1.0, te / tt)) if tt else 0.0
         out = []
         for i in range(2):
             amount = h.get(f"material_{i}_amount") or 0
             if not isinstance(amount, (int, float)) or amount <= 0:
                 continue
             m = self.material(h.get(f"material_{i}_guid") or "")
-            grams = mm_to_grams(amount, m.get("diameter") or 2.85, m.get("density") or 1.24)
+            grams, meters = volume_to(amount * frac, m)
             out.append({"type": m.get("material") or "?", "brand": m.get("brand") or "", "color": m.get("color_code") or "",
-                        "grams": round(grams, 1), "meters": round(amount / 1000, 2)})
+                        "grams": round(grams, 2), "meters": round(meters, 2), "estimated": not finished})
         return out or None
 
     # ------------------------------------------------------------------ autorizzazione

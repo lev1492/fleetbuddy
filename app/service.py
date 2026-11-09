@@ -138,6 +138,7 @@ class Service:
         for sub in ("archive", "snapshots", "tmp"):
             (cfg.data_path / sub).mkdir(exist_ok=True)
         self._reanalyze_archive()
+        self._fix_ultimaker_volume()
         # produzione: tabelle e riallineamento dei pezzi (dopo che tutto il resto è pronto)
         production.init(self.db)
         try:
@@ -340,6 +341,26 @@ class Service:
             else:
                 self.db.x("UPDATE queue SET status='error', message=? WHERE id=? AND status='sent'", (why, q["id"]))
 
+    def _fix_ultimaker_volume(self):
+        """Correzione una tantum (0.16.2): lo storico UltiMaker indica il volume (mm³), che era stato trattato come
+        lunghezza di filamento da 2,85 mm (grammi × 6,38 rispetto al vero). Si ricalcola e, per le stampe non
+        terminate, si proporziona all'avanzamento registrato."""
+        if self.db.get_setting("fix_um_volume", False):
+            return
+        area = 3.14159 * (2.85 / 2) ** 2
+        jobs = self.db.q("""SELECT DISTINCT j.id, j.status, j.progress FROM jobs j JOIN job_filaments f ON f.job_id=j.id
+                            WHERE j.printer_sn LIKE 'ultimaker-%' AND f.source='measured'""")
+        for j in jobs:
+            frac = 1.0 if j["status"] == "finished" else max(0.0, min(1.0, (j["progress"] or 0) / 100))
+            src = "measured" if j["status"] == "finished" else "estimate"
+            self.db.x("UPDATE job_filaments SET grams=ROUND(grams / ? * ?, 2), meters=ROUND(meters * 1000 / ? / 1000 * ?, 2), "
+                      "source=? WHERE job_id=? AND source='measured'", (area, frac, area, frac, src, j["id"]))
+            tot = (self.db.one("SELECT SUM(grams) AS g FROM job_filaments WHERE job_id=?", (j["id"],)) or {}).get("g") or 0
+            self.db.x("UPDATE jobs SET filament_g=? WHERE id=?", (round(tot, 1), j["id"]))
+        if jobs:
+            log.info("UltiMaker: consumo ricalcolato per %d stampe già registrate (volume in mm³)", len(jobs))
+        self.db.set_setting("fix_um_volume", True)
+
     def _reanalyze_archive(self):
         """Quando la lettura dei G-code migliora (META_VERSION), i file già in archivio vengono rianalizzati:
         così materiali, pesi e tempi si aggiornano senza doverli ricaricare."""
@@ -372,7 +393,7 @@ class Service:
         if not late:
             return
         rows = self.db.q(f"""SELECT * FROM jobs WHERE status!='running' AND ended_at > ? AND printer_sn IN ({','.join('?' * len(late))})
-                             AND id NOT IN (SELECT job_id FROM job_filaments WHERE source='measured')""",
+                             AND id NOT IN (SELECT job_id FROM job_filaments WHERE source IN ('measured', 'estimate'))""",
                          (time.time() - 12 * 3600, *late))
         for job in rows:
             try:
@@ -502,7 +523,10 @@ class Service:
                 job.update(upd)
         elif job:
             if p["state"] == "FINISH":
-                await self._close_job(job, p, "finished")
+                # piatto da liberare anche dopo uno stop (es. UltiMaker: wait_cleanup con result "Aborted"):
+                # fa fede l'esito comunicato dalla stampante
+                lr = p.get("last_result")
+                await self._close_job(job, p, lr if lr in ("cancelled", "failed") else "finished")
             elif p["state"] == "FAILED":
                 await self._close_job(job, p, "failed")
             elif p["state"] == "IDLE":
@@ -592,11 +616,12 @@ class Service:
                 if g <= 0:
                     continue
                 total += g
+                # "measured": misurato dalla stampante; "estimate": dato della stampante ma proporzionato (stampa interrotta)
                 self.db.x("INSERT INTO job_filaments(job_id, type, brand, color, tray_info_idx, grams, meters, ams_id, slot_id, "
-                          "source) VALUES(?,?,?,?,?,?,?,?,?,'measured')",
+                          "source) VALUES(?,?,?,?,?,?,?,?,?,?)",
                           (job["id"], f.get("type") if f.get("type") not in (None, "", "?") else ref.get("type", "?"),
                            f.get("brand") or ref.get("brand", ""), (f.get("color") or ref.get("color") or "").upper(), "",
-                           g, f.get("meters") or 0, None, ref.get("slot_id")))
+                           g, f.get("meters") or 0, None, ref.get("slot_id"), "estimate" if f.get("estimated") else "measured"))
             return round(total, 1)
         for f in plan:
             g = round(f["grams"] * factor, 1)

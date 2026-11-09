@@ -1342,8 +1342,12 @@ RENDER.admin = async function renderAdmin() {
   });
 };
 const filCell = j => j.filaments && j.filaments.length
-  ? `<div class="fils">${j.filaments.map(f => { const est = f.source === "ams", meas = f.source === "measured";
-      return `<span title="${esc([f.type, f.brand, f.color].filter(Boolean).join(" · ") + (est ? " – " + t("Stima dal calo del residuo delle bobine AMS") : meas ? " – " + t("Consumo misurato dalla stampante") : ""))}"><i style="--c:${esc(f.color)}"></i>${esc(f.type && f.type !== "?" ? f.type : (f.brand || "?"))} ${est ? "≈" : ""}${f.grams} g${meas ? " ✓" : ""}</span>`; }).join("")}</div>`
+  ? `<div class="fils">${j.filaments.map(f => { const est = f.source === "ams" || f.source === "estimate", meas = f.source === "measured";
+      const why = f.source === "ams" ? t("Stima dal calo del residuo delle bobine AMS") : f.source === "estimate" ? t("Quantità prevista dalla stampante, in proporzione alla parte stampata")
+        : meas ? t("Consumo misurato dalla stampante") : "";
+      return `<span title="${esc([f.type, f.brand, f.color].filter(Boolean).join(" · ") + (why ? " – " + why : ""))}"><i style="--c:${esc(f.color)}"></i>${esc(f.type && f.type !== "?" ? f.type : (f.brand || "?"))} ${est ? "≈" : ""}${f.grams} g${meas ? " ✓" : ""}</span>`; }).join("")}</div>`
+  : j.status === "running" && (j.materials || []).length
+  ? `<div class="fils" title="${esc(t("Materiali in uso: il consumo si registra a fine stampa"))}">${j.materials.map(m => `<span><i style="--c:${esc(m.color || "#888")}"></i>${esc(m.type)}</span>`).join("")}</div>`
   : (j.filament_g ? `${j.filament_g} g` : `<span class="muted" title="${esc(t("Consumo non disponibile: la stampa non è partita da FleetBuddy e il file non è nell'archivio"))}">—</span>`);
 const fullName = u => [u.first_name, u.last_name].filter(Boolean).join(" ");
 // Password casuale di 14 caratteri (lettere, numeri e simboli), senza caratteri che si confondono (0/O, 1/l/I)

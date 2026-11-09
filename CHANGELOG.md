@@ -3,6 +3,24 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.16.2] – 2026-11-09
+
+### Correzioni
+- UltiMaker: il consumo dallo storico era circa 6 volte troppo alto (es. 20,3 g invece di 3,18 g). `material_N_amount`
+  è un volume in mm³ (lo stesso valore di ;MATERIAL.VOLUME_USED e di material_used), non una lunghezza: ora
+  grammi = volume × densità del materiale. Le stampe UltiMaker già registrate vengono ricalcolate una volta all'avvio.
+- UltiMaker: per una stampa interrotta lo storico indica la quantità prevista dell'intero lavoro: ora si conta la parte
+  stampata, in proporzione al tempo trascorso, ed è segnata come stima (≈) invece che come misura (✓).
+- Una stampa interrotta che lascia la stampante in attesa di liberare il piatto (UltiMaker: wait_cleanup con
+  result "Aborted") era registrata come riuscita al 100%: ora fa fede l'esito comunicato.
+- UltiMaker: durante la preparazione (pre_print) tempo totale e avanzamento sono presi dal lavoro del cluster;
+  le ristampe dal display ("Untitled") mostrano il nome della stampa originale; un estrusore vuoto non appare più come
+  "empty empty empty"; il consumo previsto delle stampe avviate fuori da FleetBuddy arriva da material_used del
+  lavoro; le bobine della Material Station mostrano il residuo in grammi.
+
+### Novità
+- Storico: le stampe in corso mostrano i materiali in uso (il peso si registra a fine stampa).
+
 ## [0.16.1] – 2026-11-09
 
 ### Correzioni
