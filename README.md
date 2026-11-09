@@ -234,8 +234,8 @@ insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova co
 - UltiMaker: la stessa connessione usa l'API della stampante (`/api/v1`, valida per tutti i modelli) e, se risponde,
   UltiMaker Connect (`cluster-api`, `material-station-api`, `fault-api`) per materiali, Material Station, avvisi e
   anteprima del lavoro. Per i comandi serve un'autorizzazione approvata sul display: il modulo la richiede da solo.
-- Consumo di filamento delle stampe avviate fuori da FleetBuddy: misurato da Klipper (filamento estruso) e INTAMSYS
-  (bilance), letto dal G-code in stampa per Duet e OctoPrint, dai dati del file per PrusaLink; per le altre serve il
+- Consumo di filamento delle stampe avviate fuori da FleetBuddy: misurato da Klipper (filamento estruso), INTAMSYS
+  (bilance) e UltiMaker (storico della stampante, con il materiale di ogni estrusore), letto dal G-code in stampa per Duet e OctoPrint, dai dati del file per PrusaLink; per le altre serve il
   file in archivio. Le stampe interrotte contano il consumo misurato o quello previsto in proporzione all'avanzamento.
 - Marca e modello: scelti quando si aggiunge la stampante, da un catalogo delle principali marche e modelli dei profili
   di OrcaSlicer (`static/catalog.json`, si può scrivere anche una marca o un modello diversi); per le Bambu sono automatici.

@@ -30,7 +30,7 @@ def tick():
     for h in (P["tool"], P["bed"], P["chamber"]):
         h[0] += (max(h[1], 20) - h[0]) * 0.5
     if P["state"] == "printing" and time.time() - P["t0"] >= K["dur"]:
-        P.update(state="idle", result="complete")
+        P.update(state="idle", result="complete", ended=time.time())
 
 
 def progress() -> float:
@@ -59,7 +59,7 @@ def resume():
 
 def cancel():
     if P["state"] in ("printing", "paused"):
-        P.update(paused_at=progress(), state="idle", result="cancelled")
+        P.update(paused_at=progress(), state="idle", result="cancelled", ended=time.time())
 
 
 def gcode(cmd: str):
@@ -644,6 +644,34 @@ async def um_hotend(n: int, req: Request):
     return Response(status_code=204)
 
 
+UM_MATERIALS = {
+    "9cfe5bf1-bdc5-4beb-871a-52c70777842d": ("UltiMaker", "PLA", "Red", "#c8102e", 1.24),
+    "86a89ceb-4159-47f6-ab97-e9953803d70f": ("UltiMaker", "PVA", "Natural", "#f2f2f2", 1.23),
+}
+
+
+@app.get("/api/v1/materials/{guid}")
+def um_material(guid: str):
+    if guid not in UM_MATERIALS:
+        return JSONResponse({"message": "not found"}, 404)
+    b, m, c, cc, d = UM_MATERIALS[guid]
+    return (f'<?xml version="1.0" encoding="UTF-8"?><fdmmaterial xmlns="http://www.ultimaker.com/material" version="1.3">'
+            f'<metadata><name><brand>{b}</brand><material>{m}</material><color>{c}</color></name><GUID>{guid}</GUID>'
+            f'<color_code>{cc}</color_code></metadata><properties><density>{d}</density><diameter>2.85</diameter></properties></fdmmaterial>')
+
+
+@app.get("/api/v1/history/print_jobs/{uid}")
+def um_history(uid: str):
+    # lo storico compare qualche secondo dopo la fine della stampa (per provare il recupero ritardato)
+    if uid != f"job-{P['jobid']}" or not P["result"] or time.time() - P.get("ended", 0) < UM.get("history_delay", 0):
+        return JSONResponse({"message": "Not found"}, 404)
+    frac = 1.0 if P["result"] == "complete" else (P.get("paused_at") or 0.3)
+    return {"uuid": uid, "name": P["file"], "result": "Finished" if P["result"] == "complete" else "Aborted",
+            "material_0_guid": "9cfe5bf1-bdc5-4beb-871a-52c70777842d", "material_0_amount": round(5000 * frac),
+            "material_1_guid": "86a89ceb-4159-47f6-ab97-e9953803d70f", "material_1_amount": round(1200 * frac),
+            "time_elapsed": int(K["dur"] * frac), "time_total": K["dur"]}
+
+
 @app.get("/api/v1/camera/0/snapshot")
 def um_cam():
     return Response(b"\xff\xd8\xff\xe0umcam\xff\xd9", media_type="image/jpeg")
@@ -770,12 +798,13 @@ if __name__ == "__main__":
     ap.add_argument("--newfw", action="store_true", help="UltiMaker recente (S6/S8/Factor 4): richiesta in JSON, letture protette")
     ap.add_argument("--cloud", action="store_true", help="UltiMaker in modalità di accesso cloud (Digital Factory)")
     ap.add_argument("--approve-after", type=int, default=4, help="UltiMaker: secondi prima dell'approvazione sul display")
+    ap.add_argument("--history-delay", type=int, default=0, help="UltiMaker: secondi prima che la stampa compaia nello storico")
     ap.add_argument("--udp-port", type=int, default=3000)
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--duration", type=int, default=30)
     a = ap.parse_args()
     K.update(kind=a.kind, dur=a.duration, port=a.port, md5=a.md5, no_layerinfo=a.no_layerinfo)
-    UM.update(connect=not a.no_connect, approve_after=a.approve_after, newfw=a.newfw, cloud=a.cloud)
+    UM.update(connect=not a.no_connect, approve_after=a.approve_after, newfw=a.newfw, cloud=a.cloud, history_delay=a.history_delay)
     if a.kind == "elegoo":
         threading.Thread(target=udp_discovery, args=(a.udp_port,), daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=a.port, log_level="warning")

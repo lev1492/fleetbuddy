@@ -132,6 +132,7 @@ class Service:
         self._snap_cache: dict[str, tuple[float, bytes]] = {}
         self._thumb_cache: dict[str, tuple[float, bytes | None]] = {}
         self._last_online: dict[str, tuple[float, dict]] = {}   # ultimo stato visto online (per la pianificazione)
+        self._late_at = 0.0
         self._workcal = None
         self._task: asyncio.Task | None = None
         for sub in ("archive", "snapshots", "tmp"):
@@ -223,6 +224,9 @@ class Service:
                 self.last_poll = time.time()
                 await self._dispatch_queue()
                 await production.dispatch(self)
+                if time.time() - self._late_at > 120:
+                    self._late_at = time.time()
+                    await self._late_usage()
             except Exception as e:  # noqa: BLE001 - il ciclo non deve mai morire
                 self.hub_ok, self.hub_error = False, f"Errore interno: {e}"
                 self.hub_error_obj = HubError(key="Errore interno: {e}", params={"e": e})
@@ -334,6 +338,30 @@ class Service:
                 self.db.x("UPDATE queue SET copies=copies+1, message=? WHERE id=? AND status='queued'", (why, q["id"]))
             else:
                 self.db.x("UPDATE queue SET status='error', message=? WHERE id=? AND status='sent'", (why, q["id"]))
+
+    async def _late_usage(self):
+        """Consumo misurato che la stampante registra dopo la fine della stampa (es. storico UltiMaker):
+        per le stampe chiuse nelle ultime 12 ore senza misura, si riprova e si sostituisce la stima."""
+        late = {sn: c for sn, c in self.direct.items() if getattr(c, "late_usage", False)}
+        if not late:
+            return
+        rows = self.db.q(f"""SELECT * FROM jobs WHERE status!='running' AND ended_at > ? AND printer_sn IN ({','.join('?' * len(late))})
+                             AND id NOT IN (SELECT job_id FROM job_filaments WHERE source='measured')""",
+                         (time.time() - 12 * 3600, *late))
+        for job in rows:
+            try:
+                snap = json.loads(job.get("start_trays") or "{}")
+                snap = snap.get("usage") if isinstance(snap, dict) else None
+                if not snap:
+                    continue
+                measured = await asyncio.to_thread(late[job["printer_sn"]].usage_since, snap, self.raw.get(job["printer_sn"]))
+            except Exception:  # noqa: BLE001
+                continue
+            if measured:
+                grams = self._record_filaments(job, 100, measured=measured)
+                self.db.x("UPDATE jobs SET filament_g=? WHERE id=?", (grams, job["id"]))
+                log.info("%s: consumo misurato recuperato dallo storico della stampante per %s: %s g",
+                         job["printer_sn"], job["task_name"], grams)
 
     def workcal(self):
         """Calendario lavorativo (Amministrazione → Generali), ricreato quando le impostazioni cambiano."""

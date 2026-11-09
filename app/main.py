@@ -553,37 +553,106 @@ async def groups_delete(request: Request, gid: int):
 
 
 # ====================================================================== progetti
+def _project_tree() -> dict[int, dict]:
+    rows = S().db.q("""SELECT p.*, (SELECT COUNT(*) FROM files f WHERE f.project_id=p.id) AS files FROM projects p""")
+    return {r["id"]: r for r in rows}
+
+
+def _project_path(tree: dict, pid: int | None) -> list[dict]:
+    """Percorso dalla radice alla cartella (protetto dai cicli)."""
+    out, seen = [], set()
+    while pid is not None and pid in tree and pid not in seen:
+        seen.add(pid)
+        out.insert(0, tree[pid])
+        pid = tree[pid].get("parent_id")
+    return out
+
+
+def _descendants(tree: dict, pid: int) -> set[int]:
+    out, todo = set(), [pid]
+    while todo:
+        cur = todo.pop()
+        for r in tree.values():
+            if r.get("parent_id") == cur and r["id"] not in out:
+                out.add(r["id"])
+                todo.append(r["id"])
+    return out
+
+
 @app.get("/api/projects")
 async def projects_list(request: Request):
     u = U(request)
-    rows = S().db.q("""SELECT p.*, (SELECT COUNT(*) FROM files f WHERE f.project_id=p.id) AS files
-                       FROM projects p ORDER BY p.name""")
-    rows = [r for r in rows if u.sees_project(r["id"])]
+    tree = _project_tree()
+    rows = []
+    for r in sorted(tree.values(), key=lambda r: [x["name"].lower() for x in _project_path(tree, r["id"])]):
+        if not u.sees_project(r["id"]):
+            continue
+        path = _project_path(tree, r["id"])
+        sub = _descendants(tree, r["id"])
+        rows.append({**r, "path": [x["name"] for x in path], "root_id": path[0]["id"] if path else r["id"],
+                     "depth": len(path) - 1, "files_total": r["files"] + sum(tree[x]["files"] for x in sub),
+                     "children": sum(1 for x in tree.values() if x.get("parent_id") == r["id"])})
     if u.is_admin:
         n = S().db.one("SELECT COUNT(*) n FROM files WHERE project_id IS NULL")["n"]
-        rows.append({"id": None, "name": "Senza progetto", "description": "",
-                     "color": "#8A949C", "files": n})
+        rows.append({"id": None, "name": "Senza progetto", "description": "", "color": "#8A949C", "files": n,
+                     "files_total": n, "parent_id": None, "path": [], "root_id": None, "depth": 0, "children": 0})
     return rows
+
+
+def _can_manage_folder(u: User, parent_id: int | None):
+    """Progetti principali: solo amministratori. Sottocartelle: anche operatori con accesso al progetto."""
+    if parent_id is None:
+        need_admin(u)
+    else:
+        need_operator(u)
+        if not u.sees_project(parent_id):
+            raise HTTPException(403, _("Non hai accesso a questo progetto"))
+
+
+def _check_name(name: str, parent_id: int | None, exclude: int | None = None):
+    if not name:
+        raise HTTPException(400, _("Dai un nome alla cartella"))
+    row = S().db.one("SELECT id FROM projects WHERE name=? AND parent_id IS ? AND id IS NOT ?", (name, parent_id, exclude))
+    if row:
+        raise HTTPException(409, _("Esiste già una cartella con questo nome qui"))
 
 
 @app.post("/api/projects")
 async def projects_add(request: Request, body: dict):
     u = U(request)
-    need_admin(u)
+    parent = int(body["parent_id"]) if body.get("parent_id") not in (None, "", "none") else None
+    _can_manage_folder(u, parent)
+    if parent is not None and not S().db.one("SELECT 1 FROM projects WHERE id=?", (parent,)):
+        raise HTTPException(404, _("Cartella non trovata"))
     name = str(body.get("name", "")).strip()[:60]
-    if not name:
-        raise HTTPException(400, _("Dai un nome al progetto"))
-    if S().db.one("SELECT 1 FROM projects WHERE name=?", (name,)):
-        raise HTTPException(409, _("Esiste già un progetto con questo nome"))
-    pid = S().db.x("INSERT INTO projects(name, description, color, created_at, created_by) VALUES(?,?,?,?,?)",
-                   (name, str(body.get("description", ""))[:500], body.get("color") or "#2B63C6", time.time(), u.id))
+    _check_name(name, parent)
+    color = body.get("color")
+    if not color and parent is not None:                 # le sottocartelle prendono il colore del progetto
+        color = (S().db.one("SELECT color FROM projects WHERE id=?", (parent,)) or {}).get("color")
+    pid = S().db.x("INSERT INTO projects(name, description, color, created_at, created_by, parent_id) VALUES(?,?,?,?,?,?)",
+                   (name, str(body.get("description", ""))[:500], color or "#2B63C6", time.time(), u.id, parent))
     return {"id": pid}
 
 
 @app.patch("/api/projects/{pid}")
 async def projects_edit(request: Request, pid: int, body: dict):
-    need_admin(U(request))
-    for col, limit in (("name", 60), ("description", 500), ("color", 9)):
+    u = U(request)
+    row = S().db.one("SELECT * FROM projects WHERE id=?", (pid,))
+    if not row:
+        raise HTTPException(404, _("Cartella non trovata"))
+    _can_manage_folder(u, row["parent_id"])
+    parent = row["parent_id"]
+    if "parent_id" in body:                              # spostamento della cartella
+        parent = int(body["parent_id"]) if body["parent_id"] not in (None, "", "none") else None
+        if parent is not None and (parent == pid or parent in _descendants(_project_tree(), pid)):
+            raise HTTPException(400, _("Una cartella non può essere spostata dentro sé stessa"))
+        _can_manage_folder(u, parent)
+        S().db.x("UPDATE projects SET parent_id=? WHERE id=?", (parent, pid))
+    if "name" in body:
+        name = str(body["name"]).strip()[:60]
+        _check_name(name, parent, exclude=pid)
+        S().db.x("UPDATE projects SET name=? WHERE id=?", (name, pid))
+    for col, limit in (("description", 500), ("color", 9)):
         if col in body:
             S().db.x(f"UPDATE projects SET {col}=? WHERE id=?", (str(body[col]).strip()[:limit], pid))
     return {"ok": True}
@@ -591,9 +660,16 @@ async def projects_edit(request: Request, pid: int, body: dict):
 
 @app.delete("/api/projects/{pid}")
 async def projects_delete(request: Request, pid: int):
-    need_admin(U(request))
+    """Elimina la cartella: file e sottocartelle passano alla cartella superiore (per un progetto principale,
+    i file diventano "senza progetto" e le sottocartelle diventano progetti principali)."""
+    u = U(request)
     db = S().db
-    db.x("UPDATE files SET project_id=NULL WHERE project_id=?", (pid,))   # i file restano, senza progetto
+    row = db.one("SELECT * FROM projects WHERE id=?", (pid,))
+    if not row:
+        raise HTTPException(404, _("Cartella non trovata"))
+    _can_manage_folder(u, row["parent_id"])
+    db.x("UPDATE files SET project_id=? WHERE project_id=?", (row["parent_id"], pid))
+    db.x("UPDATE projects SET parent_id=? WHERE parent_id=?", (row["parent_id"], pid))
     db.x("DELETE FROM projects WHERE id=?", (pid,))
     db.x("DELETE FROM access WHERE kind='project' AND ref=?", (str(pid),))
     return {"ok": True}

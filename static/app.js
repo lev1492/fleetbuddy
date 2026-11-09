@@ -71,6 +71,7 @@ const dots = fils => `<span class="fdots">${(fils || []).map(f => `<i style="--c
 const printerName = sn => (S.printers.find(p => p.sn === sn) || {}).name || sn || t("Qualsiasi");
 const projectOf = id => PROJECTS.find(p => p.id === id) || {name: t("Senza progetto"), color: "#8A949C"};
 const projName = p => p.id === null ? t("Senza progetto") : p.name;
+const projPath = p => p.id === null ? t("Senza progetto") : (p.path && p.path.length ? p.path.join(" / ") : p.name);
 // messaggi di coda salvati dal server come {"msg": frase, "params": {...}}
 const qMsg = m => { try { const o = JSON.parse(m); return t(o.msg, o.params); } catch { return m; } };
 function openDialog(html) { $("#dlgbody").innerHTML = html; $("#dlg").showModal(); }
@@ -631,26 +632,39 @@ RENDER.archive = async function renderArchive() {
   const sel = projFilter === "none" ? PROJECTS.find(p => p.id === null) : PROJECTS.find(p => String(p.id) === projFilter);
   const uploadPid = sel ? sel.id : (!isAdmin() && PROJECTS.length === 1 ? PROJECTS[0].id : (isAdmin() ? null : undefined));
   const dropText = uploadPid === undefined ? t("Seleziona un progetto per caricare file")
-    : (sel ? t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti) nel progetto {p} oppure sceglilo dal computer", {p: `<b>${esc(projName(sel))}</b>`})
+    : (sel ? t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti) nel progetto {p} oppure sceglilo dal computer", {p: `<b>${esc(projPath(sel))}</b>`})
       : uploadPid === null ? t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti), sarà senza progetto, oppure sceglilo dal computer")
       : t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti) nel progetto {p} oppure sceglilo dal computer", {p: `<b>${esc(PROJECTS[0].name)}</b>`}));
   el.innerHTML = `<div class="head"><div><h1>${t("Archivio")}</h1><p class="sub">${t("I file sono organizzati in progetti. Ogni utente vede solo i progetti che l'amministratore gli ha assegnato.")}</p></div>
       <button class="admin-only primary" id="newproj">${t("Nuovo progetto")}</button></div>
     <div class="chips" id="pchips">
       <button class="chip ${projFilter ? "" : "on"}" data-p="">${t("Tutti")} <small>${PROJECTS.reduce((n, p) => n + (p.files || 0), 0)}</small></button>
-      ${PROJECTS.map(p => { const key = p.id === null ? "none" : String(p.id);
-        return `<button class="chip ${projFilter === key ? "on" : ""}" data-p="${key}" style="--c:${esc(p.color)}"><i></i>${esc(projName(p))} <small>${p.files}</small></button>`; }).join("")}
+      ${PROJECTS.filter(p => p.parent_id == null).map(p => { const key = p.id === null ? "none" : String(p.id);
+        const on = projFilter === key || (sel && sel.id !== null && sel.root_id === p.id);
+        return `<button class="chip ${on ? "on" : ""}" data-p="${key}" style="--c:${esc(p.color)}"><i></i>${esc(projName(p))} <small>${p.files_total ?? p.files}</small></button>`; }).join("")}
     </div>
-    ${sel ? `<div class="projhead"><div><h2 style="margin:0">${esc(projName(sel))}</h2>${sel.id === null ? `<p>${t("Visibili solo agli amministratori")}</p>` : sel.description ? `<p>${esc(sel.description)}</p>` : ""}</div>
-      ${sel.id !== null ? `<div class="row admin-only"><button id="editproj">${t("Modifica")}</button><button class="danger" id="delproj">${t("Elimina progetto")}</button></div>` : ""}</div>` : ""}
+    ${sel ? `<div class="projhead"><div>
+        ${sel.id !== null && sel.depth > 0 ? `<nav class="crumbs">${PROJECTS.filter(x => x.id !== null && sel.path.slice(0, -1).length && isAncestor(x, sel)).map(x => `<a href="#" data-p="${x.id}">${esc(x.name)}</a>`).join(" › ")} ›</nav>` : ""}
+        <h2 style="margin:0">${sel.id !== null && sel.depth > 0 ? "📁 " : ""}${esc(projName(sel))}</h2>${sel.id === null ? `<p>${t("Visibili solo agli amministratori")}</p>` : sel.description ? `<p>${esc(sel.description)}</p>` : ""}</div>
+      ${sel.id !== null && canOperate() ? `<div class="row">${canManage(sel.id) ? `<button id="newsub">＋ ${t("Nuova cartella")}</button>` : ""}
+        ${canManage(sel.parent_id) ? `<button id="editproj">${t("Modifica")}</button><button class="danger" id="delproj">${sel.depth > 0 ? t("Elimina cartella") : t("Elimina progetto")}</button>` : ""}</div>` : ""}</div>
+      ${sel.id !== null ? (() => { const subs = PROJECTS.filter(x => x.parent_id === sel.id);
+        return subs.length ? `<div class="folders">${subs.map(x => `<button type="button" class="folder" data-p="${x.id}" style="--c:${esc(x.color)}"><span class="fic">📁</span><b>${esc(x.name)}</b>
+          <small class="muted">${t("{n} file", {n: x.files_total})}${x.children ? " · " + t("{n} cartelle", {n: x.children}) : ""}</small></button>`).join("")}</div>` : ""; })() : ""}` : ""}
     ${canOperate() ? `<div class="drop" id="drop">${dropText}<input type="file" id="fpick" accept=".3mf,.gcode,.gco,.g,.bgcode,.ufp" multiple hidden></div>` : ""}
     <div class="list" id="flist"><div class="empty">${t("Caricamento…")}</div></div>`;
   $("#pchips").onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; projFilter = c.dataset.p; localStorage.setItem("fb_proj", projFilter); RENDER.archive(); };
+  $$("#v-archive .folders, #v-archive .crumbs").forEach(box => box.onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; e.preventDefault();
+    projFilter = c.dataset.p; localStorage.setItem("fb_proj", projFilter); RENDER.archive(); });
+  if ($("#newsub")) $("#newsub").onclick = () => projectDialog(null, sel);
   if ($("#newproj")) $("#newproj").onclick = () => projectDialog();
   if ($("#editproj")) $("#editproj").onclick = () => projectDialog(sel);
   if ($("#delproj")) $("#delproj").onclick = async () => {
-    if (!confirm(t("Eliminare il progetto \"{p}\"? I suoi {n} file non vengono cancellati: diventano \"senza progetto\".", {p: sel.name, n: sel.files}))) return;
-    await act(() => api(`/api/projects/${sel.id}`, {method: "DELETE"}), t("Progetto eliminato")); projFilter = ""; RENDER.archive();
+    const msg = sel.depth > 0 ? t("Eliminare la cartella \"{p}\"? I suoi file e le sue sottocartelle passano nella cartella superiore.", {p: sel.name})
+      : t("Eliminare il progetto \"{p}\"? I suoi {n} file non vengono cancellati: diventano \"senza progetto\".", {p: sel.name, n: sel.files});
+    if (!confirm(msg)) return;
+    await act(() => api(`/api/projects/${sel.id}`, {method: "DELETE"}), sel.depth > 0 ? t("Cartella eliminata") : t("Progetto eliminato"));
+    projFilter = sel.parent_id != null ? String(sel.parent_id) : ""; localStorage.setItem("fb_proj", projFilter); RENDER.archive();
   };
   const drop = $("#drop");
   if (drop && uploadPid !== undefined) {
@@ -668,7 +682,7 @@ RENDER.archive = async function renderArchive() {
     return `<div class="item" data-id="${f.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${f.id}/thumb/${p0.index || 1}">
       <div><div class="t" title="${esc(f.filename)}">${esc(f.filename)}</div>
-        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.name)}</span> · <span class="bdg">${f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
+        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.id === undefined ? pr.name : projPath(pr))}</span> · <span class="bdg">${f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
         <div class="m">${t("Caricato il {d}", {d: fmtDate(f.uploaded_at)})} · ${t("stampato {n} volte", {n: f.prints})}${f.prints ? " " + t("({n} riuscite)", {n: f.ok}) : ""}</div></div>
       <div class="a">${canOperate() ? `<button class="primary" data-print>${t("Stampa")}</button><button data-move>${t("Sposta")}</button>` : ""}
         <a class="btn" href="/api/files/${f.id}/download">${t("Scarica")}</a>${canDel ? `<button class="danger" data-del>${t("Elimina")}</button>` : ""}</div></div>`;
@@ -681,24 +695,41 @@ RENDER.archive = async function renderArchive() {
     if (e.target.closest("[data-del]") && confirm(t("Eliminare {f} dall'archivio?", {f: f.filename}))) { await act(() => api(`/api/files/${f.id}`, {method: "DELETE"})); RENDER.archive(); }
   };
 };
-function projectDialog(p) {
-  openDialog(`<h3>${p ? t("Modifica progetto") : t("Nuovo progetto")}</h3>
+// p: cartella da modificare; parent: cartella in cui crearne una nuova (sottocartella)
+function projectDialog(p, parent) {
+  const isSub = p ? p.parent_id != null : !!parent;
+  const title = p ? (isSub ? t("Modifica cartella") : t("Modifica progetto")) : parent ? t("Nuova cartella in {p}", {p: esc(projPath(parent))}) : t("Nuovo progetto");
+  // destinazioni possibili per spostare la cartella: non sé stessa né le sue sottocartelle
+  const moveOpts = p && isSub ? PROJECTS.filter(x => x.id !== null && x.id !== p.id && !isAncestor(p, x) && canManage(x.id)) : [];
+  openDialog(`<h3>${title}</h3>
     <div class="row"><label style="flex:1">${t("Nome")}<input name="pname" value="${esc(p ? p.name : "")}" maxlength="60"></label>
-      <label>${t("Colore")}<input type="color" name="color" value="${esc(p ? p.color : "#2B63C6")}"></label></div>
+      <label>${t("Colore")}<input type="color" name="color" value="${esc(p ? p.color : parent ? parent.color : "#2B63C6")}"></label></div>
     <label>${t("Descrizione")}<textarea name="description" rows="3" maxlength="500">${esc(p ? p.description : "")}</textarea></label>
-    <p class="sub" style="margin:0">${t("Dopo averlo creato, assegna il progetto agli utenti da Amministrazione → Utenti → Permessi.")}</p>
+    ${moveOpts.length ? `<label>${t("Si trova in")}<select name="parent">${moveOpts.map(x => `<option value="${x.id}" ${x.id === p.parent_id ? "selected" : ""}>${esc(projPath(x))}</option>`).join("")}</select></label>` : ""}
+    <p class="sub" style="margin:0">${isSub ? t("Le cartelle sono visibili a chi ha accesso al progetto che le contiene.") : t("Dopo averlo creato, assegna il progetto agli utenti da Amministrazione → Utenti → Permessi.")}</p>
     <div class="dlgfoot">${btnCancel()}<button class="primary" id="projok">${p ? t("Salva") : t("Crea progetto")}</button></div>`);
   $("#projok").onclick = async ev => {
     ev.preventDefault(); const f = $("#dlgbody");
-    const body = {name: f.pname.value, color: f.color.value, description: f.description.value};
-    const r = await act(() => p ? api(`/api/projects/${p.id}`, {method: "PATCH", body}) : api("/api/projects", {method: "POST", body}), p ? t("Progetto aggiornato") : t("Progetto creato"));
+    const body = {name: f.elements.namedItem("pname").value, color: f.elements.namedItem("color").value, description: f.elements.namedItem("description").value};
+    if (!p && parent) body.parent_id = parent.id;
+    if (p && f.elements.namedItem("parent")) body.parent_id = +f.elements.namedItem("parent").value;
+    const r = await act(() => p ? api(`/api/projects/${p.id}`, {method: "PATCH", body}) : api("/api/projects", {method: "POST", body}),
+      p ? t("Salvato") : parent ? t("Cartella creata") : t("Progetto creato"));
     if (r) { $("#dlg").close(); if (!p && r.id) { projFilter = String(r.id); localStorage.setItem("fb_proj", projFilter); } RENDER.archive(); }
   };
 }
+// a è un antenato di b? (stessa radice e percorso di a contenuto in quello di b)
+function isAncestor(a, b) {
+  let cur = b && b.parent_id != null ? PROJECTS.find(x => x.id === b.parent_id) : null;
+  for (let i = 0; cur && i < 50; i++) { if (cur.id === a.id) return true; cur = cur.parent_id != null ? PROJECTS.find(x => x.id === cur.parent_id) : null; }
+  return false;
+}
+// si possono creare, modificare ed eliminare cartelle dentro questa? (i progetti principali solo dagli amministratori)
+const canManage = parentId => parentId == null ? isAdmin() : canOperate();
 function moveDialog(f) {
   const opts = PROJECTS.filter(p => p.id !== null || isAdmin());
   openDialog(`<h3>${t("Sposta {f}", {f: esc(f.filename)})}</h3>
-    <label>${t("Progetto di destinazione")}<select name="pid">${opts.map(p => `<option value="${p.id === null ? "none" : p.id}" ${p.id === f.project_id ? "selected" : ""}>${esc(projName(p))}</option>`).join("")}</select></label>
+    <label>${t("Cartella di destinazione")}<select name="pid">${opts.map(p => `<option value="${p.id === null ? "none" : p.id}" ${p.id === f.project_id ? "selected" : ""}>${"\u00a0\u00a0\u00a0".repeat(p.depth || 0)}${p.depth ? "└ " : ""}${esc(projName(p))}</option>`).join("")}</select></label>
     <div class="dlgfoot">${btnCancel()}<button class="primary" id="mvok">${t("Sposta")}</button></div>`);
   $("#mvok").onclick = async ev => { ev.preventDefault();
     if (await act(() => api(`/api/files/${f.id}`, {method: "PATCH", body: {project_id: $("#dlgbody").pid.value}}), t("File spostato"))) { $("#dlg").close(); RENDER.archive(); } };
@@ -1250,7 +1281,7 @@ RENDER.admin = async function renderAdmin() {
   const el = $("#v-admin");
   await loadMeta();
   const [users, allGroups] = await Promise.all([api("/api/users").catch(e => (toast(e.message, "error"), [])), api("/api/groups").catch(() => [])]);
-  const projs = PROJECTS.filter(p => p.id !== null);
+  const projs = PROJECTS.filter(p => p.id !== null && p.parent_id == null);   // le sottocartelle sono incluse
   const refreshOpts = [[15, t("ogni 15 secondi")], [30, t("ogni 30 secondi")], [60, t("ogni minuto")], [120, t("ogni 2 minuti")], [300, t("ogni 5 minuti")]];
   el.innerHTML = `<div class="head"><div><h1>${t("Amministrazione")}</h1></div></div>${adminTabs("admin")}
     <p class="sub">${t("Utenti, gruppi di stampanti e permessi di accesso.")}</p>

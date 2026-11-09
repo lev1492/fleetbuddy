@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 from requests.auth import HTTPDigestAuth
 
 from ..hub_client import HubError
-from .base import DirectClient, base_state, bed, nozzle
+from .base import DirectClient, base_state, bed, mm_to_grams, nozzle
 
 JOB_STATE = {"printing": "RUNNING", "pre_print": "PREPARE", "pausing": "PAUSE", "paused": "PAUSE", "resuming": "RUNNING",
              "post_print": "RUNNING", "wait_cleanup": "FINISH", "wait_user_action": "PAUSE", "sent_to_printer": "PREPARE"}
@@ -65,8 +65,11 @@ class UltimakerClient(DirectClient):
     caps = {"temperature": True, "speed": False, "filament": False, "bed_clean": False, "print_options": [],
             "upload": True, "ufp": True, "chamber_heater": False}
 
+    late_usage = True      # lo storico della stampante può essere scritto dopo la fine: si riprova più tardi
+
     def __init__(self, row: dict):
         super().__init__(row)
+        self._materials: dict[str, dict] = {}
         if self.username and self.password:
             self._s.auth = HTTPDigestAuth(self.username, self.password)
         self.system: dict = {}
@@ -333,6 +336,49 @@ class UltimakerClient(DirectClient):
         except HubError as e:
             self._auth_error(e)
 
+    # ------------------------------------------------------------------ consumo dallo storico della stampante
+    def material(self, guid: str) -> dict:
+        """Profilo del materiale (XML "fdmmaterial") da /api/v1/materials/{guid}: marca, tipo, colore, densità, diametro."""
+        if not guid:
+            return {}
+        if guid in self._materials:
+            return self._materials[guid]
+        info: dict = {}
+        try:
+            xml = self._get(f"/api/v1/materials/{guid}")
+            info = parse_material(xml if isinstance(xml, str) else "")
+        except HubError:
+            info = {}
+        self._materials[guid] = info
+        return info
+
+    def usage_snapshot(self, raw: dict | None) -> dict | None:
+        uid = ((raw or {}).get("job") or {}).get("uuid")
+        return {"uuid": uid} if uid else None
+
+    def usage_since(self, snapshot: dict | None, raw: dict | None) -> list[dict] | None:
+        """Consumo reale dallo storico: material_N_amount (lunghezza estrusa, mm) con il GUID del materiale di ogni
+        estrusore, convertito in grammi con densità e diametro del profilo del materiale."""
+        uid = (snapshot or {}).get("uuid")
+        if not uid:
+            return None
+        try:
+            h = self._get(f"/api/v1/history/print_jobs/{uid}")
+        except HubError:
+            return None
+        if not isinstance(h, dict):
+            return None
+        out = []
+        for i in range(2):
+            amount = h.get(f"material_{i}_amount") or 0
+            if not isinstance(amount, (int, float)) or amount <= 0:
+                continue
+            m = self.material(h.get(f"material_{i}_guid") or "")
+            grams = mm_to_grams(amount, m.get("diameter") or 2.85, m.get("density") or 1.24)
+            out.append({"type": m.get("material") or "?", "brand": m.get("brand") or "", "color": m.get("color_code") or "",
+                        "grams": round(grams, 1), "meters": round(amount / 1000, 2)})
+        return out or None
+
     # ------------------------------------------------------------------ autorizzazione
     def request_auth(self, user: str) -> dict:
         """POST /api/v1/auth/request. Il formato dei parametri cambia tra firmware: la S5 accetta un modulo,
@@ -373,3 +419,26 @@ class UltimakerClient(DirectClient):
     def check_auth(self, auth_id: str) -> str:
         d = self._get(f"/api/v1/auth/check/{auth_id}") or {}
         return (d.get("message") if isinstance(d, dict) else str(d)) or "unknown"
+
+
+def parse_material(xml: str) -> dict:
+    """Legge un profilo materiale UltiMaker (fdmmaterial), ignorando gli spazi dei nomi XML."""
+    import xml.etree.ElementTree as ET
+    if not xml.strip().startswith("<"):
+        return {}
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return {}
+
+    def find(path: str) -> str:
+        node = root
+        for part in path.split("/"):
+            node = next((c for c in list(node) if c.tag.split("}")[-1] == part), None) if node is not None else None
+        return (node.text or "").strip() if node is not None else ""
+    num = lambda v: float(v) if re.match(r"^\d+(\.\d+)?$", v or "") else None
+    color = find("metadata/color_code")
+    return {"brand": find("metadata/name/brand"), "material": find("metadata/name/material"),
+            "color": find("metadata/name/color"), "color_code": color.upper()[:7] if color.startswith("#") else "",
+            "guid": find("metadata/GUID"), "density": num(find("properties/density")),
+            "diameter": num(find("properties/diameter"))}

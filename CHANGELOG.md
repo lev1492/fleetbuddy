@@ -3,6 +3,20 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.16.0] – 2026-11-09
+
+### Novità
+- Archivio: sottocartelle nei progetti, a qualsiasi profondità. Percorso di navigazione (Progetto › Cartella › …),
+  riquadri delle sottocartelle con il numero di file, caricamento direttamente nella cartella aperta, "Sposta" con
+  l'albero completo, cartelle rinominabili e spostabili. Il nome deve essere unico solo nella stessa cartella.
+  Chi ha accesso a un progetto vede tutte le sue sottocartelle; gli operatori possono creare e gestire cartelle nei
+  progetti a cui hanno accesso (i progetti principali restano degli amministratori). Eliminando una cartella, file e
+  sottocartelle passano a quella superiore.
+- UltiMaker: consumo reale di ogni stampa dallo storico della stampante (`/history/print_jobs`): lunghezza estrusa
+  per estrusore e materiale (GUID), con marca, tipo, colore, densità e diametro letti dal profilo del materiale
+  (`/materials/{guid}`) e convertiti in grammi. Se lo storico viene scritto dopo la fine della stampa, FleetBuddy lo
+  recupera nei minuti successivi e sostituisce la stima.
+
 ## [0.15.0] – 2026-11-09
 
 ### Novità

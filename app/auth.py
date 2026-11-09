@@ -121,6 +121,16 @@ class Auth:
                     u.printers |= groups.get(int(a["ref"]), set())
                 elif a["kind"] == "project":
                     u.projects.add(int(a["ref"]))
+            if u.projects:
+                children: dict[int, list[int]] = {}
+                for r in self.db.q("SELECT id, parent_id FROM projects WHERE parent_id IS NOT NULL"):
+                    children.setdefault(r["parent_id"], []).append(r["id"])
+                todo = list(u.projects)
+                while todo:                                     # sottocartelle a qualsiasi profondità
+                    for c in children.get(todo.pop(), []):
+                        if c not in u.projects:
+                            u.projects.add(c)
+                            todo.append(c)
         return u
 
     def group_members(self) -> dict[int, set[str]]:

@@ -483,6 +483,17 @@ tr.bhead td{font-weight:700;color:var(--muted);text-transform:uppercase;letter-s
 .gdo.closure{border-left-color:var(--pause)}
 .gdo b{text-transform:capitalize;font-size:13px}
 .gsave{position:sticky;bottom:0;display:flex;justify-content:flex-end;align-items:center;gap:12px;padding:12px 0;background:linear-gradient(transparent,var(--bg) 40%)}
+/* archivio: sottocartelle */
+.crumbs{font-size:13px;color:var(--muted);margin-bottom:2px}
+.crumbs a{color:var(--muted);text-decoration:none}
+.crumbs a:hover{color:var(--ink);text-decoration:underline}
+.folders{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;margin:0 0 14px}
+.folder{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:10px;align-items:center;text-align:left;
+  padding:10px 12px;border:1px solid var(--line);border-left:4px solid var(--c);border-radius:var(--radius-sm);background:var(--surface);cursor:pointer}
+.folder:hover{border-color:var(--muted);border-left-color:var(--c)}
+.folder .fic{grid-row:1/3;font-size:24px}
+.folder b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
 .gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}

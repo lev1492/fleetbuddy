@@ -36,8 +36,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS printer_groups (id INTEGER PRIMARY KEY, name TEXT UNIQUE COLLATE NOCASE, color TEXT DEFAULT '#0E7C6B');
 CREATE TABLE IF NOT EXISTS group_printers (group_id INTEGER, printer_sn TEXT, PRIMARY KEY (group_id, printer_sn));
 CREATE TABLE IF NOT EXISTS projects (
-    id INTEGER PRIMARY KEY, name TEXT UNIQUE COLLATE NOCASE, description TEXT DEFAULT '',
-    color TEXT DEFAULT '#2B63C6', created_at REAL, created_by INTEGER
+    id INTEGER PRIMARY KEY, name TEXT COLLATE NOCASE, description TEXT DEFAULT '',
+    color TEXT DEFAULT '#2B63C6', created_at REAL, created_by INTEGER, parent_id INTEGER
 );
 -- consumo di filamento per stampa (una riga per filamento usato)
 CREATE TABLE IF NOT EXISTS job_filaments (
@@ -74,6 +74,7 @@ MIGRATIONS = [
     ("direct_printers", "extra", "TEXT DEFAULT ''"),
     ("direct_printers", "brand", "TEXT DEFAULT ''"),
     ("direct_printers", "printer_model", "TEXT DEFAULT ''"),
+    ("projects", "parent_id", "INTEGER"),
     ("job_filaments", "source", "TEXT DEFAULT 'slicer'"),
 ]
 
@@ -96,6 +97,18 @@ class DB:
                             first, _, last = dn.strip().partition(" ")
                             self._conn.execute("UPDATE users SET first_name=?, last_name=? WHERE id=?",
                                                (first, last.strip(), uid))
+            # sottocartelle dei progetti: il nome era unico in tutto l'archivio; ora lo è solo nella stessa cartella.
+            # SQLite non permette di togliere un vincolo UNIQUE: la tabella viene ricreata con gli stessi dati.
+            sql = (self._conn.execute("SELECT sql FROM sqlite_master WHERE name='projects'").fetchone() or [""])[0] or ""
+            if "UNIQUE" in sql.upper():
+                self._conn.executescript("""
+                    CREATE TABLE projects_new (id INTEGER PRIMARY KEY, name TEXT COLLATE NOCASE, description TEXT DEFAULT '',
+                        color TEXT DEFAULT '#2B63C6', created_at REAL, created_by INTEGER, parent_id INTEGER);
+                    INSERT INTO projects_new(id, name, description, color, created_at, created_by)
+                        SELECT id, name, description, color, created_at, created_by FROM projects;
+                    DROP TABLE projects;
+                    ALTER TABLE projects_new RENAME TO projects;
+                """)
             self._conn.commit()
 
     def q(self, sql: str, args=()) -> list[dict]:
