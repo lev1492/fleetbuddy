@@ -505,6 +505,11 @@ dialog.ask input{width:100%;margin-bottom:6px}
 dialog.ask .dlgfoot{margin-top:14px}
 button.danger.solid{background:var(--err);border-color:var(--err);color:#fff}
 
+.cq{font-size:12px;font-weight:700;padding:2px 9px;border-radius:10px}
+.cq.ok{background:color-mix(in srgb,var(--run) 16%,transparent);color:var(--run)}
+.cq.warn{background:color-mix(in srgb,var(--pause) 18%,transparent);color:var(--pause)}
+.cq.bad{background:color-mix(in srgb,var(--err) 18%,transparent);color:var(--err)}
+
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
 .gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}

@@ -8,6 +8,7 @@ const CAL_MODES = {
   full: "Stampe interamente in orario lavorativo (iniziano e finiscono in orario)",
   always: "Sempre (24 ore su 24, 7 giorni su 7: il calendario è ignorato)",
 };
+const GRACE_LABELS = {10: "10 secondi", 20: "20 secondi", 30: "30 secondi (consigliato)", 60: "1 minuto", 120: "2 minuti", 300: "5 minuti"};
 const REFRESH_LABELS = {15: "ogni 15 secondi", 30: "ogni 30 secondi", 60: "ogni minuto", 120: "ogni 2 minuti", 300: "ogni 5 minuti"};
 const REFRESH_OPTS = Object.entries(REFRESH_LABELS).map(([v, l]) => [+v, l]);
 const THEMES = {auto: "Automatico (come il sistema)", light: "Chiaro", dark: "Scuro"};
@@ -31,8 +32,10 @@ RENDER.general = async function renderGeneral() {
       <section class="box"><h2>${t("Impostazioni")}</h2>
         <div class="row">
           <label>${t("Aggiornamento camera nelle schede")}<select id="camref">${REFRESH_OPTS.map(([v, l]) => `<option value="${v}" ${v === S.settings.camera_refresh_s ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
+          <label>${t("Offline dopo")}<select id="grace">${Object.entries(GRACE_LABELS).map(([v, l]) => `<option value="${v}" ${+v === (S.settings.offline_grace_s || 30) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
           <label>${t("Lingua delle notifiche")}<select id="notlang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === (S.settings.notify_lang || "it") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
-        </div><p class="sub small" style="margin:10px 0 0">${t("La lingua delle notifiche vale per ntfy, Telegram e webhook, che non sono legati a un utente.")}</p></section>
+        </div><p class="sub small" style="margin:10px 0 0">${t("Una stampante che non risponde resta com'era per il tempo indicato prima di risultare offline: le brevi interruzioni del Wi-Fi non interrompono più schede, coda e produzione.")}
+          ${t("La lingua delle notifiche vale per ntfy, Telegram e webhook, che non sono legati a un utente.")}</p></section>
 
       <section class="box"><h2>${t("Informazioni")}</h2>
         <dl><dt>${t("Applicazione")}</dt><dd>${esc(APP.name)} v${esc(APP.version)}</dd>
@@ -116,6 +119,7 @@ RENDER.general = async function renderGeneral() {
   const saveSetting = async body => { const r = await act(() => api("/api/settings", {method: "PUT", body}), t("Impostazione salvata")); if (r) { S.settings = r; startCamTimer(); } };
   $("#camref").onchange = e => saveSetting({camera_refresh_s: +e.target.value});
   $("#notlang").onchange = e => saveSetting({notify_lang: e.target.value});
+  $("#grace").onchange = e => saveSetting({offline_grace_s: +e.target.value});
   wireUpdateBox();
   $("#gtheme").onclick = e => { const b = e.target.closest("[data-v]"); if (!b) return; theme = b.dataset.v;
     $$("#gtheme button").forEach(x => x.classList.toggle("on", x === b)); applyTheme(theme); };

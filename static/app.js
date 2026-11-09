@@ -1060,6 +1060,21 @@ function downloadMenu(q) {
 // Un solo periodo per tutta la pagina: utilizzo, grafico delle stampe, riepilogo ed esportazioni
 const PERIOD_DAYS = {"24h": 1, "7d": 7, "30d": 30, "90d": 90, "365d": 365};
 const periodLabel = p => p === "24h" ? t("Ultime 24 ore") : t("Ultimi {n} giorni", {n: PERIOD_DAYS[p]});
+// Qualità della connessione: interruzioni brevi (assorbite dalla tolleranza) e periodi offline per stampante
+async function connQuality() {
+  const box = $("#connq"); if (!box) return;
+  const r = await api("/api/connection?hours=24").catch(() => null);
+  if (!r) { box.innerHTML = ""; return; }
+  const level = p => p.offline >= 3 || p.drops >= 20 ? "bad" : p.offline || p.drops >= 5 ? "warn" : "ok";
+  const LBL = {ok: t("Stabile"), warn: t("Instabile"), bad: t("Problematica")};
+  box.innerHTML = `<div class="tablewrap"><table class="connq"><thead><tr><th>${t("Stampante")}</th><th>${t("Connessione")}</th>
+      <th title="${esc(t("Mancate risposte assorbite dalla tolleranza: la stampante non è risultata offline"))}">${t("Interruzioni brevi")}</th>
+      <th>${t("Volte offline")}</th><th>${t("Tempo offline")}</th><th>${t("Segnale Wi-Fi")}</th></tr></thead><tbody>
+    ${r.printers.map(p => { const l = level(p); return `<tr><td>${esc(p.name)}</td><td><span class="cq ${l}">${LBL[l]}</span></td><td>${p.drops}</td><td>${p.offline}</td>
+      <td>${p.offline_s ? fmtDur(p.offline_s) : "—"}</td><td>${esc(p.wifi || "—")}</td></tr>`; }).join("")}
+    </tbody></table></div>
+    <p class="sub small">${t("Una stampante che non risponde resta com'era per {s} secondi prima di risultare offline (Amministrazione → Generali). Molte interruzioni brevi sulla stessa stampante indicano di solito un segnale Wi-Fi debole o una rete congestionata.", {s: r.grace_s})}</p>`;
+}
 RENDER.stats = async function renderStats() {
   let period = localStorage.getItem("fb_period");
   if (!PERIOD_DAYS[period]) period = {7: "7d", 30: "30d", 90: "90d", 365: "365d"}[localStorage.getItem("fb_days")] || "30d";
@@ -1090,7 +1105,9 @@ RENDER.stats = async function renderStats() {
     <h2>${t("Per stampante")}</h2>
     <div class="tablewrap"><table><thead><tr><th>${t("Stampante")}</th><th>${t("Stampe")}</th><th>${t("Riuscite")}</th><th>${t("Fallite")}</th><th>${t("Ore")}</th><th>${t("Filamento")}</th></tr></thead><tbody>
     ${s.per_printer.map(p => `<tr><td>${esc(p.name)}</td><td>${p.n}</td><td>${p.ok || 0}</td><td>${p.ko || 0}</td><td>${(p.secs / 3600).toFixed(1)}</td><td>${Math.round(p.grams)} g</td></tr>`).join("") || `<tr><td colspan="6">${t("Nessun dato")}</td></tr>`}
-    </tbody></table></div>`;
+    </tbody></table></div>
+    <h2>${t("Qualità della connessione")} <small class="muted">${t("ultime 24 ore")}</small></h2><div id="connq"><p class="muted">${t("Caricamento…")}</p></div>`;
+  connQuality();
   $("#period").onchange = e => { localStorage.setItem("fb_period", e.target.value); RENDER.stats(); };
   if ($("#sgroup")) $("#sgroup").onchange = e => { localStorage.setItem("fb_stats_group", e.target.value); RENDER.stats(); };
 };

@@ -3,6 +3,20 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.18.0] – 2026-11-09
+
+### Novità – connessione più stabile
+- Tolleranza alle disconnessioni: una stampante che non risponde resta com'era (ultimo stato noto) e diventa offline
+  solo dopo il tempo scelto in Amministrazione → Generali (predefinito 30 secondi, dall'ultima risposta ricevuta).
+  Le brevi interruzioni del Wi-Fi non cambiano più schede, coda, produzione e storico. Vale anche per le Bambu se il
+  Fleet Hub non risponde (prima restavano ferme sull'ultimo stato).
+- Secondo tentativo immediato quando una lettura non riesce.
+- Lettura indipendente di ogni stampante diretta: una stampante lenta o che non risponde non ferma più gli
+  aggiornamenti di tutte le altre (prima il ciclo aspettava la più lenta, fino a 13 secondi).
+- Lettura rallentata per le stampanti offline (10 s, 20 s, 40 s, poi ogni minuto), per non occupare la rete.
+- Statistiche → Qualità della connessione (ultime 24 ore): per ogni stampante interruzioni brevi, volte offline,
+  tempo offline e segnale Wi-Fi, con una valutazione (stabile, instabile, problematica).
+
 ## [0.17.0] – 2026-11-09
 
 ### Novità

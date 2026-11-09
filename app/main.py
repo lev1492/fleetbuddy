@@ -34,7 +34,7 @@ svc: Service | None = None
 auth: Auth | None = None
 COOKIE = "fb_session"
 PUBLIC = {"/", "/api/session", "/api/login", "/api/setup", "/api/logout"}
-DEFAULT_SETTINGS = {"theme": "auto", "camera_refresh_s": 60, "notify_lang": "it"}
+DEFAULT_SETTINGS = {"theme": "auto", "offline_grace_s": 30, "camera_refresh_s": 60, "notify_lang": "it"}
 
 
 @asynccontextmanager
@@ -367,8 +367,25 @@ async def put_settings(request: Request, body: dict):
         cur["notify_lang"] = normalize(body["notify_lang"])
     if body.get("theme") in ("auto", "light", "dark"):
         cur["theme"] = body["theme"]
+    if body.get("offline_grace_s") in (10, 20, 30, 60, 120, 300):
+        cur["offline_grace_s"] = int(body["offline_grace_s"])
     S().db.set_setting("ui_settings", cur)
     return cur
+
+
+@app.get("/api/connection")
+async def connection_quality(request: Request, hours: float = 24):
+    """Qualità della connessione per stampante: interruzioni brevi, periodi offline, tempo offline, segnale Wi-Fi."""
+    u = U(request)
+    q = S().conn_quality(max(1, min(24 * 30, hours)))
+    out = []
+    for p in S().printers.values():
+        if not u.sees_printer(p["sn"]):
+            continue
+        out.append({"sn": p["sn"], "name": p["name"], "online": p["online"], "wifi": p.get("wifi") or "",
+                    "direct": bool(p.get("direct")), **q.get(p["sn"], {"drops": 0, "offline": 0, "offline_s": 0.0})})
+    out.sort(key=lambda r: (-(r["offline"] * 10 + r["drops"]), r["name"].lower()))
+    return {"hours": hours, "grace_s": S().grace_s(), "printers": out}
 
 
 # ====================================================================== impostazioni generali (admin)

@@ -133,12 +133,18 @@ class Service:
         self._thumb_cache: dict[str, tuple[float, bytes | None]] = {}
         self._last_online: dict[str, tuple[float, dict]] = {}   # ultimo stato visto online (per la pianificazione)
         self._late_at = 0.0
+        # connessione: inizio delle letture fallite, offline dichiarato, prossima lettura (rallentata se offline)
+        self._conn: dict[str, dict] = {}
+        # lettura indipendente di ogni stampante diretta: una lenta non blocca le altre
+        self._ptasks: dict[str, asyncio.Task] = {}
+        self._plast: dict[str, dict] = {}
         self._workcal = None
         self._task: asyncio.Task | None = None
         for sub in ("archive", "snapshots", "tmp"):
             (cfg.data_path / sub).mkdir(exist_ok=True)
         self._reanalyze_archive()
         self._fix_ultimaker_volume()
+        self.db.x("DELETE FROM conn_events WHERE ts < ?", (time.time() - 30 * 86400,))
         # produzione: tabelle e riallineamento dei pezzi (dopo che tutto il resto è pronto)
         production.init(self.db)
         try:
@@ -216,13 +222,19 @@ class Service:
                 direct_new = await self._poll_direct()
                 if hub_new is not None:
                     self.hub_printers = hub_new
-                fresh = {**(hub_new or {}), **direct_new}
-                for sn, p in fresh.items():
-                    await self._track(p, self.printers.get(sn))
-                self.printers = {**self.hub_printers, **direct_new}
-                for sn_, p_ in self.printers.items():
+                hub_now = hub_new
+                if hub_now is None and self.hub_printers and not self.hub_ok:
+                    # Hub non raggiungibile: le sue stampanti risultano senza risposta (la tolleranza vale anche qui)
+                    hub_now = {sn_: {**p_, "online": False} for sn_, p_ in self.hub_printers.items()}
+                raw_all = {**(hub_now or self.hub_printers), **direct_new}
+                for sn_, p_ in raw_all.items():                 # ultimo stato visto davvero online
                     if p_["online"]:
-                        self._last_online[sn_] = (time.time(), p_)
+                        self._last_online[sn_] = (p_.get("seen_at") or time.time(), p_)
+                stable = self._stabilize(raw_all)               # tolleranza alle micro-disconnessioni
+                for sn, p in stable.items():
+                    if sn in direct_new or (hub_new is not None and sn in hub_new):
+                        await self._track(p, self.printers.get(sn))
+                self.printers = stable
                 self.last_poll = time.time()
                 await self._dispatch_queue()
                 await production.dispatch(self)
@@ -264,22 +276,109 @@ class Service:
             if st:
                 st.update(name=c.name, brand=c.brand, printer_model=c.printer_model or st.get("model") or "")
 
+    def grace_s(self) -> float:
+        """Secondi senza risposta prima di considerare una stampante offline (Amministrazione → Generali)."""
+        return float((self.db.get_setting("ui_settings", {}) or {}).get("offline_grace_s", 30))
+
+    def _stabilize(self, fresh: dict[str, dict]) -> dict[str, dict]:
+        """Una stampante che non risponde resta com'era (ultimo stato noto) finché non supera la tolleranza;
+        solo dopo diventa offline. Interruzioni brevi e periodi offline sono registrati per la qualità della connessione."""
+        now, grace = time.time(), self.grace_s()
+        out = {}
+        for sn, p in fresh.items():
+            st = self._conn.setdefault(sn, {"fail_since": None, "offline": False, "fails": 0, "next": 0.0})
+            if p["online"]:
+                if st["fail_since"]:
+                    dur = now - st["fail_since"]
+                    self.db.x("INSERT INTO conn_events(printer_sn, ts, kind, duration) VALUES(?,?,?,?)",
+                              (sn, st["fail_since"], "offline" if st["offline"] else "drop", round(dur, 1)))
+                    if st["offline"]:
+                        log.info("%s di nuovo online dopo %d s", p.get("name", sn), dur)
+                st.update(fail_since=None, offline=False, fails=0, next=0.0)
+                out[sn] = p
+                continue
+            last = self._last_online.get(sn)
+            if st["fail_since"] is None:
+                # la tolleranza parte dall'ultima risposta ricevuta, non dal primo tentativo fallito
+                st["fail_since"] = min(now, last[0]) if last else now
+            if not st["offline"] and last and now - st["fail_since"] < grace:
+                out[sn] = last[1]                           # in tolleranza: nessun cambiamento visibile
+                continue
+            if not st["offline"]:
+                st["offline"] = True
+                log.warning("%s offline (nessuna risposta da %d s)", p.get("name", sn), now - st["fail_since"])
+            out[sn] = p
+        return out
+
+    def conn_quality(self, hours: float = 24) -> dict[str, dict]:
+        """Interruzioni brevi, periodi offline e tempo offline per stampante nelle ultime ore."""
+        since = time.time() - hours * 3600
+        out: dict[str, dict] = {}
+        for r in self.db.q("SELECT printer_sn, kind, COUNT(*) AS n, SUM(duration) AS d FROM conn_events WHERE ts>? "
+                           "GROUP BY printer_sn, kind", (since,)):
+            q = out.setdefault(r["printer_sn"], {"drops": 0, "offline": 0, "offline_s": 0.0})
+            if r["kind"] == "drop":
+                q["drops"] = r["n"]
+            else:
+                q["offline"], q["offline_s"] = r["n"], r["d"] or 0
+        for sn, st in self._conn.items():                    # periodo offline ancora in corso
+            if st["offline"] and st["fail_since"]:
+                q = out.setdefault(sn, {"drops": 0, "offline": 0, "offline_s": 0.0})
+                q["offline"] += 1
+                q["offline_s"] += time.time() - max(st["fail_since"], since)
+        return out
+
     async def _poll_direct(self) -> dict[str, dict]:
         async def one(c: DirectClient):
+            st = self._conn.get(c.sn) or {}
+            if st.get("offline") and time.time() < st.get("next", 0):
+                # offline: lettura rallentata (10 s, 20 s, 40 s, poi ogni minuto) per non occupare la rete
+                return c.normalize(None, self._direct_err.get(c.sn, ""))
             try:
-                model = await asyncio.to_thread(c.model)
+                try:
+                    model = await asyncio.to_thread(c.model)
+                except Exception:  # noqa: BLE001 - un pacchetto perso spesso si recupera subito: un secondo tentativo
+                    await asyncio.sleep(1)
+                    model = await asyncio.to_thread(c.model)
                 self.raw[c.sn] = model
                 if self._direct_err.pop(c.sn, None):
                     log.info("%s (%s) di nuovo raggiungibile", c.name, c.base)
-                return c.normalize(model)
+                res = c.normalize(model)
+                res["seen_at"] = time.time()                   # istante della risposta reale
+                return res
             except Exception as e:  # noqa: BLE001
+                if st.get("offline"):
+                    st["fails"] = st.get("fails", 0) + 1
+                    st["next"] = time.time() + min(60, 10 * 2 ** (st["fails"] - 1))
                 msg = e.localized("it") if isinstance(e, HubError) else str(e)
                 if self._direct_err.get(c.sn) != msg:
                     log.warning("%s (%s): %s", c.name, c.base, msg)
                 self._direct_err[c.sn] = msg
                 return c.normalize(None, msg)
-        results = await asyncio.gather(*(one(c) for c in self.direct.values()))
-        return {p["sn"]: p for p in results}
+        # ogni stampante ha la sua lettura in corso; il ciclo aspetta al massimo 4 secondi e per le stampanti ancora
+        # in attesa usa l'ultimo risultato: una stampante lenta o che non risponde non ferma gli aggiornamenti delle altre
+        clients = dict(self.direct)
+        for sn in [s for s in self._ptasks if s not in clients]:
+            self._ptasks.pop(sn).cancel()
+            self._plast.pop(sn, None)
+        for sn, c in clients.items():
+            t = self._ptasks.get(sn)
+            if t is None or t.done():
+                self._ptasks[sn] = asyncio.create_task(one(c))
+        pending = [t for t in self._ptasks.values() if not t.done()]
+        if pending:
+            await asyncio.wait(pending, timeout=4)
+        out = {}
+        for sn, c in clients.items():
+            t = self._ptasks.get(sn)
+            if t is not None and t.done():
+                try:
+                    self._plast[sn] = t.result()
+                except Exception as e:  # noqa: BLE001
+                    self._plast[sn] = c.normalize(None, str(e))
+                self._ptasks.pop(sn, None)
+            out[sn] = self._plast.get(sn) or c.normalize(None, "")
+        return out
 
     def kind_of(self, sn: str) -> str:
         return self.direct[sn].kind if sn in self.direct else "bambu"
