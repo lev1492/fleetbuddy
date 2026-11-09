@@ -34,7 +34,7 @@ svc: Service | None = None
 auth: Auth | None = None
 COOKIE = "fb_session"
 PUBLIC = {"/", "/api/session", "/api/login", "/api/setup", "/api/logout"}
-DEFAULT_SETTINGS = {"camera_refresh_s": 60, "notify_lang": "it"}
+DEFAULT_SETTINGS = {"theme": "auto", "camera_refresh_s": 60, "notify_lang": "it"}
 
 
 @asynccontextmanager
@@ -365,8 +365,51 @@ async def put_settings(request: Request, body: dict):
         cur["camera_refresh_s"] = max(10, min(3600, int(body["camera_refresh_s"])))
     if normalize(body.get("notify_lang")):
         cur["notify_lang"] = normalize(body["notify_lang"])
+    if body.get("theme") in ("auto", "light", "dark"):
+        cur["theme"] = body["theme"]
     S().db.set_setting("ui_settings", cur)
     return cur
+
+
+# ====================================================================== impostazioni generali (admin)
+@app.get("/api/settings/general")
+async def general_get(request: Request):
+    need_admin(U(request))
+    from . import workcal
+    cal = S().workcal()
+    return {"calendar": cal.cfg, "theme": settings().get("theme", "auto"), "countries": workcal.countries(),
+            "timezones": workcal.timezones(), "days_off": cal.upcoming_days_off(400)}
+
+
+@app.post("/api/settings/general/preview")
+async def general_preview(request: Request, body: dict):
+    """Festività e chiusure con le impostazioni non ancora salvate (cambio di paese, regione o chiusure)."""
+    need_admin(U(request))
+    from .workcal import WorkCalendar
+    try:
+        cal = WorkCalendar(body.get("calendar") or {})
+    except ValueError as e:
+        raise HTTPException(400, _(str(e)))
+    return {"days_off": cal.upcoming_days_off(400)}
+
+
+@app.put("/api/settings/general")
+async def general_put(request: Request, body: dict):
+    need_admin(U(request))
+    from .workcal import validate
+    try:
+        cfg = validate(body.get("calendar") or {})
+    except ValueError as e:
+        raise HTTPException(400, _(str(e)))
+    S().db.set_setting("work_calendar", cfg)
+    S()._workcal = None                              # ricreato alla prossima richiesta
+    if body.get("theme") in ("auto", "light", "dark"):
+        cur = settings()
+        cur["theme"] = body["theme"]
+        S().db.set_setting("ui_settings", cur)
+    log.info("Impostazioni generali aggiornate da %s: calendario %s/%s, modalità %s", U(request).username,
+             cfg["country"], cfg["timezone"], cfg["mode"])
+    return {"ok": True, "calendar": cfg}
 
 
 # ====================================================================== utenti (admin)
@@ -1653,6 +1696,6 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 async def index():
     # versione nei link di script e stili: dopo un aggiornamento il browser carica sempre i file nuovi
     html = (BASE_DIR / "static" / "index.html").read_text(encoding="utf-8")
-    for asset in ("/static/app.js", "/static/production.js", "/static/style.css"):
+    for asset in ("/static/app.js", "/static/production.js", "/static/general.js", "/static/style.css"):
         html = html.replace(f'"{asset}"', f'"{asset}?v={__version__}"')
     return Response(html, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-cache"})

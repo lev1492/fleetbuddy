@@ -3,6 +3,23 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.15.0] – 2026-11-09
+
+### Novità
+- Amministrazione → Generali: tema dell'interfaccia (automatico, chiaro, scuro) per tutti gli utenti e calendario
+  lavorativo: orari per ogni giorno con una o più pause (es. 9–13 e 14–18), paese e regione o provincia per le
+  festività nazionali e locali (oltre 150 paesi), fuso orario con passaggio automatico tra ora legale e solare,
+  chiusure programmate (ferie, inventario, ponti) e anteprima dei prossimi giorni di chiusura.
+- Produzione con calendario: modalità "nuove stampe solo in orario" (possono finire fuori orario), "stampe interamente
+  in orario" o "24/7". Il cambio piatto avviene in orario lavorativo. L'assegnazione non avvia pezzi fuori orario e il
+  Gantt ombreggia le ore non lavorative con il nome delle festività e delle chiusure.
+- Pianificazione indipendente dallo stato di rete: una stampante offline resta nel Gantt con la stampa in corso
+  (stimata dall'ultimo stato noto, segnata "offline") e i pezzi pianificati; al ritorno online FleetBuddy si
+  riallinea e, se la stampa è andata persa, rilancia il pezzo.
+
+### Dipendenze
+- Nuove librerie: `holidays` (festività) e `tzdata` (fusi orari), installate automaticamente dall'aggiornamento.
+
 ## [0.14.0] – 2026-11-07
 
 ### Novità

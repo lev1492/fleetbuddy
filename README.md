@@ -13,6 +13,7 @@ ma passando **esclusivamente dal Bambu Fleet Hub** (HTTP API v1.0.0) invece che 
 |---|---|
 | Altre stampanti | OctoPrint, Klipper (Moonraker), PrusaLink, Duet / RepRapFirmware 3 e Repetier-Server collegate direttamente, senza Fleet Hub |
 | Produzione | ordini di produzione con modelli, copie, stampanti e priorità; assegnazione automatica e pianificazione a Gantt con fine stimata |
+| Generali | tema chiaro/scuro/automatico e calendario lavorativo con orari, pause, festività nazionali e locali, fuso orario, chiusure |
 | Multilingua | italiano, inglese, francese, tedesco, spagnolo e portoghese: interfaccia, messaggi di errore, file Excel e notifiche; ogni utente sceglie la propria lingua |
 | Utenti e permessi | accesso con utente e password; ruoli Amministratore / Operatore / Osservatore; l'admin decide quali stampanti (singole o per gruppo) e quali progetti vede ogni utente |
 | Gruppi di stampanti | filtro nel cruscotto e nelle statistiche, coda "sulla prima libera del gruppo", permessi per gruppo |
@@ -194,6 +195,14 @@ le stampanti abilitate e una priorità (bassa, normale, alta, urgente).
 - **Anteprima:** creando un ordine si vedono subito pezzi, ore macchina, distribuzione sulle stampanti e fine stimata.
 - **Cambio piatto:** tempo aggiunto tra una stampa e la successiva (predefinito 10 minuti), modificabile
   dall'amministratore nella pianificazione.
+- **Calendario lavorativo** (Amministrazione → Generali): orari per ogni giorno della settimana con una o più pause,
+  paese e regione/provincia per le festività (libreria `holidays`, oltre 150 paesi, anche i santi patroni), fuso
+  orario con ora legale/solare automatica, chiusure programmate. Tre modalità: nuove stampe solo in orario (possono
+  finire dopo), stampe interamente in orario, oppure 24/7. Il cambio piatto richiede una persona e avviene in orario.
+  Nel Gantt le ore non lavorative sono ombreggiate, con il nome di festività e chiusure.
+- **Stampanti offline:** restano nella pianificazione; una stampa in corso continua a comparire stimata dall'ultimo
+  stato noto e i pezzi restano assegnati. Al ritorno online FleetBuddy si riallinea (stampa proseguita, terminata o
+  persa: in quest'ultimo caso il pezzo viene rilanciato).
 
 ## Altre stampanti (senza Fleet Hub)
 In *Amministrazione → Altre stampanti* si collegano stampanti che non passano dal Fleet Hub. Compaiono nell'elenco

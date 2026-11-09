@@ -160,16 +160,25 @@ $("#mepwd").onclick = () => {
 const RENDER = {};
 function go() {
   view = (location.hash || "#printers").slice(1);
-  if (["hub", "admin", "direct"].includes(view) && !isAdmin()) view = "printers";
-  const navView = view === "hub" || view === "direct" ? "admin" : view;   // schede di Amministrazione
+  if (["hub", "admin", "direct", "general"].includes(view) && !isAdmin()) view = "printers";
+  const navView = ["hub", "direct", "general"].includes(view) ? "admin" : view;   // schede di Amministrazione
   $$(".nav a").forEach(a => a.classList.toggle("on", a.dataset.view === navView));
   $$(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + view));
   (RENDER[view] || RENDER.printers)();
 }
 const adminTabs = active => `<div class="tabs" role="tablist">
+  <a href="#general" role="tab" aria-selected="${active === "general"}" class="${active === "general" ? "on" : ""}">${t("Generali")}</a>
   <a href="#admin" role="tab" aria-selected="${active === "admin"}" class="${active === "admin" ? "on" : ""}">${t("Utenti e gruppi")}</a>
   <a href="#hub" role="tab" aria-selected="${active === "hub"}" class="${active === "hub" ? "on" : ""}">Fleet Hub</a>
   <a href="#direct" role="tab" aria-selected="${active === "direct"}" class="${active === "direct" ? "on" : ""}">${t("Altre stampanti")}</a></div>`;
+// tema: automatico (sistema operativo), chiaro o scuro; ricordato anche per la pagina di accesso
+function applyTheme(th) {
+  th = th || localStorage.getItem("fb_theme") || "auto";
+  if (th === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.dataset.theme = th;
+  localStorage.setItem("fb_theme", th);
+}
+applyTheme();
 function reRender() { $("#v-printers")._built = false; CARDS.clear(); go(); }
 window.addEventListener("hashchange", () => ME && go());
 
@@ -183,6 +192,7 @@ function connect() {
     if (m.kind === "state") {
       const oldRefresh = S.settings && S.settings.camera_refresh_s;
       S = m.data;
+      applyTheme(S.settings && S.settings.theme);
       const hs = $("#hubstate");
       const online = S.printers.filter(p => p.online).length, hubUsed = S.printers.some(p => !p.direct) || S.hub_ok || S.hub_error;
       hs.className = "hubstate " + (online === S.printers.length && (S.hub_ok || !hubUsed) ? "ok" : online ? "warn" : "ko");

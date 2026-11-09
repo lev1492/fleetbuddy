@@ -4,3 +4,5 @@ requests==2.32.3
 python-multipart==0.0.20
 openpyxl==3.1.5
 websocket-client==1.8.0
+holidays==0.62
+tzdata==2026.6

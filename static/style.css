@@ -4,10 +4,13 @@
   --radius-lg:14px; --radius-sm:6px;
   color-scheme: light;
 }
+/* tema: automatico (segue il sistema), chiaro o scuro (Amministrazione → Generali) */
 @media (prefers-color-scheme: dark){
-  :root{ --bg:#12161A; --surface:#1B2126; --sunk:#232A30; --ink:#E4E9ED; --muted:#98A4AD; --line:#2E363D;
+  :root:not([data-theme="light"]){ --bg:#12161A; --surface:#1B2126; --sunk:#232A30; --ink:#E4E9ED; --muted:#98A4AD; --line:#2E363D;
     --run:#33B39C; --pause:#E0A43B; --err:#E8695C; --done:#6F9BF0; --off:#6A747C; color-scheme: dark; }
 }
+:root[data-theme="dark"]{ --bg:#12161A; --surface:#1B2126; --sunk:#232A30; --ink:#E4E9ED; --muted:#98A4AD; --line:#2E363D;
+  --run:#33B39C; --pause:#E0A43B; --err:#E8695C; --done:#6F9BF0; --off:#6A747C; color-scheme: dark; }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif;
@@ -463,6 +466,34 @@ tr.bhead td{font-weight:700;color:var(--muted);text-transform:uppercase;letter-s
 .gnow{position:absolute;top:0;bottom:0;width:2px;background:var(--err);z-index:4;pointer-events:none}
 .gnow span{position:absolute;top:2px;left:4px;font-size:10px;font-weight:800;color:#fff;background:var(--err);padding:1px 5px;border-radius:4px;text-transform:uppercase}
 .geta{position:absolute;top:14px;transform:translateX(-4px);font-size:16px;color:var(--pc);z-index:5;cursor:help;text-shadow:0 1px 2px rgba(0,0,0,.4)}
+/* ================================================================ Generali */
+.gen{display:flex;flex-direction:column;gap:14px;max-width:980px}
+.gen .box h2{margin-top:0}
+.gweek{display:flex;flex-direction:column;gap:6px}
+.gday{display:grid;grid-template-columns:150px 1fr auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius-sm)}
+.gday.off{background:var(--sunk)}
+.gdn b{text-transform:capitalize}
+.givs{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.giv{display:inline-flex;gap:4px;align-items:center;background:var(--sunk);border-radius:6px;padding:3px 6px}
+.giv input[type=time]{padding:3px 4px;width:auto}
+.gpause{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.gclo{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:6px 0;border-bottom:1px dashed var(--line)}
+.gdays{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px}
+.gdo{display:flex;flex-direction:column;border-left:3px solid var(--done);padding:4px 10px;background:var(--sunk);border-radius:0 6px 6px 0}
+.gdo.closure{border-left-color:var(--pause)}
+.gdo b{text-transform:capitalize;font-size:13px}
+.gsave{position:sticky;bottom:0;display:flex;justify-content:flex-end;align-items:center;gap:12px;padding:12px 0;background:linear-gradient(transparent,var(--bg) 40%)}
+@media (max-width:760px){.gday{grid-template-columns:1fr}}
+/* Gantt: orari non lavorativi e stampanti offline */
+.gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}
+.gclosed.hol{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--pause) 18%,transparent) 0 5px,transparent 5px 10px)}
+.gholname{position:absolute;top:34px;height:16px;font-size:10px;font-weight:700;color:var(--pause);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:1px 4px;z-index:2;pointer-events:auto}
+.glegend .lg.closed i{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 40%,transparent) 0 3px,transparent 3px 6px)}
+.goff{font-size:10px;font-weight:800;text-transform:uppercase;color:#fff;background:var(--off);padding:1px 6px;border-radius:8px;vertical-align:1px}
+.gr.off,.grow2.off{opacity:1}
+.gr.off b{color:var(--muted)}
+.gb.offline{background-image:repeating-linear-gradient(-45deg,transparent 0 7px,rgba(0,0,0,.18) 7px 14px)!important;filter:saturate(.6)}
+
 @media (max-width:760px){.gantt{grid-template-columns:140px 1fr}.gsat i{max-width:60px}.po-actions{width:100%}}
 
 @media (max-width:760px){.prow{grid-template-columns:auto 1fr auto}.prow .pr-prog,.prow .pr-temp{display:none}}

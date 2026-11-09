@@ -131,6 +131,8 @@ class Service:
         self._hms_seen: dict[str, set] = {}
         self._snap_cache: dict[str, tuple[float, bytes]] = {}
         self._thumb_cache: dict[str, tuple[float, bytes | None]] = {}
+        self._last_online: dict[str, tuple[float, dict]] = {}   # ultimo stato visto online (per la pianificazione)
+        self._workcal = None
         self._task: asyncio.Task | None = None
         for sub in ("archive", "snapshots", "tmp"):
             (cfg.data_path / sub).mkdir(exist_ok=True)
@@ -215,6 +217,9 @@ class Service:
                 for sn, p in fresh.items():
                     await self._track(p, self.printers.get(sn))
                 self.printers = {**self.hub_printers, **direct_new}
+                for sn_, p_ in self.printers.items():
+                    if p_["online"]:
+                        self._last_online[sn_] = (time.time(), p_)
                 self.last_poll = time.time()
                 await self._dispatch_queue()
                 await production.dispatch(self)
@@ -329,6 +334,17 @@ class Service:
                 self.db.x("UPDATE queue SET copies=copies+1, message=? WHERE id=? AND status='queued'", (why, q["id"]))
             else:
                 self.db.x("UPDATE queue SET status='error', message=? WHERE id=? AND status='sent'", (why, q["id"]))
+
+    def workcal(self):
+        """Calendario lavorativo (Amministrazione → Generali), ricreato quando le impostazioni cambiano."""
+        if self._workcal is None:
+            from .workcal import WorkCalendar
+            try:
+                self._workcal = WorkCalendar(self.db.get_setting("work_calendar", {}) or {})
+            except Exception:  # noqa: BLE001 - impostazioni non valide: si lavora senza calendario
+                log.exception("Calendario lavorativo non valido: ignorato")
+                self._workcal = WorkCalendar({})
+        return self._workcal
 
     def has_pending(self, sn: str) -> bool:
         """La stampante sta ancora ricevendo una stampa (inviata da meno di 30 minuti, non ancora partita

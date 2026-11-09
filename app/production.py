@@ -209,6 +209,10 @@ async def dispatch(svc):
     units = ordered_pending(db)
     if not units:
         return
+    cal = svc.workcal()
+    now = time.time()
+    if cal.active() and not cal.is_working(now):
+        return                                       # fuori orario lavorativo: nessun nuovo pezzo
     queue_targets = {r["printer_sn"] for r in db.q("SELECT printer_sn FROM queue WHERE status='queued' AND printer_sn IS NOT NULL")}
     if not db.get_setting("queue_paused", False):
         queue_any = db.one("SELECT COUNT(*) AS n FROM queue WHERE status='queued' AND printer_sn IS NULL") or {}
@@ -222,6 +226,8 @@ async def dispatch(svc):
             db.x("UPDATE production_units SET status='failed', message=? WHERE id=?", (_msg("file rimosso dall'archivio"), u["id"]))
             continue
         pl = plate_of(f, u["plate"])
+        if cal.active() and not cal.can_start_now(now, duration_s(f, u["plate"])):
+            continue                                 # modalità "intera": non finirebbe entro l'orario di oggi
         note = None
         for sn in json.loads(u["printers"] or "[]"):
             p = svc.printers.get(sn)
@@ -264,7 +270,12 @@ def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72) -> di
     db = svc.db
     now = time.time()
     co = changeover_s(db)
+    cal = svc.workcal()
     files: dict[int, dict | None] = {}
+
+    def free_after(end: float) -> float:
+        # il cambio piatto richiede una persona: avviene in orario lavorativo
+        return (cal.next_working(end) if cal.active() else end) + co
 
     def file(fid):
         if fid not in files:
@@ -283,11 +294,23 @@ def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72) -> di
         state = p["state"] if p["online"] else "OFFLINE"
         rows[sn] = {"sn": sn, "name": p["name"], "online": p["online"], "state": state, "brand": p.get("brand", ""),
                     "model": p.get("printer_model") or p.get("model", "")}
-        if not p["online"]:
-            free_at[sn] = None
-            continue
         t = now
         job = svc._open_jobs.get(sn)
+        if not p["online"]:
+            # stampante offline: resta nel piano. Se stava stampando, la stampa continua a comparire stimata
+            # dall'ultimo stato noto; i pezzi restano pianificati su di lei (si riallinea quando torna online)
+            seen, last = svc._last_online.get(sn, (now, {}))
+            rows[sn]["last_seen"] = seen
+            if job:
+                rem = max(60, (last.get("remaining_min") or 0) * 60 - (now - seen))
+                u = unit_of_job.get(job.get("id"))
+                end = now + rem
+                bars.append({"sn": sn, "start": job.get("started_at") or seen, "end": end, "kind": "current", "offline": True,
+                             "label": job.get("task_name") or last.get("task_name") or "", "progress": last.get("progress", 0),
+                             "production_id": u["production_id"] if u else None, "color": u["color"] if u else None})
+                t = free_after(end)
+            free_at[sn] = t
+            continue
         if p["active"]:
             rem = (p.get("remaining_min") or 0) * 60
             start = (job or {}).get("started_at") or now - 60
@@ -296,10 +319,11 @@ def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72) -> di
             bars.append({"sn": sn, "start": start, "end": end, "kind": "current", "label": p.get("task_name") or "",
                          "progress": p.get("progress", 0), "production_id": u["production_id"] if u else None,
                          "color": u["color"] if u else None, "paused": p["state"] == "PAUSE"})
-            t = end + co
+            t = free_after(end)
         elif p["state"] in ("FINISH", "FAILED"):
-            bars.append({"sn": sn, "start": now, "end": now + co, "kind": "clear", "label": ""})
-            t = now + co
+            cw = cal.next_working(now) if cal.active() else now
+            bars.append({"sn": sn, "start": cw, "end": cw + co, "kind": "clear", "label": ""})
+            t = cw + co
         elif svc.has_pending(sn):
             pend = svc._take_pending(sn, consume=False) or {}
             f = file(pend.get("file_id")) if pend.get("file_id") else None
@@ -308,7 +332,7 @@ def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72) -> di
             u = db.one("SELECT p.color, p.id FROM production_units x JOIN productions p ON p.id=x.production_id WHERE x.id=?", (uid,)) if uid else None
             bars.append({"sn": sn, "start": now, "end": now + d, "kind": "starting", "label": pend.get("task_name") or "",
                          "production_id": u["id"] if u else None, "color": u["color"] if u else None})
-            t = now + d + co
+            t = free_after(now + d)
         free_at[sn] = t
     # coda manuale indirizzata a una stampante: ha la precedenza
     for q in db.q("SELECT * FROM queue WHERE status='queued' AND printer_sn IS NOT NULL ORDER BY position, id"):
@@ -320,7 +344,7 @@ def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72) -> di
             d = duration_s(f, q["plate"])
             bars.append({"sn": sn, "start": free_at[sn], "end": free_at[sn] + d, "kind": "queue",
                          "label": f["filename"] if f else "?"})
-            free_at[sn] += d + co
+            free_at[sn] = free_after(free_at[sn] + d)
     # pezzi della produzione (più l'eventuale ordine in anteprima)
     units = [dict(u) for u in ordered_pending(db)]
     if draft:
@@ -338,15 +362,18 @@ def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72) -> di
     for u in units:
         f = file(u["file_id"])
         cands = [sn for sn in json.loads(u["printers"] or "[]") if free_at.get(sn) is not None and f and compatible(svc, f, sn)]
+        # a parità di tempo si preferisce una stampante online
+        cands.sort(key=lambda s: not rows[s]["online"])
         if not cands:
             unplaced[u["production_id"]] = unplaced.get(u["production_id"], 0) + 1
             continue
-        sn = min(cands, key=lambda s: (free_at[s], rows[s]["name"]))
+        sn = min(cands, key=lambda s: (free_at[s], not rows[s]["online"], rows[s]["name"]))
         d = duration_s(f, u["plate"])
-        start = max(free_at[sn], now)
+        start = cal.start_for(max(free_at[sn], now), d)
         bars.append({"sn": sn, "start": start, "end": start + d, "kind": "plan", "label": f["filename"] if f else "?",
-                     "production_id": u["production_id"], "unit_id": u["id"], "color": u["color"]})
-        free_at[sn] = start + d + co
+                     "production_id": u["production_id"], "unit_id": u["id"], "color": u["color"],
+                     "offline": not rows[sn]["online"]})
+        free_at[sn] = free_after(start + d)
         eta[u["production_id"]] = max(eta.get(u["production_id"], 0), start + d)
     # pezzi in stampa: la fine stimata dell'ordine non può essere prima della loro fine
     for b in bars:
@@ -355,9 +382,11 @@ def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72) -> di
     horizon = now + horizon_h * 3600
     for sn, r in rows.items():
         busy = sum(max(0, min(b["end"], horizon) - max(b["start"], now)) for b in bars if b["sn"] == sn and b["kind"] != "clear")
-        r["saturation"] = round(100 * busy / (horizon - now)) if r["online"] else None
+        r["saturation"] = round(100 * busy / (horizon - now))
         r["free_at"] = free_at.get(sn)
         r["used"] = any(b["sn"] == sn for b in bars)
+    closed = cal.closed_spans(now - 3600, horizon) if cal.active() else []
     return {"now": now, "changeover_s": co, "horizon_h": horizon_h, "rows": list(rows.values()), "bars": bars,
+            "closed": closed, "calendar_mode": cal.mode if cal.active() else "always",
             "eta": {str(k): v for k, v in eta.items()}, "unplaced": {str(k): v for k, v in unplaced.items()},
             "end": max([b["end"] for b in bars] + [now])}

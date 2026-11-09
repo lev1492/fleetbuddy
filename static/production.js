@@ -143,30 +143,38 @@ function renderGantt() {
     const p = prods[b.production_id];
     const col = b.color || (p && p.color) || "";
     const dim = PHILITE && b.production_id !== PHILITE ? " dim" : "";
-    const tip = [p ? p.name : b.kind === "queue" ? t("Coda manuale") : "", b.label, `${KIND[b.kind] || ""}`,
+    const tip = [p ? p.name : b.kind === "queue" ? t("Coda manuale") : "", b.label, `${KIND[b.kind] || ""}${b.offline ? " · " + t("stampante offline: stima dall'ultimo stato noto") : ""}`,
       `${whenAbs(b.start)} → ${whenAbs(b.end)} (${fmtDur(b.end - b.start)})`].filter(Boolean).join("\n");
-    return `<div class="gb ${b.kind}${col ? " pc" : ""}${b.paused ? " paused" : ""}${dim}" style="left:${left}px;width:${w}px;${col ? `--pc:${esc(col)}` : ""}"
+    return `<div class="gb ${b.kind}${col ? " pc" : ""}${b.paused ? " paused" : ""}${b.offline ? " offline" : ""}${dim}" style="left:${left}px;width:${w}px;${col ? `--pc:${esc(col)}` : ""}"
       title="${esc(tip)}" ${b.production_id ? `data-hp="${b.production_id}"` : ""}>${b.kind === "current" ? `<i style="width:${b.progress || 0}%"></i>` : ""}
       <span>${w > 46 ? esc(b.kind === "clear" ? "⟲" : (p ? p.name + " · " : "") + (b.label || "").replace(/\.(gcode\.3mf|gcode|bgcode|ufp|3mf)$/i, "")) : ""}</span></div>`;
   };
+  const spans = (pl.closed || []).filter(c => c.end > t0 && c.start < t1);
+  const closedRow = spans.map(c => `<div class="gclosed${c.label ? " hol" : ""}" style="left:${x(c.start)}px;width:${Math.max(1, x(c.end) - x(c.start))}px"></div>`).join("");
+  const closedHead = spans.filter(c => c.label && x(c.end) - x(c.start) > 30).map(c => `<div class="gholname" style="left:${x(c.start)}px;width:${x(c.end) - x(c.start)}px" title="${esc(c.label)}">${esc(c.label)}</div>`).join("");
   const etas = Object.entries(pl.eta).map(([id, ts]) => [prods[+id], ts]).filter(([p, ts]) => p && ts <= t1 && ts >= t0);
   const legend = PDATA.productions.filter(p => ["active", "paused"].includes(p.status));
   box.innerHTML = `<div class="gtools">
       <div class="seg" role="group">${ZOOMS.map(([h, l]) => `<button type="button" data-z="${h}" class="${h === PZOOM ? "on" : ""}">${t(l)}</button>`).join("")}</div>
       <div class="glegend">${legend.map(p => `<button type="button" class="chip ${PHILITE === p.id ? "on" : ""}" data-hp="${p.id}" style="--c:${esc(p.color)}"><i></i>${esc(p.name)}${p.eta ? ` · ${whenAbs(p.eta)}` : ""}</button>`).join("")}
-        <span class="chip lg queue"><i></i>${t("Coda manuale")}</span><span class="chip lg clear"><i></i>${t("Cambio piatto ({m} min)", {m: Math.round(pl.changeover_s / 60)})}</span></div>
+        <span class="chip lg queue"><i></i>${t("Coda manuale")}</span>${pl.calendar_mode !== "always" ? `<span class="chip lg closed"><i></i>${t("Fuori orario")}</span>` : ""}<span class="chip lg clear"><i></i>${t("Cambio piatto ({m} min)", {m: Math.round(pl.changeover_s / 60)})}</span></div>
       ${isAdmin() ? `<label class="inline small">${t("Cambio piatto")} <input type="number" id="pco" min="0" max="240" value="${Math.round(pl.changeover_s / 60)}" style="width:64px"> min</label>` : ""}</div>
     ${rows.length ? `<div class="gantt">
       <div class="gl"><div class="gh">${t("Stampante")} · ${t("saturazione")}</div>
-        ${rows.map(r => `<div class="gr ${r.online ? "" : "off"}"><b>${esc(r.name)}</b><small class="muted">${esc(r.model || "")} · ${r.online ? stateName(r.state) : t("Offline")}</small>
+        ${rows.map(r => `<div class="gr ${r.online ? "" : "off"}"><b>${esc(r.name)}${r.online ? "" : ` <span class="goff">${t("offline")}</span>`}</b>
+          <small class="muted">${esc(r.model || "")} · ${r.online ? stateName(r.state) : r.last_seen ? t("vista l'ultima volta {w}", {w: whenAbs(r.last_seen)}) : t("Offline")}</small>
           ${r.saturation != null ? `<span class="gsat" title="${esc(t("Tempo occupato nelle prossime {h} ore", {h: PZOOM}))}"><i style="width:${r.saturation}%;${r.saturation > 85 ? "background:var(--err)" : r.saturation > 60 ? "background:var(--pause)" : ""}"></i><em>${r.saturation}%</em></span>` : ""}</div>`).join("")}</div>
       <div class="gw"><div class="gc" style="width:${W}px">
         <div class="gh">${ticks.join("")}${etas.map(([p, ts]) => `<div class="geta" style="left:${x(ts)}px;--pc:${esc(p.color)}" title="${esc(t("Fine stimata di {p}: {w}", {p: p.name, w: whenAbs(ts)}))}">⚑</div>`).join("")}</div>
-        ${rows.map(r => `<div class="grow2 ${r.online ? "" : "off"}">${pl.bars.filter(b => b.sn === r.sn).map(bar).join("")}</div>`).join("")}
+        ${closedHead}
+        ${rows.map(r => `<div class="grow2 ${r.online ? "" : "off"}">${closedRow}${pl.bars.filter(b => b.sn === r.sn).map(bar).join("")}</div>`).join("")}
         <div class="gnow" style="left:${x(now)}px"><span>${t("adesso")}</span></div>
         ${ticks.map(tk => tk.replace('class="gt', 'class="gline gt')).join("")}
       </div></div></div>
-      <p class="sub small">${t("La pianificazione segue le priorità e l'ordine degli ordini, la durata stimata di ogni piatto e il tempo di cambio piatto. Si aggiorna da sola: una stampa fallita viene rilanciata e il piano slitta.")}</p>`
+      <p class="sub small">${t("La pianificazione segue le priorità e l'ordine degli ordini, la durata stimata di ogni piatto e il tempo di cambio piatto. Si aggiorna da sola: una stampa fallita viene rilanciata e il piano slitta.")}
+        ${pl.calendar_mode === "always" ? t("Il calendario lavorativo non è attivo: si pianifica 24 ore su 24 (Amministrazione → Generali).")
+          : pl.calendar_mode === "full" ? t("Calendario lavorativo attivo: le stampe iniziano e finiscono in orario lavorativo.")
+          : t("Calendario lavorativo attivo: le nuove stampe partono solo in orario lavorativo.")}</p>`
       : `<div class="empty">${t("Nessuna stampante da pianificare.")}</div>`}`;
   $$("#pbody [data-z]").forEach(b => b.onclick = () => { PZOOM = +b.dataset.z; localStorage.setItem("fb_pzoom", PZOOM); RENDER.production(); });
   box.onclick = e => { const h = e.target.closest("[data-hp]"); if (!h) return; PHILITE = PHILITE === +h.dataset.hp ? null : +h.dataset.hp; renderGantt(); };
