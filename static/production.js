@@ -101,8 +101,8 @@ function renderOrders() {
       const a = b.dataset.po;
       if (a === "up" || a === "down") await act(() => api(`/api/productions/${pid}/move`, {method: "POST", body: {direction: a}}));
       if (a === "pause" || a === "resume") await act(() => api(`/api/productions/${pid}`, {method: "PATCH", body: {status: a === "pause" ? "paused" : "active"}}));
-      if (a === "cancel" && confirm(t("Annullare l'ordine? I pezzi non ancora avviati non verranno stampati; quelli in stampa terminano normalmente."))) await act(() => api(`/api/productions/${pid}/cancel`, {method: "POST"}));
-      if (a === "delete" && confirm(t("Eliminare l'ordine dall'elenco? Lo storico delle stampe resta."))) await act(() => api(`/api/productions/${pid}`, {method: "DELETE"}));
+      if (a === "cancel" && await uiConfirm(t("Annullare l'ordine? I pezzi non ancora avviati non verranno stampati; quelli in stampa terminano normalmente."), {danger: true, okLabel: t("Annulla l'ordine")})) await act(() => api(`/api/productions/${pid}/cancel`, {method: "POST"}));
+      if (a === "delete" && await uiConfirm(t("Eliminare l'ordine dall'elenco? Lo storico delle stampe resta."), {danger: true})) await act(() => api(`/api/productions/${pid}`, {method: "DELETE"}));
       return RENDER.production();
     }
     if (b && b.dataset.u) {

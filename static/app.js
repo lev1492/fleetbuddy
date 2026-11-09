@@ -70,6 +70,50 @@ const fmtDate = ts => ts ? new Date(ts * 1000).toLocaleString(LOCALES[LANG], {da
 const dots = fils => `<span class="fdots">${(fils || []).map(f => `<i style="--c:${esc(f.color)}" title="${esc(f.type)}"></i>`).join("")}</span>`;
 const printerName = sn => (S.printers.find(p => p.sn === sn) || {}).name || sn || t("Qualsiasi");
 const projectOf = id => PROJECTS.find(p => p.id === id) || {name: t("Senza progetto"), color: "#8A949C"};
+// Finestre di conferma e di richiesta testo dell'interfaccia, al posto delle finestre di avviso del browser.
+// Restituiscono una promessa: uiConfirm → true/false, uiPrompt → testo oppure null se annullato.
+function uiAsk({message, input = null, okLabel = "", danger = false}) {
+  return new Promise(resolve => {
+    let d = document.getElementById("ask");
+    if (!d) { d = document.createElement("dialog"); d.id = "ask"; d.className = "ask"; document.body.appendChild(d); }
+    d.innerHTML = `<form method="dialog"><p class="askmsg">${esc(message)}</p>
+      ${input !== null ? `<input id="askin" value="${esc(input)}" autocomplete="off">` : ""}
+      <div class="dlgfoot"><button value="cancel">${t("Annulla")}</button>
+        <button value="ok" class="${danger ? "danger solid" : "primary"}" id="askok">${esc(okLabel || (danger ? t("Elimina") : t("Conferma")))}</button></div></form>`;
+    const inp = d.querySelector("#askin");
+    if (inp) inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); d.close("ok"); } };
+    d.returnValue = "";
+    d.onclose = () => { const ok = d.returnValue === "ok"; resolve(inp ? (ok ? inp.value : null) : ok); };
+    d.showModal();
+    (inp || d.querySelector("#askok")).focus();
+    if (inp) inp.select();
+  });
+}
+const uiConfirm = (message, opt = {}) => uiAsk({message, ...opt});
+const uiPrompt = (message, value = "") => uiAsk({message, input: value, okLabel: t("Salva")});
+
+// Nome del colore più vicino a un codice esadecimale (distanza percepita nello spazio CIELAB)
+const COLOR_NAMES = {
+  "#000000": "Nero", "#1E1E1E": "Nero", "#4A4A4A": "Grigio antracite", "#808080": "Grigio", "#C8C8C8": "Grigio chiaro", "#FFFFFF": "Bianco",
+  "#F3EFE0": "Avorio", "#D3C5A3": "Beige", "#C9A227": "Oro", "#BFC5CA": "Argento", "#8C6A3F": "Bronzo",
+  "#6D4C41": "Marrone", "#4A3520": "Marrone scuro", "#A0522D": "Terracotta", "#E53935": "Rosso", "#8B0000": "Bordeaux",
+  "#FF8C00": "Arancione", "#FFD700": "Giallo", "#F2E68C": "Giallo chiaro", "#2E7D32": "Verde", "#7CB342": "Verde chiaro",
+  "#1B4D2E": "Verde scuro", "#26A69A": "Verde acqua", "#00BCD4": "Ciano", "#42A5F5": "Azzurro", "#1565C0": "Blu",
+  "#0D1B4C": "Blu notte", "#7B1FA2": "Viola", "#B39DDB": "Lilla", "#F48FB1": "Rosa", "#E91E63": "Fucsia",
+};
+const _lab = hex => {
+  const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v > 0.04045 ? ((v + 0.055) / 1.055) ** 2.4 : v / 12.92);
+  const xyz = [c[0] * 0.4124 + c[1] * 0.3576 + c[2] * 0.1805, c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722, c[0] * 0.0193 + c[1] * 0.1192 + c[2] * 0.9505]
+    .map((v, i) => v / [0.95047, 1, 1.08883][i]).map(v => v > 0.008856 ? Math.cbrt(v) : 7.787 * v + 16 / 116);
+  return [116 * xyz[1] - 16, 500 * (xyz[0] - xyz[1]), 200 * (xyz[1] - xyz[2])];
+};
+const _named = Object.entries(COLOR_NAMES).map(([h, n]) => [_lab(h), n]);
+function colorName(hex) {
+  const h = String(hex || "").trim().toUpperCase();
+  if (!/^#[0-9A-F]{6}/.test(h)) return t("Generico");
+  const l = _lab(h.slice(0, 7));
+  return t(_named.reduce((best, [m, n]) => { const d = (m[0] - l[0]) ** 2 + (m[1] - l[1]) ** 2 + (m[2] - l[2]) ** 2; return d < best[0] ? [d, n] : best; }, [Infinity, ""])[1]);
+}
 const projName = p => p.id === null ? t("Senza progetto") : p.name;
 const projPath = p => p.id === null ? t("Senza progetto") : (p.path && p.path.length ? p.path.join(" / ") : p.name);
 // messaggi di coda salvati dal server come {"msg": frase, "params": {...}}
@@ -382,7 +426,7 @@ async function remoteFilesDialog(p, folder) {
   $("#rfl").onclick = async e => {
     const b = e.target.closest("button"); if (!b) return;
     if (b.dataset.dir !== undefined) return remoteFilesDialog(p, b.dataset.dir);
-    if (b.dataset.file && confirm(t("Avviare {f} su {p}?", {f: b.dataset.file.split("/").pop(), p: p.name}))) {
+    if (b.dataset.file && await uiConfirm(t("Avviare {f} su {p}?", {f: b.dataset.file.split("/").pop(), p: p.name}))) {
       if (await act(() => api(`/api/printers/${p.sn}/start_remote`, {method: "POST", body: {path: b.dataset.file}}), t("Stampa avviata"))) $("#dlg").close();
     }
   };
@@ -567,7 +611,7 @@ $("#v-printers").addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return;
   if (b.dataset.opt) {
     const ask = {stop: t("Interrompere la stampa in corso?"), bed_clean: t("Confermi che il piatto è stato liberato? La stampante tornerà disponibile per la coda.")};
-    if (ask[b.dataset.opt] && !confirm(ask[b.dataset.opt])) return;
+    if (ask[b.dataset.opt] && !await uiConfirm(ask[b.dataset.opt], b.dataset.opt === "stop" ? {danger: true, okLabel: t("Ferma la stampa")} : {})) return;
     b.disabled = true;
     await act(() => api(`/api/printers/${sn}/opt`, {method: "POST", body: {opt: b.dataset.opt}}), t("Comando inviato (lo stato si aggiorna in ~10 s)"));
   } else if (b.hasAttribute("data-remote")) {
@@ -592,7 +636,7 @@ $("#v-printers").addEventListener("click", async e => {
       <div class="dlgfoot"><button value="ok">${t("Chiudi")}</button></div>`);
   } else if (b.hasAttribute("data-rename")) {
     closeMenus();
-    const n = prompt(t("Nuovo nome della stampante"), p.name);
+    const n = await uiPrompt(t("Nuovo nome della stampante"), p.name);
     if (n) await act(() => api(`/api/printers/${sn}/name`, {method: "PUT", body: {name: n}}), t("Nome aggiornato"));
   } else if (b.classList.contains("sp") && !p.direct) {
     if (canOperate()) editTray(p, +b.dataset.ams, +b.dataset.slot);
@@ -662,7 +706,7 @@ RENDER.archive = async function renderArchive() {
   if ($("#delproj")) $("#delproj").onclick = async () => {
     const msg = sel.depth > 0 ? t("Eliminare la cartella \"{p}\"? I suoi file e le sue sottocartelle passano nella cartella superiore.", {p: sel.name})
       : t("Eliminare il progetto \"{p}\"? I suoi {n} file non vengono cancellati: diventano \"senza progetto\".", {p: sel.name, n: sel.files});
-    if (!confirm(msg)) return;
+    if (!await uiConfirm(msg, {danger: true})) return;
     await act(() => api(`/api/projects/${sel.id}`, {method: "DELETE"}), sel.depth > 0 ? t("Cartella eliminata") : t("Progetto eliminato"));
     projFilter = sel.parent_id != null ? String(sel.parent_id) : ""; localStorage.setItem("fb_proj", projFilter); RENDER.archive();
   };
@@ -692,7 +736,7 @@ RENDER.archive = async function renderArchive() {
     const f = files.find(x => x.id === +it.dataset.id);
     if (e.target.closest("[data-print]")) printDialog(f);
     if (e.target.closest("[data-move]")) moveDialog(f);
-    if (e.target.closest("[data-del]") && confirm(t("Eliminare {f} dall'archivio?", {f: f.filename}))) { await act(() => api(`/api/files/${f.id}`, {method: "DELETE"})); RENDER.archive(); }
+    if (e.target.closest("[data-del]") && await uiConfirm(t("Eliminare {f} dall'archivio?", {f: f.filename}), {danger: true})) { await act(() => api(`/api/files/${f.id}`, {method: "DELETE"})); RENDER.archive(); }
   };
 };
 // p: cartella da modificare; parent: cartella in cui crearne una nuova (sottocartella)
@@ -927,7 +971,7 @@ RENDER.history = async function renderHistory() {
   el.onclick = async e => {
     const tr = e.target.closest("tr"); if (!tr) return;
     if (e.target.classList.contains("snap")) { openDialog(`<img src="${e.target.src}" alt="" style="width:100%;border-radius:8px"><div class="dlgfoot"><button value="ok">${t("Chiudi")}</button></div>`); return; }
-    if (e.target.closest("[data-del]") && confirm(t("Eliminare questa voce dallo storico?"))) { await act(() => api(`/api/jobs/${tr.dataset.id}`, {method: "DELETE"})); RENDER.history(); }
+    if (e.target.closest("[data-del]") && await uiConfirm(t("Eliminare questa voce dallo storico?"), {danger: true})) { await act(() => api(`/api/jobs/${tr.dataset.id}`, {method: "DELETE"})); RENDER.history(); }
     if (e.target.closest("[data-reprint]")) { const f = (await api("/api/files")).find(x => x.id === +tr.dataset.file); f ? printDialog(f) : toast(t("Il file non è più in archivio o non hai accesso al suo progetto"), "error"); }
   };
 };
@@ -1040,7 +1084,7 @@ RENDER.stats = async function renderStats() {
     ${printsChart(s.series)}
     <h2>${t("Filamento consumato")}</h2>
     ${s.filaments && s.filaments.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Marca")}</th><th>${t("Colore")}</th><th>${t("Filamento (g)")}</th><th>${t("Metri")}</th><th>${t("Stampe")}</th></tr></thead><tbody>
-    ${s.filaments.map(f => `<tr><td>${esc(f.type)}</td><td>${esc(f.brand || "—")}</td><td><span class="sw" style="--c:${esc(f.color)}"></span>${esc(f.color)}</td><td><b>${f.grams >= 1000 ? (f.grams / 1000).toFixed(2) + " kg" : Math.round(f.grams) + " g"}</b></td><td>${(f.meters || 0).toFixed(1)}</td><td>${f.prints}</td></tr>`).join("")}
+    ${s.filaments.map(f => `<tr><td>${esc(f.type)}</td><td>${esc(f.brand || "—")}</td><td title="${esc(f.color || t("Generico"))}"><span class="sw" style="--c:${esc(f.color || "transparent")}"></span>${esc(colorName(f.color))}</td><td><b>${f.grams >= 1000 ? (f.grams / 1000).toFixed(2) + " kg" : Math.round(f.grams) + " g"}</b></td><td>${(f.meters || 0).toFixed(1)}</td><td>${f.prints}</td></tr>`).join("")}
     </tbody></table></div><p class="sub" style="margin-top:8px">${t("Il consumo per tipo e colore è noto per le stampe avviate da FleetBuddy o il cui file è nell'archivio.")}</p>`
       : `<p class="sub">${t("Nessun consumo registrato nel periodo. Il dettaglio è disponibile per le stampe avviate da FleetBuddy o il cui file è nell'archivio.")}</p>`}
     <h2>${t("Per stampante")}</h2>
@@ -1092,11 +1136,11 @@ RENDER.hub = async function renderHub() {
 
   $("#wadd").onclick = async () => {
     const pwd = $("#wp").value;
-    if (pwd.length < 12 && !confirm(t("La password ha meno di 12 caratteri, la lunghezza consigliata dal produttore. Continuare?"))) return;
+    if (pwd.length < 12 && !await uiConfirm(t("La password ha meno di 12 caratteri, la lunghezza consigliata dal produttore. Continuare?"))) return;
     const r = await act(() => api("/api/hub/web_user", {method: "POST", body: {username: $("#wu").value, password: pwd}}), t("Account web creato"));
     if (r) $("#wp").value = "";
   };
-  $("#wdel").onclick = async () => { if (confirm(t("Eliminare l'account del Web Client? L'interfaccia web del Hub non sarà più accessibile."))) await act(() => api("/api/hub/web_user", {method: "DELETE"}), t("Account web eliminato")); };
+  $("#wdel").onclick = async () => { if (await uiConfirm(t("Eliminare l'account del Web Client? L'interfaccia web del Hub non sarà più accessibile."), {danger: true})) await act(() => api("/api/hub/web_user", {method: "DELETE"}), t("Account web eliminato")); };
   const showFound = list => {
     $("#found").innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Nome")}</th><th>${t("Modello")}</th><th>IP</th><th>${t("Seriale")}</th><th>${t("Stato")}</th><th></th></tr></thead><tbody>${list.map(p => {
       const can = p.farm !== false && p.bind !== "occupied" && p.connect !== "lan" && !p.fw_min;
@@ -1116,7 +1160,7 @@ RENDER.hub = async function renderHub() {
   $("#bound").innerHTML = hubPrinters.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Nome")}</th><th>${t("Modello")}</th><th>IP</th><th>${t("Firmware")}</th><th>${t("Aggiornamento")}</th><th></th></tr></thead><tbody>
     ${hubPrinters.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.model)}</td><td>${esc(p.ip)}</td><td>${esc(p.firmware)}</td><td>${esc(p.upgrade_state || "—")}</td>
     <td><button class="danger" data-unbind="${p.sn}">${t("Scollega")}</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="sub">${t("Nessuna stampante collegata.")}</p>`;
-  $("#bound").onclick = async e => { const b = e.target.closest("[data-unbind]"); if (!b || !confirm(t("Scollegare la stampante dal Hub?"))) return;
+  $("#bound").onclick = async e => { const b = e.target.closest("[data-unbind]"); if (!b || !await uiConfirm(t("Scollegare la stampante dal Hub?"), {danger: true})) return;
     const r = await act(() => api("/api/hub/unbind", {method: "POST", body: {dev_ids: [b.dataset.unbind]}}));
     if (r) (r.unbind_results || []).forEach(x => toast(x.code ? `${x.dev_id}: ${x.message}` : t("{sn} scollegata", {sn: x.dev_id}), x.code ? "error" : "ok")); };
 
@@ -1131,7 +1175,7 @@ RENDER.hub = async function renderHub() {
     await act(() => api("/api/hub/firmwares", {method: "POST", body: fd}), t("Firmware caricato")); loadFw(); };
   $("#fwlist").onclick = async e => {
     const up = e.target.closest("[data-up]"), del = e.target.closest("[data-delfw]");
-    if (del && confirm(t("Eliminare il firmware dal Hub?"))) { await act(() => api("/api/hub/firmwares", {method: "DELETE", body: {firmwares: [del.dataset.delfw]}})); loadFw(); }
+    if (del && await uiConfirm(t("Eliminare il firmware dal Hub?"), {danger: true})) { await act(() => api("/api/hub/firmwares", {method: "DELETE", body: {firmwares: [del.dataset.delfw]}})); loadFw(); }
     if (up) {
       const cands = S.printers.filter(p => !p.active && !p.direct);   // il Hub aggiorna solo le Bambu collegate
       openDialog(`<h3>${t("Aggiorna con {f}", {f: esc(up.dataset.up)})}</h3><p class="sub" style="margin:0">${t("Seleziona le stampanti inattive da aggiornare. Il Hub verifica la compatibilità del modello.")}</p>
@@ -1208,7 +1252,7 @@ RENDER.direct = async function renderDirect() {
     const tr = e.target.closest("tr[data-id]"); if (!tr) return;
     const r = rows.find(x => x.id === +tr.dataset.id);
     if (e.target.closest("[data-edit]")) directDialog(r);
-    if (e.target.closest("[data-del]") && confirm(t("Eliminare la stampante {p} da FleetBuddy? Lo storico delle sue stampe resta.", {p: r.name}))) {
+    if (e.target.closest("[data-del]") && await uiConfirm(t("Eliminare la stampante {p} da FleetBuddy? Lo storico delle sue stampe resta.", {p: r.name}), {danger: true})) {
       await act(() => api(`/api/direct/${r.id}`, {method: "DELETE"}), t("Stampante eliminata")); RENDER.direct();
     }
   };
@@ -1286,7 +1330,6 @@ RENDER.admin = async function renderAdmin() {
   await loadMeta();
   const [users, allGroups] = await Promise.all([api("/api/users").catch(e => (toast(e.message, "error"), [])), api("/api/groups").catch(() => [])]);
   const projs = PROJECTS.filter(p => p.id !== null && p.parent_id == null);   // le sottocartelle sono incluse
-  const refreshOpts = [[15, t("ogni 15 secondi")], [30, t("ogni 30 secondi")], [60, t("ogni minuto")], [120, t("ogni 2 minuti")], [300, t("ogni 5 minuti")]];
   el.innerHTML = `<div class="head"><div><h1>${t("Amministrazione")}</h1></div></div>${adminTabs("admin")}
     <p class="sub">${t("Utenti, gruppi di stampanti e permessi di accesso.")}</p>
     <h2>${t("Utenti")}</h2>
@@ -1309,36 +1352,20 @@ RENDER.admin = async function renderAdmin() {
       <div><div class="t"><span class="tag" style="--c:${esc(g.color)};font-size:15px;color:var(--ink)"><i></i>${esc(g.name)}</span></div>
       <div class="m">${g.printers.length ? g.printers.map(printerName).map(esc).join(", ") : t("Nessuna stampante")}</div></div>
       <div class="a"><button data-gedit>${t("Modifica")}</button><button class="danger" data-gdel>${t("Elimina")}</button></div></div>`).join("")}</div>`
-      : `<p class="sub">${t("Nessun gruppo. I gruppi servono a filtrare le stampanti, a mettere in coda \"sulla prima libera del gruppo\" e a dare accesso a più stampanti in un colpo solo.")}</p>`}
-
-    <h2>${t("Impostazioni")}</h2>
-    <div class="box"><div class="row">
-      <label>${t("Aggiornamento camera nelle schede")}<select id="camref">${refreshOpts.map(([v, l]) => `<option value="${v}" ${v === S.settings.camera_refresh_s ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-      <label>${t("Lingua delle notifiche")}<select id="notlang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === (S.settings.notify_lang || "it") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
-    </div><p class="sub" style="margin:10px 0 0">${t("La lingua delle notifiche vale per ntfy, Telegram e webhook, che non sono legati a un utente.")}</p></div>
-
-    <h2>${t("Informazioni")}</h2>
-    <div class="box"><dl><dt>${t("Applicazione")}</dt><dd>${esc(APP.name)} v${esc(APP.version)}</dd>
-      <dt>${t("Aggiornamenti")}</dt><dd id="updbox">${updateBox(UPDATE)}</dd>
-      ${APP.repo ? `<dt>${t("Repository")}</dt><dd><a href="${esc(APP.repo)}" target="_blank" rel="noopener">${esc(APP.repo)}</a></dd>` : ""}
-      <dt>${t("Utenti")}</dt><dd>${users.length}</dd><dt>${t("Stampanti collegate")}</dt><dd>${S.printers.length} <small class="muted">(${t("Fleet Hub: {a} · dirette: {b}", {a: S.printers.filter(p => !p.direct).length, b: S.printers.filter(p => p.direct).length})})</small></dd></dl></div>`;
+      : `<p class="sub">${t("Nessun gruppo. I gruppi servono a filtrare le stampanti, a mettere in coda \"sulla prima libera del gruppo\" e a dare accesso a più stampanti in un colpo solo.")}</p>`}`;
 
   $("#uadd").onclick = () => userDialog();
   $("#gadd").onclick = () => groupDialog();
-  const saveSetting = async body => { const r = await act(() => api("/api/settings", {method: "PUT", body}), t("Impostazione salvata")); if (r) { S.settings = r; startCamTimer(); } };
-  $("#camref").onchange = e => saveSetting({camera_refresh_s: +e.target.value});
-  wireUpdateBox();
-  $("#notlang").onchange = e => saveSetting({notify_lang: e.target.value});
   el.querySelector("table").onclick = async e => {
     const tr = e.target.closest("tr[data-id]"); if (!tr) return; const u = users.find(x => x.id === +tr.dataset.id);
     if (e.target.closest("[data-acc]")) accessDialog(u, allGroups, projs);
     if (e.target.closest("[data-edit]")) userDialog(u);
-    if (e.target.closest("[data-del]") && confirm(t("Eliminare l'utente {u}?", {u: u.username}))) { await act(() => api(`/api/users/${u.id}`, {method: "DELETE"}), t("Utente eliminato")); RENDER.admin(); }
+    if (e.target.closest("[data-del]") && await uiConfirm(t("Eliminare l'utente {u}?", {u: u.username}), {danger: true})) { await act(() => api(`/api/users/${u.id}`, {method: "DELETE"}), t("Utente eliminato")); RENDER.admin(); }
   };
   $$("[data-gedit],[data-gdel]", el).forEach(b => b.onclick = async () => {
     const g = allGroups.find(x => x.id === +b.closest(".item").dataset.id);
     if (b.hasAttribute("data-gedit")) return groupDialog(g);
-    if (confirm(t("Eliminare il gruppo {g}? Le stampanti restano collegate; le stampe in coda per questo gruppo andranno in errore.", {g: g.name}))) { await act(() => api(`/api/groups/${g.id}`, {method: "DELETE"}), t("Gruppo eliminato")); RENDER.admin(); }
+    if (await uiConfirm(t("Eliminare il gruppo {g}? Le stampanti restano collegate; le stampe in coda per questo gruppo andranno in errore.", {g: g.name}), {danger: true})) { await act(() => api(`/api/groups/${g.id}`, {method: "DELETE"}), t("Gruppo eliminato")); RENDER.admin(); }
   });
 };
 const filCell = j => j.filaments && j.filaments.length

@@ -23,7 +23,7 @@ from app.i18n import CATALOG_DIR, LANGS  # noqa: E402
 
 PY_FUNCS = {"_": 0, "tr": 1, "T": 0, "nt": 0, "toast": 0, "qmsg": 0, "sh": 0, "N_": 0, "_msg": 0}
 PY_DICTS = {"ERROR_HINTS", "STATUS_IT", "JOB_TOASTS", "JOB_TITLES"}
-JS_MAPS = ("STATES", "JOBS", "ROLES", "SPEEDS", "FLOW", "MATERIAL", "DIRECT_HINTS", "CONSUMPTION_SRC", "PRIO", "USTATE", "PSTATE", "ZOOM_LABEL", "CAL_MODES", "THEMES")
+JS_MAPS = ("STATES", "JOBS", "ROLES", "SPEEDS", "FLOW", "MATERIAL", "DIRECT_HINTS", "CONSUMPTION_SRC", "PRIO", "USTATE", "PSTATE", "ZOOM_LABEL", "CAL_MODES", "THEMES", "REFRESH_LABELS", "COLOR_NAMES")
 PLACEHOLDER = re.compile(r"\{(\w+)\}")
 
 

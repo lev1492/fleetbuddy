@@ -3,6 +3,17 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.17.0] – 2026-11-09
+
+### Novità
+- Amministrazione → Generali raccoglie ora anche le impostazioni (aggiornamento della camera, lingua delle notifiche)
+  e le informazioni (versione, aggiornamenti, utenti, stampanti collegate), prima nella pagina Utenti.
+- Statistiche → materiali: accanto al pallino compare il nome del colore più vicino al codice esadecimale (nero,
+  grigio antracite, beige, marrone scuro, fucsia…, calcolato nello spazio colore CIELAB), oppure "Generico" se il
+  colore non è indicato; il codice esadecimale compare passando il mouse.
+- Le conferme e le richieste di testo (eliminazioni, stop di una stampa, rinomina…) sono finestre dell'interfaccia
+  al posto degli avvisi del browser, con il pulsante rosso per le azioni distruttive.
+
 ## [0.16.2] – 2026-11-09
 
 ### Correzioni

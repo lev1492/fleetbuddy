@@ -8,6 +8,8 @@ const CAL_MODES = {
   full: "Stampe interamente in orario lavorativo (iniziano e finiscono in orario)",
   always: "Sempre (24 ore su 24, 7 giorni su 7: il calendario è ignorato)",
 };
+const REFRESH_LABELS = {15: "ogni 15 secondi", 30: "ogni 30 secondi", 60: "ogni minuto", 120: "ogni 2 minuti", 300: "ogni 5 minuti"};
+const REFRESH_OPTS = Object.entries(REFRESH_LABELS).map(([v, l]) => [+v, l]);
 const THEMES = {auto: "Automatico (come il sistema)", light: "Chiaro", dark: "Scuro"};
 const weekdayName = d => new Date(2024, 0, 1 + d).toLocaleDateString(LOCALES[LANG], {weekday: "long"});   // 1/1/2024 = lunedì
 const regionName = code => { try { return new Intl.DisplayNames([LOCALES[LANG]], {type: "region"}).of(code) || code; } catch { return code; } };
@@ -15,7 +17,7 @@ let GEN = null;
 
 RENDER.general = async function renderGeneral() {
   const el = $("#v-general");
-  try { GEN = await api("/api/settings/general"); }
+  try { GEN = await api("/api/settings/general"); GEN.users = (await api("/api/users").catch(() => [])).length; }
   catch (e) { el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const cfg = JSON.parse(JSON.stringify(GEN.calendar));
   let theme = GEN.theme || "auto";
@@ -25,6 +27,18 @@ RENDER.general = async function renderGeneral() {
       <section class="box"><h2>${t("Aspetto")}</h2>
         <div class="seg" id="gtheme">${Object.entries(THEMES).map(([k, l]) => `<button type="button" data-v="${k}" class="${k === theme ? "on" : ""}">${t(l)}</button>`).join("")}</div>
         <p class="sub small">${t("Vale per tutti gli utenti di FleetBuddy.")}</p></section>
+
+      <section class="box"><h2>${t("Impostazioni")}</h2>
+        <div class="row">
+          <label>${t("Aggiornamento camera nelle schede")}<select id="camref">${REFRESH_OPTS.map(([v, l]) => `<option value="${v}" ${v === S.settings.camera_refresh_s ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
+          <label>${t("Lingua delle notifiche")}<select id="notlang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === (S.settings.notify_lang || "it") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+        </div><p class="sub small" style="margin:10px 0 0">${t("La lingua delle notifiche vale per ntfy, Telegram e webhook, che non sono legati a un utente.")}</p></section>
+
+      <section class="box"><h2>${t("Informazioni")}</h2>
+        <dl><dt>${t("Applicazione")}</dt><dd>${esc(APP.name)} v${esc(APP.version)}</dd>
+          <dt>${t("Aggiornamenti")}</dt><dd id="updbox">${updateBox(UPDATE)}</dd>
+          ${APP.repo ? `<dt>${t("Repository")}</dt><dd><a href="${esc(APP.repo)}" target="_blank" rel="noopener">${esc(APP.repo)}</a></dd>` : ""}
+          <dt>${t("Utenti")}</dt><dd>${GEN.users}</dd><dt>${t("Stampanti collegate")}</dt><dd>${S.printers.length} <small class="muted">(${t("Fleet Hub: {a} · dirette: {b}", {a: S.printers.filter(p => !p.direct).length, b: S.printers.filter(p => p.direct).length})})</small></dd></dl></section>
 
       <section class="box"><h2>${t("Calendario lavorativo")}</h2>
         <p class="sub" style="margin-top:0">${t("La Produzione pianifica e avvia i pezzi tenendo conto di questi orari, delle festività e delle chiusure. Il cambio piatto richiede una persona, quindi avviene sempre in orario lavorativo.")}</p>
@@ -99,6 +113,10 @@ RENDER.general = async function renderGeneral() {
   }, 300); };
   drawSubdiv(); drawTzInfo(); drawWeek(); drawClosures(); preview();
 
+  const saveSetting = async body => { const r = await act(() => api("/api/settings", {method: "PUT", body}), t("Impostazione salvata")); if (r) { S.settings = r; startCamTimer(); } };
+  $("#camref").onchange = e => saveSetting({camera_refresh_s: +e.target.value});
+  $("#notlang").onchange = e => saveSetting({notify_lang: e.target.value});
+  wireUpdateBox();
   $("#gtheme").onclick = e => { const b = e.target.closest("[data-v]"); if (!b) return; theme = b.dataset.v;
     $$("#gtheme button").forEach(x => x.classList.toggle("on", x === b)); applyTheme(theme); };
   $("#gmode").onchange = e => { cfg.mode = e.target.value; };
