@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 from requests.auth import HTTPDigestAuth
 
 from ..hub_client import HubError
+from ..gcodemeta import parse_fdm_material as parse_material
 from .base import DirectClient, base_state, bed, mm_to_grams, nozzle
 
 JOB_STATE = {"printing": "RUNNING", "pre_print": "PREPARE", "pausing": "PAUSE", "paused": "PAUSE", "resuming": "RUNNING",
@@ -419,26 +420,3 @@ class UltimakerClient(DirectClient):
     def check_auth(self, auth_id: str) -> str:
         d = self._get(f"/api/v1/auth/check/{auth_id}") or {}
         return (d.get("message") if isinstance(d, dict) else str(d)) or "unknown"
-
-
-def parse_material(xml: str) -> dict:
-    """Legge un profilo materiale UltiMaker (fdmmaterial), ignorando gli spazi dei nomi XML."""
-    import xml.etree.ElementTree as ET
-    if not xml.strip().startswith("<"):
-        return {}
-    try:
-        root = ET.fromstring(xml)
-    except ET.ParseError:
-        return {}
-
-    def find(path: str) -> str:
-        node = root
-        for part in path.split("/"):
-            node = next((c for c in list(node) if c.tag.split("}")[-1] == part), None) if node is not None else None
-        return (node.text or "").strip() if node is not None else ""
-    num = lambda v: float(v) if re.match(r"^\d+(\.\d+)?$", v or "") else None
-    color = find("metadata/color_code")
-    return {"brand": find("metadata/name/brand"), "material": find("metadata/name/material"),
-            "color": find("metadata/name/color"), "color_code": color.upper()[:7] if color.startswith("#") else "",
-            "guid": find("metadata/GUID"), "density": num(find("properties/density")),
-            "diameter": num(find("properties/diameter"))}

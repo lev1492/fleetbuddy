@@ -3,6 +3,19 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.16.1] – 2026-11-09
+
+### Correzioni
+- File UltiMaker .ufp: il materiale ora viene riconosciuto. Il GUID indicato per ogni estrusore nell'intestazione
+  del G-code viene cercato tra i profili dei materiali inclusi nel pacchetto (/Materials/*.fdm_material): tipo,
+  marca, colore, densità e diametro. Il peso è quello calcolato da Cura (/Cura/slicemetadata.json), altrimenti il
+  volume per la densità reale del materiale.
+- I G-code già in archivio vengono rianalizzati automaticamente all'avvio quando la lettura dei metadati migliora,
+  senza doverli ricaricare.
+- Coda: un materiale veniva segnalato "non caricato" sulle stampanti che non hanno bobine AMS o Material Station
+  (es. UltiMaker Factor 4). Ora contano anche i materiali negli estrusori e, se la stampante non comunica i materiali,
+  non viene mostrato alcun avviso.
+
 ## [0.16.0] – 2026-11-09
 
 ### Novità

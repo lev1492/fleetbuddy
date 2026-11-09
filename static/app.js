@@ -875,11 +875,15 @@ function needHtml(q) {
   const fils = q.filaments || [];
   if (!fils.length) return "";
   const pr = q.printer_sn ? S.printers.find(x => x.sn === q.printer_sn) : null;
-  const loaded = pr ? new Set(pr.trays.filter(x => x.loaded).map(x => x.type.toUpperCase())) : null;
+  // materiali presenti: bobine (AMS, Material Station) e materiali negli estrusori (es. UltiMaker);
+  // se la stampante non ne comunica nessuno non si segnala nulla, invece di dare un avviso falso
+  const avail = pr ? [...pr.trays.filter(x => x.loaded).map(x => x.type), ...pr.nozzles.map(n => n.material_label).filter(Boolean)]
+    .map(x => (x || "").toUpperCase()) : [];
+  const loaded = avail.length ? {has: type => avail.some(a => a === type || a.split(/\s+/).join(" ").includes(type))} : null;
   const groups = [[1, sideLetter("left")], [2, sideLetter("right")], [null, ""]]
     .map(([ex, label]) => [label, fils.filter(f => (f.extruder || null) === ex)]).filter(([, l]) => l.length);
-  const one = f => { const miss = loaded && !loaded.has(f.type.toUpperCase());
-    return `<span class="nf ${miss ? "miss" : ""}" title="${esc(f.type)} ${esc(f.color)} · ${f.used_g} g${miss ? " – " + esc(t("non caricato")) : ""}"><i style="--c:${esc(f.color)}"></i>${esc(f.type)}</span>`; };
+  const one = f => { const miss = loaded && f.type && f.type !== "?" && !loaded.has(f.type.toUpperCase());
+    return `<span class="nf ${miss ? "miss" : ""}" title="${esc([f.brand, f.type, f.color_name || f.color].filter(Boolean).join(" "))} · ${f.used_g} g${miss ? " – " + esc(t("non caricato")) : ""}"><i style="--c:${esc(f.color)}"></i>${esc(f.type)}</span>`; };
   return `<div class="needs">${groups.map(([label, l]) => `<span class="need">${label ? `<b class="side">${label}</b>` : ""}${l.map(one).join("")}</span>`).join("")}</div>`;
 }
 RENDER.queue = async function renderQueue() {

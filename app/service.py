@@ -137,6 +137,7 @@ class Service:
         self._task: asyncio.Task | None = None
         for sub in ("archive", "snapshots", "tmp"):
             (cfg.data_path / sub).mkdir(exist_ok=True)
+        self._reanalyze_archive()
         # produzione: tabelle e riallineamento dei pezzi (dopo che tutto il resto è pronto)
         production.init(self.db)
         try:
@@ -338,6 +339,31 @@ class Service:
                 self.db.x("UPDATE queue SET copies=copies+1, message=? WHERE id=? AND status='queued'", (why, q["id"]))
             else:
                 self.db.x("UPDATE queue SET status='error', message=? WHERE id=? AND status='sent'", (why, q["id"]))
+
+    def _reanalyze_archive(self):
+        """Quando la lettura dei G-code migliora (META_VERSION), i file già in archivio vengono rianalizzati:
+        così materiali, pesi e tempi si aggiornano senza doverli ricaricare."""
+        from .gcodemeta import META_VERSION, parse_gcode
+        n = 0
+        for f in self.db.q("SELECT id, path, filename, meta FROM files"):
+            try:
+                meta = json.loads(f["meta"] or "{}")
+            except ValueError:
+                continue
+            if meta.get("kind") != "gcode" or int(meta.get("meta_version") or 1) >= META_VERSION:
+                continue
+            p = self.cfg.path(f["path"])
+            if not p.exists():
+                continue
+            try:
+                new = parse_gcode(p)
+            except Exception:  # noqa: BLE001 - file non più leggibile: resta com'è
+                log.warning("Rianalisi di %s non riuscita", f["filename"])
+                continue
+            self.db.x("UPDATE files SET meta=? WHERE id=?", (json.dumps(new), f["id"]))
+            n += 1
+        if n:
+            log.info("Archivio: %d file G-code rianalizzati con la nuova lettura dei metadati", n)
 
     async def _late_usage(self):
         """Consumo misurato che la stampante registra dopo la fine della stampa (es. storico UltiMaker):

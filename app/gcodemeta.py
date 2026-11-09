@@ -8,6 +8,7 @@ usata per i .gcode.3mf (un "piatto" unico), così archivio, coda e storico funzi
 from __future__ import annotations
 
 import base64
+import json
 import re
 import struct
 import zlib
@@ -22,27 +23,69 @@ def is_gcode(name: str) -> bool:
     return n.endswith(GCODE_EXT) and not n.endswith(".gcode.3mf")
 
 
-def _ufp(path: Path) -> tuple[str, bytes | None]:
-    """Pacchetto UltiMaker .ufp (zip): testo iniziale/finale del G-code e miniatura PNG."""
+META_VERSION = 2   # aumenta quando l'analisi migliora: i file già in archivio vengono rianalizzati all'avvio
+
+
+def parse_fdm_material(xml: str) -> dict:
+    """Profilo materiale UltiMaker/Cura (XML "fdmmaterial"): marca, tipo, colore, GUID, densità, diametro."""
+    import xml.etree.ElementTree as ET
+    if not (xml or "").strip().startswith("<"):
+        return {}
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return {}
+
+    def find(path: str) -> str:
+        node = root
+        for part in path.split("/"):
+            node = next((c for c in list(node) if c.tag.split("}")[-1] == part), None) if node is not None else None
+        return (node.text or "").strip() if node is not None else ""
+    num = lambda v: float(v) if re.match(r"^\d+(\.\d+)?$", v or "") else None
+    color = find("metadata/color_code")
+    return {"brand": find("metadata/name/brand"), "material": find("metadata/name/material"),
+            "color": find("metadata/name/color"), "color_code": color.upper()[:7] if color.startswith("#") else "",
+            "guid": find("metadata/GUID"), "density": num(find("properties/density")),
+            "diameter": num(find("properties/diameter"))}
+
+
+def _ufp(path: Path) -> dict:
+    """Pacchetto UltiMaker .ufp (zip): testo iniziale/finale del G-code, miniatura PNG, profili dei materiali
+    (/Materials/*.fdm_material, per GUID) e peso/lunghezza calcolati da Cura (/Cura/slicemetadata.json)."""
     import zipfile
+    out = {"text": "", "png": None, "materials": {}, "weights": [], "lengths": []}
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         g = next((n for n in names if n.lower().endswith((".gcode", ".gcode.gz"))), None)
-        text = ""
         if g:
             with z.open(g) as fh:
                 data = fh.read()
             if g.lower().endswith(".gz"):
                 import gzip
                 data = gzip.decompress(data)
-            text = data[:CHUNK].decode("utf-8", "replace") + "\n" + data[-CHUNK:].decode("utf-8", "replace")
+            out["text"] = data[:CHUNK].decode("utf-8", "replace") + "\n" + data[-CHUNK:].decode("utf-8", "replace")
         t = next((n for n in names if n.lower().endswith(".png") and "thumbnail" in n.lower()), None) or \
             next((n for n in names if n.lower().endswith(".png")), None)
-        return text, (z.read(t) if t else None)
+        out["png"] = z.read(t) if t else None
+        for n in names:
+            if n.lower().endswith((".fdm_material", ".xml.fdm_material")):
+                m = parse_fdm_material(z.read(n).decode("utf-8", "replace"))
+                if m.get("guid"):
+                    out["materials"][m["guid"].lower()] = m
+        sm = next((n for n in names if n.lower().endswith("slicemetadata.json")), None)
+        if sm:
+            try:
+                mat = (json.loads(z.read(sm)) or {}).get("material") or {}
+                out["weights"], out["lengths"] = list(mat.get("weight") or []), list(mat.get("length") or [])
+            except ValueError:
+                pass
+    return out
 
 
-def _griffin(text: str) -> dict:
-    """Intestazione "Griffin" dei G-code UltiMaker (;PRINT.TIME, ;EXTRUDER_TRAIN.n.MATERIAL.VOLUME_USED…)."""
+def _griffin(text: str, pkg: dict | None = None) -> dict:
+    """Intestazione "Griffin" dei G-code UltiMaker (;PRINT.TIME, ;EXTRUDER_TRAIN.n.MATERIAL.VOLUME_USED/GUID…).
+    pkg: dati del pacchetto .ufp (profili dei materiali per GUID, peso e lunghezza calcolati da Cura)."""
+    pkg = pkg or {}
     h = dict(re.findall(r"^;([A-Z_][A-Z0-9_.]+):(.*)$", text, re.M))
     if "PRINT.TIME" not in h and "FLAVOR" not in h:
         return {}
@@ -57,11 +100,18 @@ def _griffin(text: str) -> dict:
             continue
         if mm3 <= 0:
             continue
-        dia = float(h.get(f"EXTRUDER_TRAIN.{i}.MATERIAL.DIAMETER") or 2.85)
-        fils.append({"id": i + 1, "type": "?", "color": "#888888", "tray_info_idx": h.get(f"EXTRUDER_TRAIN.{i}.MATERIAL.GUID", ""),
-                     "used_g": round(mm3 / 1000 * 1.24, 2),     # densità tipica 1,24 g/cm³ (il G-code indica solo il volume)
-                     "used_m": round(mm3 / (3.14159 * (dia / 2) ** 2) / 1000, 2), "extruder": None, "tool": i,
-                     "nozzle": h.get(f"EXTRUDER_TRAIN.{i}.NOZZLE.NAME", "")})
+        guid = h.get(f"EXTRUDER_TRAIN.{i}.MATERIAL.GUID", "").strip()
+        m = (pkg.get("materials") or {}).get(guid.lower(), {})        # profilo incluso nel pacchetto .ufp
+        dia = m.get("diameter") or float(h.get(f"EXTRUDER_TRAIN.{i}.MATERIAL.DIAMETER") or 2.85)
+        dens = m.get("density") or 1.24                                # senza profilo: densità tipica del PLA
+        w = pkg.get("weights") or []
+        ln = pkg.get("lengths") or []
+        grams = float(w[i]) if i < len(w) and w[i] else mm3 / 1000 * dens   # peso calcolato da Cura, se presente
+        meters = float(ln[i]) if i < len(ln) and ln[i] else mm3 / (3.14159 * (dia / 2) ** 2) / 1000
+        fils.append({"id": i + 1, "type": m.get("material") or "?", "brand": m.get("brand") or "",
+                     "color": m.get("color_code") or "#888888", "color_name": m.get("color") or "",
+                     "tray_info_idx": guid, "guid": guid, "used_g": round(grams, 2), "used_m": round(meters, 2),
+                     "extruder": None, "tool": i, "nozzle": h.get(f"EXTRUDER_TRAIN.{i}.NOZZLE.NAME", "")})
     return {"secs": int(float(h.get("PRINT.TIME", 0) or 0)), "fils": fils, "machine": h.get("TARGET_MACHINE.NAME", "")}
 
 
@@ -144,7 +194,7 @@ def thumbnail_png(path: Path) -> bytes | None:
         thumbs = _bgcode_blocks(Path(path))[1]
         return max(thumbs)[1] if thumbs else None
     if str(path).lower().endswith(".ufp"):
-        return _ufp(Path(path))[1]
+        return _ufp(Path(path))["png"]
     head, tail = _read_ends(path)
     best, best_px = None, 0
     for text in (head, tail):
@@ -163,13 +213,15 @@ def thumbnail_png(path: Path) -> bytes | None:
 def parse_gcode(path: str | Path) -> dict:
     path = Path(path)
     fmt = "gcode"
+    pkg: dict = {}
     if path.name.lower().endswith(".bgcode"):
         text = _bgcode_blocks(path)[0]
         if not text:
             raise ValueError("file .bgcode non valido")
     elif path.name.lower().endswith(".ufp"):
         fmt = "ufp"
-        text, _png = _ufp(path)
+        pkg = _ufp(path)
+        text = pkg["text"]
         if not text:
             raise ValueError("file .ufp senza G-code")
     else:
@@ -206,7 +258,7 @@ def parse_gcode(path: str | Path) -> dict:
                      "color": (colors[i] if i < len(colors) else "#888888").upper() or "#888888",
                      "tray_info_idx": "", "used_g": round(g, 2), "used_m": round(meters, 2),
                      "extruder": None, "tool": i})
-    gr = _griffin(text)                                      # G-code UltiMaker (Cura, intestazione Griffin)
+    gr = _griffin(text, pkg)                                 # G-code UltiMaker (Cura, intestazione Griffin)
     if gr:
         secs = secs or gr["secs"]
         if gr["fils"] and not any(f["used_g"] for f in fils):
@@ -217,7 +269,7 @@ def parse_gcode(path: str | Path) -> dict:
     if m:
         slicer = m.group(1).strip()[:80]
     return {
-        "kind": "gcode", "format": fmt,
+        "kind": "gcode", "format": fmt, "meta_version": META_VERSION,
         "slicer_version": slicer,
         "printer_model_id": st.get("printer_model", "") or (gr or {}).get("machine", ""),
         "plates": [{"index": 1, "gcode": path.name, "has_gcode": True, "prediction_s": secs, "weight_g": weight,
