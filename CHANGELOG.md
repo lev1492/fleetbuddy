@@ -3,6 +3,19 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.19.1] – 2026-11-10
+
+### Novità
+- Telecamere RTSP: il campo "Indirizzo della foto della webcam" accetta anche flussi video rtsp://, per esempio la
+  Prusa Buddy3D Camera (rtsp://IP-della-camera/live). FleetBuddy estrae i fotogrammi dal flusso con ffmpeg sul
+  Raspberry Pi e li mostra nella scheda come per le altre webcam (i browser non riproducono RTSP). Funziona con
+  qualsiasi stampante e qualsiasi telecamera RTSP. La prova di connessione indica se manca ffmpeg o se dal flusso
+  non arriva nessun fotogramma.
+
+### Installazione
+- Serve il pacchetto di sistema ffmpeg: le nuove installazioni lo installano da sole; su quelle esistenti va
+  installato una volta con `sudo apt install -y ffmpeg`.
+
 ## [0.19.0] – 2026-11-10
 
 ### Novità

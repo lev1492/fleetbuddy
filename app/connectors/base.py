@@ -7,6 +7,7 @@ i comandi davvero disponibili.
 """
 from __future__ import annotations
 
+import logging
 import time
 import urllib.parse
 
@@ -149,6 +150,8 @@ class DirectClient:
         url = self.snapshot_url or self.auto_snapshot_url
         if not url:
             return None
+        if url.lower().startswith(("rtsp://", "rtsps://")):
+            return rtsp_frame(url)                            # es. Prusa Buddy3D Camera: rtsp://IP/live
         if url.startswith("/"):
             url = self.base + url
         try:
@@ -218,3 +221,60 @@ def plan_from_meta(meta: dict | None) -> list[dict] | None:
 def mm_to_grams(mm: float, diameter: float = 1.75, density: float = 1.24) -> float:
     """Peso di un filamento di cui si conosce solo la lunghezza (densità tipica del PLA se non indicata)."""
     return mm * 3.14159 * (diameter / 2) ** 2 * density / 1000
+
+
+# ---------------------------------------------------------------------- telecamere RTSP
+log = logging.getLogger("fleetbuddy.camera")
+_rtsp_cache: dict[str, tuple[float, bytes | None]] = {}
+_rtsp_locks: dict[str, "threading.Lock"] = {}
+_ffmpeg_warned = False
+
+
+def ffmpeg_available() -> bool:
+    import shutil
+    return shutil.which("ffmpeg") is not None
+
+
+def rtsp_frame(url: str, max_age: float = 5.0) -> bytes | None:
+    """Un fotogramma JPEG da un flusso RTSP (H.264/H.265), estratto con ffmpeg.
+
+    I browser non riproducono RTSP: FleetBuddy legge il flusso sul Raspberry Pi e ne mostra un'immagine come per le
+    altre webcam. Per qualche secondo il fotogramma viene riusato, così più utenti sulla stessa camera non avviano
+    ffmpeg più volte. Serve il pacchetto di sistema ffmpeg (sudo apt install ffmpeg)."""
+    import subprocess
+    import threading
+    global _ffmpeg_warned
+    hit = _rtsp_cache.get(url)
+    if hit and time.time() - hit[0] < max_age:
+        return hit[1]
+    if not ffmpeg_available():
+        if not _ffmpeg_warned:
+            log.warning("Telecamera RTSP: ffmpeg non è installato (sudo apt install ffmpeg)")
+            _ffmpeg_warned = True
+        return None
+    lock = _rtsp_locks.setdefault(url, threading.Lock())
+    with lock:                                                   # una sola lettura per volta della stessa camera
+        hit = _rtsp_cache.get(url)
+        if hit and time.time() - hit[0] < max_age:
+            return hit[1]
+        cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", "-rtsp_transport", "tcp", "-timeout", "8000000",
+               "-i", url, "-frames:v", "1", "-vf", "scale='min(1280,iw)':-2", "-q:v", "5",
+               "-f", "image2pipe", "-vcodec", "mjpeg", "-"]
+        if not url.lower().startswith(("rtsp://", "rtsps://")):
+            cmd = [c for c in cmd if c not in ("-rtsp_transport", "tcp", "-timeout", "8000000")]
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=15)
+            img = r.stdout if r.returncode == 0 and r.stdout[:2] == b"\xff\xd8" else None
+            if img is None:
+                log.info("Telecamera RTSP %s: nessun fotogramma (%s)", _safe_url(url), r.stderr.decode(errors="replace").strip()[:160])
+        except subprocess.TimeoutExpired:
+            img = None
+            log.info("Telecamera RTSP %s: nessuna risposta entro 15 s", _safe_url(url))
+        _rtsp_cache[url] = (time.time(), img)
+        return img
+
+
+def _safe_url(url: str) -> str:
+    """Indirizzo senza eventuali credenziali (rtsp://utente:password@IP/…), per i registri."""
+    import re
+    return re.sub(r"//[^/@]*@", "//***@", url)

@@ -6,7 +6,7 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$DIR"
 echo "==> Pacchetti di sistema"
 sudo apt-get update -qq
-sudo apt-get install -y -qq python3 python3-venv python3-pip openssl git curl
+sudo apt-get install -y -qq python3 python3-venv python3-pip openssl git curl ffmpeg
 PYV=$(python3 -c 'import sys;print(sys.version_info >= (3,11))')
 [ "$PYV" = "True" ] || { echo "Serve Python 3.11+ (Raspberry Pi OS Bookworm)"; exit 1; }
 echo "==> Ambiente virtuale"

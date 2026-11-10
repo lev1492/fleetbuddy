@@ -1601,8 +1601,11 @@ async def direct_test(request: Request, body: dict):
         raise HTTPException(400, e.localized(current_lang.get()))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, str(e))
+    from .connectors.base import ffmpeg_available
+    rtsp = (c.snapshot_url or "").lower().startswith(("rtsp://", "rtsps://"))
     return {"ok": True, **info, "snapshot_configured": c.has_snapshot(),
-            "snapshot": c.has_snapshot() and bool(await asyncio.to_thread(c.snapshot))}
+            "snapshot": c.has_snapshot() and bool(await asyncio.to_thread(c.snapshot)),
+            "rtsp": rtsp, "ffmpeg": ffmpeg_available() if rtsp else None}
 
 
 @app.post("/api/direct/ultimaker/auth")

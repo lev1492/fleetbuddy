@@ -1233,7 +1233,7 @@ const CONSUMPTION = new Proxy({}, {get: (_, k) => CONSUMPTION_OF[k] ? t(CONSUMPT
 const DIRECT_HINTS = {
   octoprint: "Chiave API: OctoPrint → Impostazioni → Application Keys (o API).",
   moonraker: "Mainsail/Fluidd usano Moonraker: indirizzo con porta 7125, oppure quello di Mainsail/Fluidd. Chiave API solo se richiesta.",
-  prusalink: "Utente maker e password mostrati sulla stampante (Impostazioni → Rete → PrusaLink). Firmware 5 o successivo.",
+  prusalink: "Utente maker e password mostrati sulla stampante (Impostazioni → Rete → PrusaLink). Firmware 5 o successivo. Buddy3D Camera: inserisci rtsp://IP-della-camera/live come indirizzo della webcam.",
   duet: "Lo stesso indirizzo di Duet Web Control; password solo se impostata con M551.",
   repetier: "Chiave API: Repetier-Server → Impostazioni globali → Connettività. Stampante: lo slug, se il server ne gestisce più di una.",
   ultimaker: "Tutti i modelli (UM3, S3, S5, S7, Factor 4). Per i comandi serve un'autorizzazione: premi «Richiedi autorizzazione» e approvala sul display della stampante. Con UltiMaker Connect attivo si vedono anche materiali, Material Station e anteprima.",
@@ -1288,7 +1288,8 @@ function directDialog(r) {
     <label data-f="api"><span data-al></span><input name="api" type="password" autocomplete="off"></label>
     <div data-f="umauth" class="umauth"><button type="button" id="umreq">${t("Richiedi autorizzazione alla stampante")}</button> <span id="umst" class="small"></span></div>
     <label data-f="slug">${t("Stampante su Repetier-Server (slug, facoltativo)")}<input name="slug" value="${esc(r ? r.extra || "" : "")}" placeholder="ender3"></label>
-    <label>${t("Indirizzo della foto della webcam (facoltativo)")}<input name="snap" value="${esc(r ? r.snapshot_url : "")}" placeholder="http://192.168.1.179:8080/?action=snapshot"></label>
+    <label>${t("Indirizzo della foto della webcam (facoltativo)")}<input name="snap" value="${esc(r ? r.snapshot_url : "")}" placeholder="http://192.168.1.179:8080/?action=snapshot · rtsp://192.168.1.180/live"></label>
+    <p class="sub small" style="margin:-4px 0 6px">${t("Accetta l'indirizzo di un'immagine (http) o di un flusso video RTSP, es. Prusa Buddy3D Camera: rtsp://IP-della-camera/live.")}</p>
     ${r ? `<label class="inline"><input type="checkbox" name="en" ${r.enabled ? "checked" : ""}> ${t("Attiva")}</label>` : ""}
     <div id="dtest" class="small"></div>
     <div class="dlgfoot"><button value="cancel">${t("Annulla")}</button><button type="button" id="dtry">${t("Prova connessione")}</button><button class="primary" id="dsave">${t("Salva")}</button></div>`);
@@ -1333,7 +1334,8 @@ function directDialog(r) {
     $("#dtest").innerHTML = `<span class="muted">${t("Collegamento in corso…")}</span>`;
     try {
       const x = await api("/api/direct/test", {method: "POST", body: body()});
-      $("#dtest").innerHTML = `<span class="st finished">✓ ${t("Collegata")}</span> · ${esc(x.board || "")} · ${esc(x.firmware || "?")}${x.mode ? " · " + esc(x.mode === "sbc" ? "SBC" : x.mode === "standalone" ? t("autonoma") : x.mode) : ""} · ${t("{n} utensili", {n: x.tools})}${x.snapshot_configured ? " · " + (x.snapshot ? t("foto OK") : `<span class="warn">${t("foto non disponibile")}</span>`) : ""}`;
+      $("#dtest").innerHTML = `<span class="st finished">✓ ${t("Collegata")}</span> · ${esc(x.board || "")} · ${esc(x.firmware || "?")}${x.mode ? " · " + esc(x.mode === "sbc" ? "SBC" : x.mode === "standalone" ? t("autonoma") : x.mode) : ""} · ${t("{n} utensili", {n: x.tools})}${x.snapshot_configured ? " · " + (x.snapshot ? t("foto OK") : `<span class="warn">${x.rtsp && x.ffmpeg === false
+        ? t("telecamera RTSP: sul Raspberry Pi manca ffmpeg (sudo apt install ffmpeg)") : x.rtsp ? t("telecamera RTSP: nessun fotogramma, controlla l'indirizzo") : t("foto non disponibile")}</span>`) : ""}`;
     } catch (e) { $("#dtest").innerHTML = `<span class="warn">✗ ${esc(e.message)}</span>`; }
   };
   $("#dsave").onclick = async ev => {
