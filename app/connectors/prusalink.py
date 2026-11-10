@@ -101,6 +101,10 @@ class PrusaLinkClient(DirectClient):
                 meta = {}
         grams = meta.get("filament used [g]") or meta.get("filament_used_g")
         if not grams:
+            dl = (f.get("refs") or {}).get("download")
+            if dl:                                   # dati non nei metadati: G-code letto dalla stampante
+                from .base import plan_from_meta
+                return plan_from_meta(self.fetch_gcode_meta(dl, f.get("name") or dl))
             return None
         types = str(meta.get("filament_type") or "?").split(";")
         colors = str(meta.get("filament_colour") or meta.get("extruder_colour") or "").split(";")

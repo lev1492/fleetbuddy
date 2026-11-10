@@ -1491,6 +1491,24 @@ async def productions_edit(request: Request, pid: int, body: dict):
     return {"ok": True}
 
 
+@app.post("/api/jobs/{jid}/outcome")
+async def job_outcome(request: Request, jid: int, body: dict):
+    """Esito di una stampa "da confermare" (stampante offline oltre il tempo previsto): riuscita o fallita."""
+    u = U(request)
+    need_operator(u)
+    job = S().db.one("SELECT * FROM jobs WHERE id=?", (jid,))
+    if not job or not u.sees_printer(job["printer_sn"]):
+        raise HTTPException(404, _("Stampa non trovata"))
+    outcome = body.get("outcome")
+    if outcome not in ("finished", "failed"):
+        raise HTTPException(400, _("Esito non valido"))
+    try:
+        S().confirm_outcome(jid, outcome, u.username)
+    except HubError as e:
+        raise HTTPException(409, e.localized(current_lang.get()))
+    return {"ok": True}
+
+
 @app.post("/api/production/go/{sn}")
 async def production_go(request: Request, sn: str):
     """OK dell'operatore: piatto libero, si può avviare il prossimo pezzo su questa stampante."""

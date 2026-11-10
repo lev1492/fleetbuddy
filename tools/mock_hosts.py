@@ -284,7 +284,8 @@ def p_status(req: Request):
 def p_job(req: Request):
     if not digest_ok(req):
         return challenge()
-    return {"id": P["jobid"], "file": {"name": P["file"], "display_name": P["file"]}} if P["file"] else Response(status_code=204)
+    return {"id": P["jobid"], "file": {"name": P["file"], "display_name": P["file"], "refs": {"download": "/usb/" + P["file"]}}} \
+        if P["file"] else Response(status_code=204)
 
 
 @app.put("/api/v1/job/{jid}/{what}")
@@ -306,6 +307,17 @@ def p_stop(jid: int, req: Request):
 @app.get("/api/v1/storage")
 def p_storage(req: Request):
     return {"storage_list": [{"path": "/usb/", "name": "usb", "available": True, "read_only": False}]} if digest_ok(req) else challenge()
+
+
+@app.get("/usb/{name}")
+def p_download(name: str, req: Request):
+    data = open("/tmp/prusa.gcode", "rb").read()
+    rng = req.headers.get("range", "")
+    if m := re.match(r"bytes=(\d+)-(\d+)", rng):
+        return Response(data[int(m.group(1)):int(m.group(2)) + 1], status_code=206)
+    if m := re.match(r"bytes=-(\d+)", rng):
+        return Response(data[-int(m.group(1)):], status_code=206)
+    return Response(data)
 
 
 @app.put("/api/v1/files/{storage}/{name}")

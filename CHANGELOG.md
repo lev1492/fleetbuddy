@@ -3,6 +3,26 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.19.3] – 2026-11-10
+
+### Novità
+- All'avvio di ogni stampa FleetBuddy registra la durata prevista (dal file, oppure tempo trascorso più tempo
+  rimanente comunicato dalla stampante) e il consumo previsto: dal file in archivio, oppure dalla stampante per
+  Klipper, OctoPrint, Duet, PrusaLink (metadati o G-code) e UltiMaker (lavoro di Connect). Se all'avvio i dati non
+  sono ancora disponibili si riprova per 15 minuti. Lo storico mostra la durata prevista accanto a quella reale.
+- Stampante offline oltre il tempo previsto: la stampa diventa "Da confermare" (non più conclusa automaticamente).
+  Nello storico e negli ordini di produzione i pulsanti "Riuscita" (il consumo previsto va nelle statistiche) e
+  "Fallita" (conta solo il fallimento, senza consumo). Il pezzo di produzione resta in attesa della conferma; se
+  fallita torna da rilanciare. Se la stampante torna online e comunica l'esito, vale come conferma. Un esito
+  confermato non viene più modificato dai riallineamenti automatici.
+
+### Correzioni
+- Al ritorno online, una nuova stampa dello stesso file (es. il pezzo successivo di un ordine) poteva essere
+  scambiata per la continuazione della stampa precedente, che veniva riaperta perdendone l'esito: ora la riapertura
+  avviene solo se non è appena partita una stampa da FleetBuddy e il tempo trascorso è compatibile.
+- Fine stimata più precisa: "0 minuti" rimanenti a fine stampa è considerato meno di un minuto, e in mancanza del
+  tempo rimanente si usa la durata prevista registrata all'avvio.
+
 ## [0.19.2] – 2026-11-10
 
 ### Novità

@@ -144,12 +144,12 @@ def summary(db, pid: int) -> dict:
         "SELECT status, COUNT(*) AS n FROM production_units WHERE production_id=? GROUP BY status", (pid,))}
     return {"total": sum(counts.values()), "done": counts.get("done", 0), "pending": counts.get("pending", 0),
             "printing": counts.get("printing", 0) + counts.get("starting", 0), "failed": counts.get("failed", 0),
-            "cancelled": counts.get("cancelled", 0)}
+            "cancelled": counts.get("cancelled", 0), "review": counts.get("review", 0)}
 
 
 def _check_completed(svc, pid: int):
     s = summary(svc.db, pid)
-    if s["pending"] or s["printing"]:
+    if s["pending"] or s["printing"] or s["review"]:
         return
     row = svc.db.one("SELECT name, status FROM productions WHERE id=?", (pid,))
     if row and row["status"] in ("active", "paused"):
@@ -168,6 +168,11 @@ def on_job_closed(svc, job_id: int, status: str, printer_name: str):
     u = svc.db.one("SELECT u.*, p.auto_retry, p.name AS prod_name FROM production_units u "
                    "JOIN productions p ON p.id=u.production_id WHERE u.job_id=?", (job_id,))
     if not u:
+        return
+    if status == "to_confirm":
+        # stampante offline oltre il tempo previsto: il pezzo attende la conferma dell'esito (non va ripianificato)
+        svc.db.x("UPDATE production_units SET status='review', message=? WHERE id=?",
+                 (_msg("stampante offline: conferma l'esito della stampa"), u["id"]))
         return
     if status == "finished":
         svc.db.x("UPDATE production_units SET status='done', ended_at=? WHERE id=?", (time.time(), u["id"]))
@@ -198,7 +203,7 @@ def reconcile(svc):
         if not (u["printer_sn"] and svc.has_pending(u["printer_sn"])):
             on_not_started(db, u["id"], _msg("invio interrotto: verrà ritentato"))
     for u in db.q("SELECT u.id, u.job_id, j.status, j.printer_name FROM production_units u LEFT JOIN jobs j ON j.id=u.job_id "
-                  "WHERE u.status='printing'"):
+                  "WHERE u.status IN ('printing', 'review')"):
         if u["status"] and u["status"] != "running":
             on_job_closed(svc, u["job_id"], u["status"], u["printer_name"] or "")
 

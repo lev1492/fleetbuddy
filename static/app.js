@@ -36,7 +36,7 @@ const langOptions = () => Object.entries(LANGS).map(([k, v]) => `<option value="
 const STATES = {IDLE: "Inattiva", PREPARE: "Preparazione", RUNNING: "In stampa", PAUSE: "In pausa", PAUSED: "In pausa",
   FINISH: "Completata", FAILED: "Fallita", UNKNOWN: "Sconosciuto", SLICING: "Preparazione"};
 const JOBS = {finished: "Completata", failed: "Fallita", cancelled: "Annullata", running: "In corso", unknown: "Interrotta",
-  queued: "In attesa", sent: "In partenza", error: "Errore"};
+  queued: "In attesa", sent: "In partenza", error: "Errore", to_confirm: "Da confermare"};
 const ROLES = {admin: "Amministratore", operator: "Operatore", viewer: "Osservatore"};
 const SPEEDS = {1: "Silenziosa", 2: "Normale", 3: "Sport", 4: "Ludicrous"};
 const stateName = s => t(STATES[s] || s);
@@ -959,18 +959,24 @@ RENDER.queue = async function renderQueue() {
 RENDER.history = async function renderHistory() {
   const el = $("#v-history");
   const jobs = await api("/api/jobs?limit=300").catch(e => (toast(e.message, "error"), []));
+  const toConfirm = jobs.filter(j => j.status === "to_confirm").length;
   el.innerHTML = `<div class="head"><div><h1>${t("Storico")}</h1><p class="sub">${t("Ogni stampa vista dal Hub, anche quelle avviate da Bambu Studio o dalla stampante.")}</p></div></div>` +
+    (toConfirm ? `<div class="pwait"><b>${t("{n} stampe da confermare", {n: toConfirm})}</b><span class="small">${t("La stampante era offline quando il tempo di stampa è scaduto: indica se la stampa è riuscita (il consumo previsto va nelle statistiche) o fallita (conta solo il fallimento).")}</span></div>` : "") +
     (jobs.length ? `<div class="tablewrap"><table><thead><tr><th></th><th>${t("Avvio")}</th><th>${t("Stampante")}</th><th>${t("Lavoro")}</th><th>${t("Utente")}</th><th>${t("Durata")}</th><th>${t("Filamento")}</th><th>${t("Esito")}</th><th></th></tr></thead><tbody>
     ${jobs.map(j => `<tr data-id="${j.id}" data-file="${j.file_id || ""}">
       <td>${j.snapshot ? `<img class="snap" loading="lazy" alt="${esc(t("Foto a fine stampa"))}" src="/api/jobs/${j.id}/snapshot">` : ""}</td>
       <td>${fmtDate(j.started_at)}</td><td>${esc(j.printer_name)}</td><td>${esc(j.task_name)}</td><td>${esc(j.started_by_name || "—")}</td>
-      <td>${fmtDur((j.ended_at || Date.now() / 1000) - j.started_at)}</td><td>${filCell(j)}</td>
-      <td><span class="st ${j.status}">${jobName(j.status)}</span>${j.estimated ? ` <small class="muted" title="${esc(t("La stampante era offline: il lavoro è stato considerato concluso all'ora di fine stimata. Se torna online con altre informazioni, l'esito viene corretto."))}">(${t("stima")})</small>` : ""}${j.status !== "finished" && j.status !== "running" ? ` · ${j.progress}%` : ""}${j.error ? `<br><small>${esc(j.error)}</small>` : ""}</td>
-      <td style="white-space:nowrap">${j.file_id && canOperate() ? `<button data-reprint>${t("Ristampa")}</button>` : ""} ${isAdmin() ? `<button class="danger" data-del aria-label="${esc(t("Elimina"))}">✕</button>` : ""}</td></tr>`).join("")}
+      <td>${fmtDur((j.ended_at || Date.now() / 1000) - j.started_at)}${j.planned_s ? `<br><small class="muted" title="${esc(t("Durata prevista"))}">${t("prevista {d}", {d: fmtDur(j.planned_s)})}</small>` : ""}</td><td>${filCell(j)}</td>
+      <td><span class="st ${j.status}">${jobName(j.status)}</span>${j.estimated ? (j.confirmed_by ? ` <small class="muted">(${esc(j.confirmed_by === "stampante" ? t("comunicato dalla stampante") : t("confermata da {u}", {u: j.confirmed_by}))})</small>`
+        : ` <small class="muted" title="${esc(t("La stampante era offline quando la stampa doveva finire: l'ora di fine è stimata. Se torna online con altre informazioni, l'esito viene corretto."))}">(${t("stima")})</small>`) : ""}${j.status !== "finished" && j.status !== "running" ? ` · ${j.progress}%` : ""}${j.error ? `<br><small>${esc(j.error)}</small>` : ""}</td>
+      <td style="white-space:nowrap">${j.status === "to_confirm" && canOperate() ? `<button class="ok" data-outcome="finished" title="${esc(t("Il consumo previsto va nelle statistiche"))}">✓ ${t("Riuscita")}</button>
+        <button class="danger" data-outcome="failed" title="${esc(t("Conta come fallimento, senza consumo"))}">✗ ${t("Fallita")}</button> ` : ""}${j.file_id && canOperate() ? `<button data-reprint>${t("Ristampa")}</button>` : ""} ${isAdmin() ? `<button class="danger" data-del aria-label="${esc(t("Elimina"))}">✕</button>` : ""}</td></tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">${t("Ancora nessuna stampa registrata.")}</div>`);
   el.onclick = async e => {
     const tr = e.target.closest("tr"); if (!tr) return;
     if (e.target.classList.contains("snap")) { openDialog(`<img src="${e.target.src}" alt="" style="width:100%;border-radius:8px"><div class="dlgfoot"><button value="ok">${t("Chiudi")}</button></div>`); return; }
+    const oc = e.target.closest("[data-outcome]");
+    if (oc) { if (await act(() => api(`/api/jobs/${tr.dataset.id}/outcome`, {method: "POST", body: {outcome: oc.dataset.outcome}}), t("Esito registrato"))) RENDER.history(); return; }
     if (e.target.closest("[data-del]") && await uiConfirm(t("Eliminare questa voce dallo storico?"), {danger: true})) { await act(() => api(`/api/jobs/${tr.dataset.id}`, {method: "DELETE"})); RENDER.history(); }
     if (e.target.closest("[data-reprint]")) { const f = (await api("/api/files")).find(x => x.id === +tr.dataset.file); f ? printDialog(f) : toast(t("Il file non è più in archivio o non hai accesso al suo progetto"), "error"); }
   };

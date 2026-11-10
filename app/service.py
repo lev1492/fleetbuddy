@@ -99,9 +99,11 @@ def ams_usage(start_json: str | None, printer: dict) -> list[dict]:
 
 # avvisi di fine stampa (frasi del catalogo traduzioni)
 JOB_TOASTS = {"finished": "{printer}: stampa completata – {task}", "failed": "{printer}: stampa fallita – {task}",
-              "cancelled": "{printer}: stampa annullata – {task}", "unknown": "{printer}: stampa interrotta – {task}"}
+              "cancelled": "{printer}: stampa annullata – {task}", "unknown": "{printer}: stampa interrotta – {task}",
+              "to_confirm": "{printer} offline: tempo di stampa scaduto, conferma l'esito di {task}"}
 JOB_TITLES = {"finished": "{printer}: stampa completata", "failed": "{printer}: stampa fallita",
-              "cancelled": "{printer}: stampa annullata", "unknown": "{printer}: stampa interrotta"}
+              "cancelled": "{printer}: stampa annullata", "unknown": "{printer}: stampa interrotta",
+              "to_confirm": "{printer}: esito della stampa da confermare"}
 
 
 class Service:
@@ -133,6 +135,7 @@ class Service:
         self._thumb_cache: dict[str, tuple[float, bytes | None]] = {}
         self._last_online: dict[str, tuple[float, dict]] = {}   # ultimo stato visto online (per la pianificazione)
         self._late_at = 0.0
+        self._plan_try: dict[int, float] = {}
         # connessione: inizio delle letture fallite, offline dichiarato, prossima lettura (rallentata se offline)
         self._conn: dict[str, dict] = {}
         # lettura indipendente di ogni stampante diretta: una lenta non blocca le altre
@@ -294,13 +297,20 @@ class Service:
         seen, last = self._last_online.get(sn, (None, None))
         if not last:
             return None
-        rem = (last.get("remaining_min") or 0) * 60
-        if rem > 0:
-            rem += 30                       # il tempo rimanente arriva in minuti interi (troncati): in media mezzo minuto in più
-        if rem <= 0 and job.get("file_id"):
+        rem_min = last.get("remaining_min") or 0
+        done_s = seen - (job.get("started_at") or seen)
+        if rem_min > 0:
+            rem = rem_min * 60 + 30         # minuti interi (troncati): in media mezzo minuto in più
+        elif (last.get("progress") or 0) >= 95:
+            rem = 30                        # "0 minuti" a fine stampa: manca meno di un minuto
+        elif job.get("planned_s"):
+            rem = max(0, job["planned_s"] - done_s)          # durata prevista registrata all'avvio
+        elif job.get("file_id"):
             f = self.db.file(job["file_id"])
             pl = next((x for x in (f or {}).get("meta", {}).get("plates", []) if x["index"] == job.get("plate")), None)
-            rem = max(0, (pl or {}).get("prediction_s", 0) - (seen - (job.get("started_at") or seen)))
+            rem = max(0, (pl or {}).get("prediction_s", 0) - done_s)
+        else:
+            rem = 0
         end = seen + rem
         p0 = last.get("progress") or 0
         prog = 100 if at >= end or rem <= 0 else int(p0 + (100 - p0) * max(0.0, at - seen) / rem)
@@ -318,16 +328,71 @@ class Service:
             return
         dur = max(1.0, est["ended_at"] - (est["started_at"] or est["ended_at"]))
         prog = int(max(0, min(99, 100 * (end - (est["started_at"] or end)) / dur)))
+        # non è arrivato in fondo: interrotto. Il consumo non è misurabile; se era già confermato riuscito
+        # resta quello proporzionale alla parte stampata, altrimenti nessun consumo
         est = {**est, "ended_at": end, "progress": prog}
-        grams = self._record_filaments(est, prog)
+        if est["status"] == "to_confirm":
+            grams = 0.0
+            self.db.x("DELETE FROM job_filaments WHERE job_id=?", (est["id"],))
+        else:
+            grams = self._record_filaments(est, prog)
         self.db.update_job(est["id"], ended_at=end, status="unknown", progress=prog, filament_g=grams)
         production.on_job_closed(self, est["id"], "unknown", name)
         log.info("%s: %s interrotto (circa %d%%): al ritorno online stava già stampando un altro lavoro", name, est["task_name"], prog)
 
+    def confirm_outcome(self, job_id: int, outcome: str, who: str = "") -> dict:
+        """Esito di una stampa "da confermare" (stampante offline oltre il tempo previsto). Riuscita: il consumo previsto
+        va nelle statistiche. Fallita: conta solo il fallimento, senza consumo (non c'è modo di misurarlo)."""
+        job = self.db.one("SELECT * FROM jobs WHERE id=?", (job_id,))
+        if not job or job["status"] != "to_confirm":
+            raise HubError(key="Questa stampa non è in attesa di conferma")
+        if outcome == "finished":
+            grams = self._record_filaments(job, 100)
+            self.db.update_job(job_id, status="finished", progress=100, filament_g=grams, confirmed_by=who or "?")
+        else:
+            self.db.x("DELETE FROM job_filaments WHERE job_id=?", (job_id,))
+            self.db.update_job(job_id, status="failed", filament_g=0, confirmed_by=who or "?")
+        production.on_job_closed(self, job_id, "finished" if outcome == "finished" else "failed", job["printer_name"] or "")
+        log.info("%s: esito di %s confermato %s%s", job["printer_name"], job["task_name"], outcome, f" da {who}" if who else "")
+        return self.db.one("SELECT * FROM jobs WHERE id=?", (job_id,))
+
+    def _planned_s(self, info: dict, p: dict) -> float:
+        """Durata prevista del lavoro: quella del file (se avviato dall'archivio), altrimenti tempo già trascorso più
+        tempo rimanente comunicato dalla stampante (0 se la stampante non l'ha ancora calcolato)."""
+        if info.get("file_id"):
+            f = self.db.file(info["file_id"])
+            pl = next((x for x in (f or {}).get("meta", {}).get("plates", []) if x["index"] == info.get("plate")), None)
+            if (pl or {}).get("prediction_s"):
+                return float(pl["prediction_s"])
+        rem = (p.get("remaining_min") or 0) * 60
+        # il tempo rimanente arriva in minuti interi (troncati): in media mezzo minuto in più
+        return round(self._elapsed_s(p) + rem + 30) if rem > 0 else 0.0
+
+    async def _retry_plan(self, job: dict | None, p: dict):
+        """Consumo previsto non disponibile all'avvio (es. la stampante non ha ancora i dati del file appena avviato):
+        si riprova ogni 30 secondi nei primi 15 minuti della stampa."""
+        if not job or not p.get("active") or job.get("planned_g") or (job.get("filaments") not in (None, "", "[]")):
+            return
+        c = self.direct.get(p["sn"])
+        now = time.time()
+        if not c or now - (job.get("started_at") or now) > 15 * 60 or now - self._plan_try.get(job["id"], 0) < 30:
+            return
+        self._plan_try[job["id"]] = now
+        try:
+            plan = await asyncio.to_thread(c.job_plan, self.raw.get(p["sn"]))
+        except Exception:  # noqa: BLE001 - dato facoltativo
+            plan = None
+        if plan:
+            g = round(sum(x["grams"] for x in plan), 1)
+            job.update(filaments=json.dumps(plan), planned_g=g)
+            self.db.update_job(job["id"], filaments=job["filaments"], planned_g=g)
+            log.info("%s: consumo previsto letto dalla stampante: %s g", p["name"], g)
+
     def _estimated_job(self, sn: str) -> dict | None:
-        """Ultimo lavoro chiuso per stima su questa stampante (nelle ultime 72 ore)."""
-        return self.db.one("SELECT * FROM jobs WHERE printer_sn=? AND estimated=1 AND ended_at>? ORDER BY ended_at DESC LIMIT 1",
-                           (sn, time.time() - 72 * 3600))
+        """Ultimo lavoro chiuso per stima su questa stampante (nelle ultime 72 ore) e non ancora confermato:
+        un esito confermato da un operatore non viene più modificato dai riallineamenti automatici."""
+        return self.db.one("SELECT * FROM jobs WHERE printer_sn=? AND estimated=1 AND ended_at>? AND COALESCE(confirmed_by,'')='' "
+                           "ORDER BY ended_at DESC LIMIT 1", (sn, time.time() - 72 * 3600))
 
     def _reopen_job(self, job: dict, p: dict):
         self.db.update_job(job["id"], status="running", ended_at=None, estimated=0, error="")
@@ -347,13 +412,14 @@ class Service:
             seen, last = self._last_online.get(sn, (None, None))
             if not last or last.get("state") == "PAUSE":
                 continue                                     # in pausa: la fine non si può stimare
-            if not last.get("remaining_min") and not job.get("file_id"):
-                continue                                     # né tempo rimanente né durata del file: nessuna stima
+            if not last.get("remaining_min") and not job.get("file_id") and not job.get("planned_s") \
+                    and (last.get("progress") or 0) < 95:
+                continue                                     # né tempo rimanente né durata prevista: nessuna stima
             est_end = self._offline_estimate(sn, job, now)[0]
             if now < est_end:
                 continue
-            await self._close_job(job, {**last, "online": False, "progress": 100}, "finished", ended_at=est_end, estimated=True)
-            log.info("%s offline: %s considerato concluso alle %s (stima)", last.get("name", sn), job.get("task_name"),
+            await self._close_job(job, {**last, "online": False, "progress": 100}, "to_confirm", ended_at=est_end, estimated=True)
+            log.info("%s offline: %s doveva finire alle %s, esito da confermare", last.get("name", sn), job.get("task_name"),
                      time.strftime("%H:%M", time.localtime(est_end)))
 
     def grace_s(self) -> float:
@@ -660,10 +726,17 @@ class Service:
         if p["online"] and not p["active"] and prev is not None and not prev.get("online"):
             # tornata online ferma: se dice che il lavoro chiuso per stima era annullato o fallito, si corregge l'esito
             est = self._estimated_job(sn)
-            if est and est.get("task_id") == key and p.get("last_result") in ("cancelled", "failed"):
-                self.db.update_job(est["id"], status=p["last_result"])
-                production.on_job_closed(self, est["id"], p["last_result"], p["name"])
-                log.info("%s: %s era %s (corretto dopo il ritorno online)", p["name"], est["task_name"], p["last_result"])
+            lr = p.get("last_result")
+            if est and est.get("task_id") == key and lr in ("cancelled", "failed", "finished"):
+                if est["status"] == "to_confirm":
+                    # la stampante comunica l'esito: è la conferma (riuscita → consumo nelle statistiche)
+                    self.confirm_outcome(est["id"], "finished" if lr == "finished" else "failed", "stampante")
+                    if lr == "cancelled":
+                        self.db.update_job(est["id"], status="cancelled")
+                elif lr != "finished":
+                    self.db.update_job(est["id"], status=lr)
+                    production.on_job_closed(self, est["id"], lr, p["name"])
+                log.info("%s: esito di %s comunicato al ritorno online: %s", p["name"], est["task_name"], lr)
 
         if p["active"]:
             if job and job.get("task_id") != key:
@@ -685,8 +758,11 @@ class Service:
                 job = None
             if not job:
                 est = self._estimated_job(sn)
-                if est and est.get("task_id") == key:
-                    # tornata online e sta ancora stampando lo stesso lavoro: la chiusura stimata era prematura
+                if est and est.get("task_id") == key and not self.has_pending(sn) \
+                        and self._elapsed_s(p) >= (time.time() - (est.get("started_at") or 0)) - 15 * 60:
+                    # tornata online e sta ancora stampando lo stesso lavoro: la chiusura stimata era prematura.
+                    # Non è una ristampa dello stesso file: nessuna stampa appena inviata da FleetBuddy e un tempo
+                    # trascorso compatibile con l'inizio originale (una ristampa appena partita ha pochi minuti).
                     self._reopen_job(est, p)
                     return
                 if est and (prev is None or not prev.get("online")):
@@ -714,8 +790,9 @@ class Service:
                 # stampa già in corso quando FleetBuddy la vede (riavvio, stampante tornata online, avvio esterno):
                 # l'inizio si ricostruisce a ritroso dal tempo già trascorso
                 back = 0 if pend else self._elapsed_s(p)
+                planned_s = self._planned_s(info, p)
                 jid = self.db.start_job(
-                    started_at=time.time() - back,
+                    started_at=time.time() - back, planned_s=planned_s,
                     printer_sn=sn, printer_name=p["name"], task_id=key,
                     task_name=info.get("task_name") or p["task_name"],
                     file_id=info.get("file_id"), plate=info.get("plate"),
@@ -738,7 +815,11 @@ class Service:
                                    filaments=json.dumps(late.get("plan") or []))
                 self.db.update_job(job["id"], **upd)
                 job.update(upd)
-        elif job:
+        if job and p["active"] and not job.get("planned_s") and (p.get("remaining_min") or 0) > 0:
+            job["planned_s"] = round(self._elapsed_s(p) + p["remaining_min"] * 60 + 30)
+            self.db.update_job(job["id"], planned_s=job["planned_s"])
+        await self._retry_plan(job, p)
+        if not p["active"] and job:
             if p["state"] == "FINISH":
                 # piatto da liberare anche dopo uno stop (es. UltiMaker: wait_cleanup con result "Aborted"):
                 # fa fede l'esito comunicato dalla stampante
@@ -779,7 +860,7 @@ class Service:
         if status == "failed" and p["sn"] in self.stopped_by_user:
             status = "cancelled"
         self.stopped_by_user.discard(p["sn"])
-        progress = 100 if status == "finished" else max(job.get("progress") or 0, p["progress"])
+        progress = 100 if status in ("finished", "to_confirm") else max(job.get("progress") or 0, p["progress"])
         measured = None
         c = self.direct.get(p["sn"])
         if c and not estimated:
@@ -789,7 +870,11 @@ class Service:
                                                    self.raw.get(p["sn"]))
             except Exception:  # noqa: BLE001 - dato facoltativo
                 measured = None
-        grams = self._record_filaments(job, progress if status != "finished" else 100, printer=p, measured=measured)
+        if status == "to_confirm":
+            grams = 0.0                                       # il consumo si registra solo se l'esito è confermato riuscito
+            self.db.x("DELETE FROM job_filaments WHERE job_id=?", (job["id"],))
+        else:
+            grams = self._record_filaments(job, progress if status != "finished" else 100, printer=p, measured=measured)
         snap = ""
         img = None
         if self.cfg.app.snapshot_on_finish and status in ("finished", "failed") and not estimated:
@@ -809,9 +894,9 @@ class Service:
         name = job.get("task_name") or p["task_name"]
         dur = int((time.time() - (job.get("started_at") or time.time())) / 60)
         msg = JOB_TOASTS.get(status, JOB_TOASTS["unknown"])
-        self.toast(msg, "error" if status == "failed" else "ok", sn=p["sn"], printer=p["name"], task=name)
-        if (status == "finished" and self.cfg.notify.on_finish) or (status == "failed" and self.cfg.notify.on_failed):
-            icon = "✅" if status == "finished" else "❌"
+        self.toast(msg, "error" if status in ("failed", "to_confirm") else "ok", sn=p["sn"], printer=p["name"], task=name)
+        if (status == "finished" and self.cfg.notify.on_finish) or (status in ("failed", "to_confirm") and self.cfg.notify.on_failed):
+            icon = {"finished": "✅", "to_confirm": "❓"}.get(status, "❌")
             title = self.nt(JOB_TITLES.get(status, JOB_TITLES["unknown"]), printer=p["name"])
             body = name + "\n" + self.nt("Durata {h} h {m} min, {g} g", h=dur // 60, m=dur % 60, g=grams)
             await self._notify(status, f"{icon} {title}", body, p["name"], img)

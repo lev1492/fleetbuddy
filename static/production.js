@@ -4,7 +4,7 @@
 // Usa le funzioni comuni di app.js: t, esc, api, act, openDialog, $, $$, S, RENDER, fmtDur, canOperate, isAdmin.
 
 const PRIO = {0: "Bassa", 1: "Normale", 2: "Alta", 3: "Urgente"};
-const USTATE = {pending: "In attesa", starting: "In partenza", printing: "In stampa", done: "Completato", failed: "Non riuscito", cancelled: "Saltato"};
+const USTATE = {pending: "In attesa", starting: "In partenza", printing: "In stampa", done: "Completato", failed: "Non riuscito", cancelled: "Saltato", review: "Da confermare"};
 const PSTATE = {active: "Attiva", paused: "In pausa", completed: "Completata", cancelled: "Annullata"};
 const ZOOM_LABEL = {12: "12 h", 24: "24 h", 72: "3 giorni", 168: "7 giorni"};
 const ZOOMS = Object.entries(ZOOM_LABEL).map(([h, l]) => [+h, l]);
@@ -87,7 +87,7 @@ function orderCard(p, i, list) {
         <button type="button" class="danger" data-po="cancel">${t("Annulla")}</button></div>`
         : canOperate() && !open ? `<button type="button" class="linkbtn" data-po="delete">${t("Elimina")}</button>` : ""}</div>
     <div class="po-bar">${seg(s.done, "d")}${seg(s.printing, "r")}${seg(s.failed, "f")}${seg(s.pending, "w")}${seg(s.cancelled, "c")}</div>
-    <div class="po-meta"><b>${s.done}/${s.total}</b> ${t("pezzi")}${s.printing ? " · " + t("{n} in stampa", {n: s.printing}) : ""}${s.failed ? ` · <span class="warn">${t("{n} non riusciti", {n: s.failed})}</span>` : ""}
+    <div class="po-meta"><b>${s.done}/${s.total}</b> ${t("pezzi")}${s.printing ? " · " + t("{n} in stampa", {n: s.printing}) : ""}${s.review ? ` · <span class="warn">${t("{n} da confermare", {n: s.review})}</span>` : ""}${s.failed ? ` · <span class="warn">${t("{n} non riusciti", {n: s.failed})}</span>` : ""}
       ${open && p.eta ? ` · ${t("fine stimata")} <b>${whenAbs(p.eta)}</b> <span class="muted">(${whenRel(p.eta)})</span>` : ""}
       ${p.status === "completed" && p.completed_at ? ` · ${t("completata {w}", {w: whenAbs(p.completed_at)})}` : ""}
       ${open && p.unplaced ? ` · <span class="warn">${t("{n} pezzi senza stampante disponibile", {n: p.unplaced})}</span>` : ""}</div>
@@ -100,7 +100,9 @@ function orderCard(p, i, list) {
           ${u.message ? `<br><small class="muted">${esc(pmsg(u.message))}</small>` : ""}</td>
         <td>${esc(u.printer_name || "")}</td>
         <td>${canOperate() && ["failed", "cancelled"].includes(u.status) ? `<button type="button" data-u="retry">${t("Rilancia")}</button>` : ""}
-          ${canOperate() && u.status === "pending" ? `<button type="button" class="linkbtn" data-u="skip">${t("Salta")}</button>` : ""}</td></tr>`).join("")}
+          ${canOperate() && u.status === "pending" ? `<button type="button" class="linkbtn" data-u="skip">${t("Salta")}</button>` : ""}
+          ${canOperate() && u.status === "review" && u.job_id ? `<button type="button" class="ok" data-outcome="finished" data-job="${u.job_id}">✓ ${t("Riuscita")}</button>
+            <button type="button" class="danger" data-outcome="failed" data-job="${u.job_id}">✗ ${t("Fallita")}</button>` : ""}</td></tr>`).join("")}
       </tbody></table></div></details></article>`;
 }
 
@@ -122,6 +124,10 @@ function renderOrders() {
       if (a === "pause" || a === "resume") await act(() => api(`/api/productions/${pid}`, {method: "PATCH", body: {status: a === "pause" ? "paused" : "active"}}));
       if (a === "cancel" && await uiConfirm(t("Annullare l'ordine? I pezzi non ancora avviati non verranno stampati; quelli in stampa terminano normalmente."), {danger: true, okLabel: t("Annulla l'ordine")})) await act(() => api(`/api/productions/${pid}/cancel`, {method: "POST"}));
       if (a === "delete" && await uiConfirm(t("Eliminare l'ordine dall'elenco? Lo storico delle stampe resta."), {danger: true})) await act(() => api(`/api/productions/${pid}`, {method: "DELETE"}));
+      return RENDER.production();
+    }
+    if (b && b.dataset.outcome) {
+      await act(() => api(`/api/jobs/${b.dataset.job}/outcome`, {method: "POST", body: {outcome: b.dataset.outcome}}), t("Esito registrato"));
       return RENDER.production();
     }
     if (b && b.dataset.u) {

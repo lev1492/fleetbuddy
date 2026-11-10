@@ -26,7 +26,7 @@ F_NOTE = Font(name=FONT, size=9, italic=True, color="5B6872")
 FILL_HEAD = PatternFill("solid", start_color="1B2228")
 FILL_TOT = PatternFill("solid", start_color="E9EDF0")
 TOP = Border(top=Side(style="thin", color="1B2228"))
-STATUS_IT = {"finished": "Completata", "failed": "Fallita", "cancelled": "Annullata",
+STATUS_IT = {"finished": "Completata", "failed": "Fallita", "cancelled": "Annullata", "to_confirm": "Da confermare",
              "running": "In corso", "unknown": "Interrotta"}
 SHEET_LIMIT = 31   # Excel accetta al massimo 31 caratteri nel nome di un foglio
 
