@@ -39,6 +39,7 @@ DEFAULT = {
     "country": "IT", "subdiv": "", "timezone": "Europe/Rome", "use_holidays": True,
     "hours": {str(d): ([["09:00", "13:00"], ["14:00", "18:00"]] if d < 5 else []) for d in range(7)},   # 0 = lunedì
     "closures": [],                          # [{"from": "2026-08-10", "to": "2026-08-21", "note": "Ferie"}]
+    "allow_offhours_start": False,           # fuori orario un operatore presente può avviare il pezzo successivo
 }
 def N_(s: str) -> str:
     """Segna una frase da tradurre."""
@@ -91,6 +92,7 @@ def validate(cfg: dict) -> dict:
             a, b = b, a
         closures.append({"from": a.isoformat(), "to": b.isoformat(), "note": str(c.get("note") or "")[:80]})
     out["closures"] = sorted(closures, key=lambda c: c["from"])
+    out["allow_offhours_start"] = bool(out.get("allow_offhours_start"))
     out["subdiv"] = str(out.get("subdiv") or "")
     out["country"] = str(out.get("country") or "IT").upper()
     return out

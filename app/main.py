@@ -377,6 +377,7 @@ async def put_settings(request: Request, body: dict):
 async def connection_quality(request: Request, hours: float = 24):
     """Qualità della connessione per stampante: interruzioni brevi, periodi offline, tempo offline, segnale Wi-Fi."""
     u = U(request)
+    need_admin(u)
     q = S().conn_quality(max(1, min(24 * 30, hours)))
     out = []
     for p in S().printers.values():
@@ -1440,7 +1441,10 @@ async def productions_list(request: Request):
                     "printers": json.loads(r["printers"] or "[]"), "summary": production.summary(db, r["id"]),
                     "items": list(items.values()), "units": units, "eta": pl["eta"].get(str(r["id"])),
                     "unplaced": pl["unplaced"].get(str(r["id"]), 0)})
-    return {"productions": out, "changeover_min": production.changeover_s(db) // 60, "now": time.time()}
+    cal = S().workcal()
+    return {"productions": out, "changeover_min": production.changeover_s(db) // 60, "now": time.time(),
+            "waiting": production.waiting(S(), u), "working": not cal.active() or cal.is_working(time.time()),
+            "allow_offhours": bool(cal.cfg.get("allow_offhours_start")), "calendar_active": cal.active()}
 
 
 @app.post("/api/productions")
@@ -1484,6 +1488,20 @@ async def productions_edit(request: Request, pid: int, body: dict):
         sns = [sn for sn in body["printers"] if u.sees_printer(sn) and sn in S().printers]
         if sns:
             S().db.x("UPDATE productions SET printers=? WHERE id=?", (json.dumps(sns), pid))
+    return {"ok": True}
+
+
+@app.post("/api/production/go/{sn}")
+async def production_go(request: Request, sn: str):
+    """OK dell'operatore: piatto libero, si può avviare il prossimo pezzo su questa stampante."""
+    u = U(request)
+    need_operator(u)
+    printer_for(u, sn)
+    cal = S().workcal()
+    if cal.active() and not cal.is_working(time.time()) and not cal.cfg.get("allow_offhours_start"):
+        raise HTTPException(409, _("Fuori orario lavorativo l'avvio non è consentito (Amministrazione → Generali): il pezzo partirà con l'orario lavorativo."))
+    production.operator_ok(S(), sn)
+    log.info("Produzione: OK dell'operatore %s per %s", u.username, sn)
     return {"ok": True}
 
 

@@ -43,13 +43,30 @@ RENDER.production = async function renderProduction() {
       ${canOperate() ? `<button class="primary" id="pnew">＋ ${t("Nuovo ordine")}</button>` : ""}</div>
     <div class="tabs" role="tablist"><a href="#" data-pt="orders" class="${PTAB === "orders" ? "on" : ""}" role="tab">${t("Ordini")}</a>
       <a href="#" data-pt="gantt" class="${PTAB === "gantt" ? "on" : ""}" role="tab">${t("Pianificazione")}</a></div>
+    ${waitingBox(data)}
     <div id="pbody"></div>`;
   $$("#v-production [data-pt]").forEach(a => a.onclick = e => { e.preventDefault(); PTAB = a.dataset.pt; localStorage.setItem("fb_ptab", PTAB); RENDER.production(); });
   if ($("#pnew")) $("#pnew").onclick = () => newOrderDialog();
+  $$("#v-production [data-go]").forEach(b => b.onclick = async () => {
+    if (await act(() => api(`/api/production/go/${encodeURIComponent(b.dataset.go)}`, {method: "POST"}), t("Confermato: il prossimo pezzo parte a breve"))) RENDER.production();
+  });
   if (PTAB === "gantt") renderGantt(); else renderOrders();
   clearInterval(PTIMER);
   PTIMER = setInterval(() => { if (view === "production" && !document.hidden && !$("#dlg").open) RENDER.production(); }, 30000);
 };
+
+// Stampanti pronte, con pezzi da fare, che aspettano l'operatore (stampa finita fuori orario, o fuori orario adesso)
+function waitingBox(data) {
+  const w = data.waiting || [];
+  if (!w.length) return "";
+  const why = x => x.reason === "ok" ? t("confermata: parte con l'orario lavorativo")
+    : x.reason === "hold" ? t("stampa finita fuori orario {w}: conferma che il piatto è libero", {w: x.since ? whenAbs(x.since) : ""})
+    : t("fuori orario lavorativo");
+  return `<div class="pwait"><b>${t("In attesa dell'operatore")}</b>
+    ${!data.working ? `<span class="small muted">${data.allow_offhours ? t("Fuori orario: i pezzi partono solo su conferma.") : t("Fuori orario: l'avvio non è consentito, i pezzi partiranno con l'orario lavorativo.")}</span>` : ""}
+    <div class="pwl">${w.map(x => `<div class="pwi"><span><b>${esc(x.name)}</b> <small class="muted">${why(x)}</small></span>
+      ${canOperate() && x.can_start ? `<button type="button" class="primary" data-go="${esc(x.sn)}">▶ ${t("Avvia il prossimo pezzo")}</button>` : ""}</div>`).join("")}</div></div>`;
+}
 
 // ------------------------------------------------------------------------ ordini
 function orderCard(p, i, list) {
@@ -170,7 +187,7 @@ function renderGantt() {
       ${isAdmin() ? `<label class="inline small">${t("Cambio piatto")} <input type="number" id="pco" min="0" max="240" value="${Math.round(pl.changeover_s / 60)}" style="width:64px"> min</label>` : ""}</div>
     ${rows.length ? `<div class="gantt">
       <div class="gl"><div class="gh">${t("Stampante")} · ${t("saturazione")}</div>
-        ${rows.map(r => `<div class="gr ${r.online ? "" : "off"}"><b>${esc(r.name)}${r.online ? "" : ` <span class="goff">${t("offline")}</span>`}</b>
+        ${rows.map(r => `<div class="gr ${r.online ? "" : "off"}"><b>${esc(r.name)}${r.online ? "" : ` <span class="goff">${t("offline")}</span>`}${r.waiting_ok ? ` <span class="gwait" title="${esc(t("Stampa finita fuori orario: attende la conferma dell'operatore"))}">${t("attende OK")}</span>` : ""}</b>
           <small class="muted">${esc(r.model || "")} · ${r.online ? stateName(r.state) : r.last_seen ? t("vista l'ultima volta {w}", {w: whenAbs(r.last_seen)}) : t("Offline")}</small>
           ${r.saturation != null ? `<span class="gsat" title="${esc(t("Tempo occupato nelle prossime {h} ore", {h: PZOOM}))}"><i style="width:${r.saturation}%;${r.saturation > 85 ? "background:var(--err)" : r.saturation > 60 ? "background:var(--pause)" : ""}"></i><em>${r.saturation}%</em></span>` : ""}</div>`).join("")}</div>
       <div class="gw"><div class="gc" style="width:${W}px">

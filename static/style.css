@@ -521,6 +521,12 @@ button.danger.solid{background:var(--err);border-color:var(--err);color:#fff}
 .gb.past.est{border-style:dashed}
 .gb.past:hover{opacity:.95}
 
+.pwait{background:color-mix(in srgb,var(--pause) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--pause) 45%,var(--line));
+  border-radius:var(--radius-lg);padding:12px 14px;margin:0 0 14px;display:flex;flex-direction:column;gap:8px}
+.pwl{display:flex;flex-direction:column;gap:6px}
+.pwi{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.gwait{font-size:10px;font-weight:800;text-transform:uppercase;color:#fff;background:var(--pause);padding:1px 6px;border-radius:8px;vertical-align:1px}
+
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
 .gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}

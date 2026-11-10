@@ -52,6 +52,8 @@ RENDER.general = async function renderGeneral() {
           <label style="flex:1">${t("Fuso orario")}<input id="gtz" list="gtzl" value="${esc(cfg.timezone)}"><datalist id="gtzl">${GEN.timezones.map(z => `<option value="${esc(z)}">`).join("")}</datalist></label>
         </div>
         <label class="inline"><input type="checkbox" id="ghol" ${cfg.use_holidays ? "checked" : ""}> ${t("Considera le festività nazionali come giorni di chiusura")}</label>
+        <label class="inline"><input type="checkbox" id="goff" ${cfg.allow_offhours_start ? "checked" : ""}> ${t("Consenti l'avvio delle stampe fuori orario su conferma dell'operatore")}</label>
+        <p class="sub small" style="margin:2px 0 0 26px">${t("Fuori orario la produzione non avvia pezzi da sola, e una stampante che finisce fuori orario attende la conferma dell'operatore (il pezzo potrebbe essere ancora sul piatto). Con questa opzione un operatore presente può avviare subito il pezzo successivo; senza, il pezzo parte con l'orario lavorativo, dopo la sua conferma.")}</p>
         <p class="sub small" id="gtzinfo"></p>
       </section>
 
@@ -132,6 +134,7 @@ RENDER.general = async function renderGeneral() {
   $("#gsubdiv").onchange = e => { cfg.subdiv = e.target.value; preview(); };
   $("#gtz").onchange = e => { cfg.timezone = e.target.value.trim(); drawTzInfo(); };
   $("#ghol").onchange = e => { cfg.use_holidays = e.target.checked; preview(); };
+  $("#goff").onchange = e => { cfg.allow_offhours_start = e.target.checked; };
   $("#gweek").onclick = e => {
     const k = e.target.dataset.k, day = e.target.closest("[data-d]"); if (!day || !["add", "del"].includes(k)) return;
     const iv = cfg.hours[day.dataset.d];

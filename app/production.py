@@ -203,6 +203,75 @@ def reconcile(svc):
             on_job_closed(svc, u["job_id"], u["status"], u["printer_name"] or "")
 
 
+# ---------------------------------------------------------------------- conferma dell'operatore
+# Fuori orario la produzione non avvia pezzi da sola. Una stampante la cui stampa è finita fuori orario ha
+# probabilmente ancora il pezzo sul piatto: resta "in attesa di conferma" e riparte solo dopo l'OK di un operatore
+# (pulsante in Produzione, oppure "Piatto liberato" sulle Bambu). Con "Consenti l'avvio delle stampe fuori orario"
+# l'OK vale subito anche fuori orario; altrimenti il pezzo parte con l'orario lavorativo.
+def holds(db) -> dict:
+    return db.get_setting("prod_hold", {}) or {}
+
+
+def oks(db) -> dict:
+    return db.get_setting("prod_go", {}) or {}
+
+
+def hold_printer(svc, sn: str, at: float):
+    """Stampa finita fuori orario: la stampante attende la conferma dell'operatore."""
+    cal = svc.workcal()
+    if not cal.active() or cal.is_working(at):
+        return
+    h = holds(svc.db)
+    h[sn] = at
+    svc.db.set_setting("prod_hold", h)
+
+
+def operator_ok(svc, sn: str):
+    """OK dell'operatore: il piatto è libero e c'è qualcuno. Toglie l'attesa e consente il prossimo pezzo."""
+    h, g = holds(svc.db), oks(svc.db)
+    h.pop(sn, None)
+    g[sn] = time.time()
+    svc.db.set_setting("prod_hold", h)
+    svc.db.set_setting("prod_go", g)
+
+
+def clear_printer(db, sn: str):
+    """Una stampa è partita sulla stampante (da FleetBuddy o da qualcuno alla stampante): attesa e OK esauriti."""
+    h, g = holds(db), oks(db)
+    if sn in h or sn in g:
+        h.pop(sn, None)
+        g.pop(sn, None)
+        db.set_setting("prod_hold", h)
+        db.set_setting("prod_go", g)
+
+
+def waiting(svc, user=None) -> list[dict]:
+    """Stampanti pronte con pezzi da fare che aspettano l'operatore (stampa finita fuori orario, o fuori orario adesso)."""
+    db, cal, now = svc.db, svc.workcal(), time.time()
+    if not cal.active():
+        return []
+    working = cal.is_working(now)
+    h, g = holds(db), oks(db)
+    files: dict[int, dict | None] = {}
+    wanted: set[str] = set()
+    for u in ordered_pending(db):
+        f = files.setdefault(u["file_id"], db.file(u["file_id"]))
+        if f:
+            wanted |= {sn for sn in json.loads(u["printers"] or "[]") if compatible(svc, f, sn)}
+    out = []
+    for sn in sorted(wanted):
+        p = svc.printers.get(sn)
+        if not p or (user and not user.sees_printer(sn)) or not is_ready(p) or svc.has_pending(sn):
+            continue
+        if sn in g:
+            out.append({"sn": sn, "name": p["name"], "reason": "ok", "since": g[sn], "can_start": False})
+            continue
+        if sn in h or not working:
+            out.append({"sn": sn, "name": p["name"], "reason": "hold" if sn in h else "offhours", "since": h.get(sn),
+                        "can_start": working or cal.cfg.get("allow_offhours_start", False)})
+    return out
+
+
 # ---------------------------------------------------------------------- assegnazione automatica
 async def dispatch(svc):
     """Avvia i pezzi in attesa sulle stampanti abilitate e pronte. La coda manuale ha la precedenza: una stampante con
@@ -213,8 +282,18 @@ async def dispatch(svc):
         return
     cal = svc.workcal()
     now = time.time()
-    if cal.active() and not cal.is_working(now):
-        return                                       # fuori orario lavorativo: nessun nuovo pezzo
+    working = not cal.active() or cal.is_working(now)
+    h, g = holds(db), oks(db) if cal.active() else {}
+    allow_off = cal.cfg.get("allow_offhours_start", False)
+
+    def allowed(sn: str) -> bool:
+        if not cal.active():
+            return True
+        if sn in g:                                  # OK dell'operatore: subito in orario, fuori orario se consentito
+            return working or allow_off
+        return working and sn not in h               # automatico solo in orario e se non attende conferma
+    if cal.active() and not working and not g:
+        return                                       # fuori orario e nessun OK: nessun nuovo pezzo
     queue_targets = {r["printer_sn"] for r in db.q("SELECT printer_sn FROM queue WHERE status='queued' AND printer_sn IS NOT NULL")}
     if not db.get_setting("queue_paused", False):
         queue_any = db.one("SELECT COUNT(*) AS n FROM queue WHERE status='queued' AND printer_sn IS NULL") or {}
@@ -228,11 +307,12 @@ async def dispatch(svc):
             db.x("UPDATE production_units SET status='failed', message=? WHERE id=?", (_msg("file rimosso dall'archivio"), u["id"]))
             continue
         pl = plate_of(f, u["plate"])
-        if cal.active() and not cal.can_start_now(now, duration_s(f, u["plate"])):
-            continue                                 # modalità "intera": non finirebbe entro l'orario di oggi
+        fits = not cal.active() or cal.can_start_now(now, duration_s(f, u["plate"]))
         note = None
         for sn in json.loads(u["printers"] or "[]"):
             p = svc.printers.get(sn)
+            if not allowed(sn) or (not fits and sn not in g):
+                continue                             # attende l'operatore, oppure ("intera") non finirebbe in orario
             if not p or sn in busy or sn in queue_targets or not is_ready(p) or svc._cooldown.get(sn, 0) > time.time() \
                     or svc.has_pending(sn) or not compatible(svc, f, sn):
                 continue
@@ -258,6 +338,7 @@ async def dispatch(svc):
                 note = _msg("errore su {printer}: {e}", printer=p["name"], e=str(e)[:200])
                 continue
             db.x("UPDATE production_units SET status='starting', printer_sn=?, message='' WHERE id=?", (sn, u["id"]))
+            clear_printer(db, sn)
             busy.add(sn)
             note = None
             break
@@ -314,6 +395,9 @@ def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72, start
                 t = free_after(end)
             free_at[sn] = t
             continue
+        if sn in holds(db) and cal.active():
+            rows[sn]["waiting_ok"] = True
+            t = max(t, cal.next_working(now))
         if p["active"]:
             rem = (p.get("remaining_min") or 0) * 60
             start = (job or {}).get("started_at") or now - 60

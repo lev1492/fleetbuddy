@@ -467,7 +467,10 @@ class Service:
         """Pausa / ripresa / stop / piatto liberato, sulla strada giusta per il tipo di stampante."""
         c = self.direct.get(sn)
         if not c:
-            return await asyncio.to_thread(self.hub.opt, sn, opt)
+            r = await asyncio.to_thread(self.hub.opt, sn, opt)
+            if opt == "bed_clean":
+                production.operator_ok(self, sn)       # piatto liberato: c'è un operatore, il piatto è libero
+            return r
         fn = {"pause": c.pause, "resume": c.resume, "stop": c.stop}.get(opt)
         if not fn:
             raise HubError(key="Comando non disponibile per questa stampante")
@@ -720,6 +723,7 @@ class Service:
                     filaments=json.dumps(info.get("plan") or []), start_trays=json.dumps(start_info))
                 self._open_jobs[sn] = self.db.one("SELECT * FROM jobs WHERE id=?", (jid,))
                 production.on_job_started(self.db, ((pend or {}).get("queue") or {}).get("unit"), jid, sn)
+                production.clear_printer(self.db, sn)
                 self.toast("{printer}: stampa avviata – {task}", sn=sn, printer=p["name"], task=p["task_name"])
             else:
                 upd = {"progress": p["progress"]}
@@ -798,6 +802,7 @@ class Service:
                            filament_g=grams, snapshot=snap, error=err, estimated=1 if estimated else 0)
         self._open_jobs.pop(p["sn"], None)
         try:
+            production.hold_printer(self, p["sn"], ended_at or time.time())
             production.on_job_closed(self, job["id"], status, p["name"])
         except Exception:  # noqa: BLE001
             log.exception("Produzione: aggiornamento del pezzo non riuscito")

@@ -1106,8 +1106,8 @@ RENDER.stats = async function renderStats() {
     <div class="tablewrap"><table><thead><tr><th>${t("Stampante")}</th><th>${t("Stampe")}</th><th>${t("Riuscite")}</th><th>${t("Fallite")}</th><th>${t("Ore")}</th><th>${t("Filamento")}</th></tr></thead><tbody>
     ${s.per_printer.map(p => `<tr><td>${esc(p.name)}</td><td>${p.n}</td><td>${p.ok || 0}</td><td>${p.ko || 0}</td><td>${(p.secs / 3600).toFixed(1)}</td><td>${Math.round(p.grams)} g</td></tr>`).join("") || `<tr><td colspan="6">${t("Nessun dato")}</td></tr>`}
     </tbody></table></div>
-    <h2>${t("Qualità della connessione")} <small class="muted">${t("ultime 24 ore")}</small></h2><div id="connq"><p class="muted">${t("Caricamento…")}</p></div>`;
-  connQuality();
+    ${isAdmin() ? `<h2>${t("Qualità della connessione")} <small class="muted">${t("ultime 24 ore")}</small></h2><div id="connq"><p class="muted">${t("Caricamento…")}</p></div>` : ""}`;
+  if (isAdmin()) connQuality();
   $("#period").onchange = e => { localStorage.setItem("fb_period", e.target.value); RENDER.stats(); };
   if ($("#sgroup")) $("#sgroup").onchange = e => { localStorage.setItem("fb_stats_group", e.target.value); RENDER.stats(); };
 };

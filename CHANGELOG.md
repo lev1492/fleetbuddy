@@ -3,6 +3,20 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.19.2] – 2026-11-10
+
+### Novità
+- Produzione e calendario lavorativo: fuori orario la produzione non avvia pezzi da sola, e una stampante la cui
+  stampa finisce fuori orario (es. alle 17:45 o in un giorno festivo) attende la conferma dell'operatore, perché il
+  pezzo potrebbe essere ancora sul piatto. Nuova opzione in Amministrazione → Generali → Calendario lavorativo:
+  "Consenti l'avvio delle stampe fuori orario su conferma dell'operatore". Attiva: un operatore presente avvia subito
+  il pezzo successivo; disattiva: il pezzo parte con l'orario lavorativo, dopo la conferma.
+- Pagina Produzione: riquadro "In attesa dell'operatore" con le stampanti pronte e il pulsante "Avvia il prossimo
+  pezzo"; nel Gantt l'indicazione "attende OK". Sulle Bambu anche "Piatto liberato" vale come conferma.
+
+### Modifiche
+- Statistiche → Qualità della connessione: visibile solo agli amministratori.
+
 ## [0.19.1] – 2026-11-10
 
 ### Novità
