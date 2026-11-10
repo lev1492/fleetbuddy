@@ -79,6 +79,7 @@ MIGRATIONS = [
     ("direct_printers", "brand", "TEXT DEFAULT ''"),
     ("direct_printers", "printer_model", "TEXT DEFAULT ''"),
     ("projects", "parent_id", "INTEGER"),
+    ("jobs", "estimated", "INTEGER DEFAULT 0"),
     ("job_filaments", "source", "TEXT DEFAULT 'slicer'"),
 ]
 

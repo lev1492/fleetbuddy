@@ -325,6 +325,7 @@ def normalize_duet(client: DuetClient, model: dict | None, error: str = "") -> d
         state=state, task_name=task if fname else "",
         task_id=f"{fname}:{job.get('lastFileName') or ''}" if fname else "",
         progress=progress, remaining_min=int(remaining // 60) if remaining else 0,
+        elapsed_s=job.get("duration") or 0,
         layer=job.get("layer") or 0, total_layers=jf.get("numLayers") or 0,
         nozzles=nozzles, beds=beds, chamber=chamber.get("temp"), chamber_target=chamber.get("target") or 0,
         speed_pct=round(100 * ((m.get("move") or {}).get("speedFactor") or 1)),

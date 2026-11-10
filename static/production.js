@@ -11,6 +11,7 @@ const ZOOMS = Object.entries(ZOOM_LABEL).map(([h, l]) => [+h, l]);
 let PTAB = localStorage.getItem("fb_ptab") || "orders";
 let PZOOM = +(localStorage.getItem("fb_pzoom") || 24);
 let PHILITE = null;          // ordine evidenziato nel Gantt
+let POFF = 0;                // spostamento della finestra del Gantt rispetto ad adesso (ore)
 let PDATA = null, PPLAN = null, PTIMER = null;
 
 const pmsg = m => { if (!m) return ""; try { const o = JSON.parse(m); return t(o.msg, o.params || {}); } catch { return m; } };
@@ -28,7 +29,8 @@ RENDER.production = async function renderProduction() {
   const el = $("#v-production");
   let data, plan;
   try {
-    [data, plan] = await Promise.all([api("/api/productions"), api(`/api/production/plan?hours=${PZOOM}`)]);
+    const start = POFF ? `&start=${Math.round(Date.now() / 1000 - 3600 + POFF * 3600)}` : "";
+    [data, plan] = await Promise.all([api("/api/productions"), api(`/api/production/plan?hours=${PZOOM}${start}`)]);
   } catch (e) { el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   PDATA = data; PPLAN = plan;
   const act_ = data.productions.filter(p => ["active", "paused"].includes(p.status));
@@ -121,7 +123,7 @@ function renderOrders() {
 // ------------------------------------------------------------------------ Gantt
 function renderGantt() {
   const box = $("#pbody"), pl = PPLAN;
-  const now = pl.now, t0 = now - 3600, t1 = now + PZOOM * 3600;
+  const now = pl.now, t0 = now - 3600 + POFF * 3600, t1 = t0 + (PZOOM + 1) * 3600;
   const pph = {12: 110, 24: 60, 72: 24, 168: 10}[PZOOM] || 40;          // pixel per ora
   const W = Math.round((t1 - t0) / 3600 * pph);
   const x = ts => Math.round((Math.max(t0, Math.min(t1, ts)) - t0) / 3600 * pph);
@@ -136,16 +138,18 @@ function renderGantt() {
       ? d.toLocaleDateString(LOCALES[LANG], {weekday: "short", day: "2-digit", month: "2-digit"}) : d.toLocaleTimeString(LOCALES[LANG], {hour: "2-digit", minute: "2-digit"})}</span></div>`);
   }
   const rows = [...pl.rows].sort((a, b) => (b.online - a.online) || (b.used - a.used) || a.name.localeCompare(b.name));
-  const KIND = {current: t("in stampa"), plan: t("pianificato"), queue: t("coda"), clear: t("cambio piatto"), starting: t("in partenza")};
+  const KIND = {current: t("in stampa"), plan: t("pianificato"), queue: t("coda"), clear: t("cambio piatto"), starting: t("in partenza"), past: t("stampato")};
+  const PAST = {finished: t("Riuscita"), failed: t("Fallita"), cancelled: t("Annullata"), unknown: t("Interrotta")};
   const bar = b => {
     const left = x(b.start), w = Math.max(3, x(b.end) - left);
     if (b.end <= t0 || b.start >= t1) return "";
     const p = prods[b.production_id];
     const col = b.color || (p && p.color) || "";
     const dim = PHILITE && b.production_id !== PHILITE ? " dim" : "";
-    const tip = [p ? p.name : b.kind === "queue" ? t("Coda manuale") : "", b.label, `${KIND[b.kind] || ""}${b.offline ? " · " + t("stampante offline: stima dall'ultimo stato noto") : ""}`,
+    const tip = [p ? p.name : b.kind === "queue" ? t("Coda manuale") : "", b.label,
+      `${KIND[b.kind] || ""}${b.kind === "past" ? " · " + (PAST[b.status] || b.status) : ""}${b.estimated ? " · " + t("conclusa per stima: stampante offline") : ""}${b.offline ? " · " + t("stampante offline: stima dall'ultimo stato noto") : ""}`,
       `${whenAbs(b.start)} → ${whenAbs(b.end)} (${fmtDur(b.end - b.start)})`].filter(Boolean).join("\n");
-    return `<div class="gb ${b.kind}${col ? " pc" : ""}${b.paused ? " paused" : ""}${b.offline ? " offline" : ""}${dim}" style="left:${left}px;width:${w}px;${col ? `--pc:${esc(col)}` : ""}"
+    return `<div class="gb ${b.kind}${col ? " pc" : ""}${b.paused ? " paused" : ""}${b.offline ? " offline" : ""}${b.kind === "past" ? " st-" + b.status : ""}${b.estimated ? " est" : ""}${dim}" style="left:${left}px;width:${w}px;${col ? `--pc:${esc(col)}` : ""}"
       title="${esc(tip)}" ${b.production_id ? `data-hp="${b.production_id}"` : ""}>${b.kind === "current" ? `<i style="width:${b.progress || 0}%"></i>` : ""}
       <span>${w > 46 ? esc(b.kind === "clear" ? "⟲" : (p ? p.name + " · " : "") + (b.label || "").replace(/\.(gcode\.3mf|gcode|bgcode|ufp|3mf)$/i, "")) : ""}</span></div>`;
   };
@@ -154,7 +158,12 @@ function renderGantt() {
   const closedHead = spans.filter(c => c.label && x(c.end) - x(c.start) > 30).map(c => `<div class="gholname" style="left:${x(c.start)}px;width:${x(c.end) - x(c.start)}px" title="${esc(c.label)}">${esc(c.label)}</div>`).join("");
   const etas = Object.entries(pl.eta).map(([id, ts]) => [prods[+id], ts]).filter(([p, ts]) => p && ts <= t1 && ts >= t0);
   const legend = PDATA.productions.filter(p => ["active", "paused"].includes(p.status));
+  const fmtD = ts => new Date(ts * 1000).toLocaleString(LOCALES[LANG], {weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"});
   box.innerHTML = `<div class="gtools">
+      <div class="gnav" role="group"><button type="button" data-nav="-1" title="${esc(t("Indietro"))}">◀</button>
+        <button type="button" data-nav="0" class="${POFF ? "" : "on"}">${t("Adesso")}</button>
+        <button type="button" data-nav="1" title="${esc(t("Avanti"))}">▶</button>
+        <span class="small muted">${fmtD(t0)} → ${fmtD(t1)}</span></div>
       <div class="seg" role="group">${ZOOMS.map(([h, l]) => `<button type="button" data-z="${h}" class="${h === PZOOM ? "on" : ""}">${t(l)}</button>`).join("")}</div>
       <div class="glegend">${legend.map(p => `<button type="button" class="chip ${PHILITE === p.id ? "on" : ""}" data-hp="${p.id}" style="--c:${esc(p.color)}"><i></i>${esc(p.name)}${p.eta ? ` · ${whenAbs(p.eta)}` : ""}</button>`).join("")}
         <span class="chip lg queue"><i></i>${t("Coda manuale")}</span>${pl.calendar_mode !== "always" ? `<span class="chip lg closed"><i></i>${t("Fuori orario")}</span>` : ""}<span class="chip lg clear"><i></i>${t("Cambio piatto ({m} min)", {m: Math.round(pl.changeover_s / 60)})}</span></div>
@@ -168,7 +177,7 @@ function renderGantt() {
         <div class="gh">${ticks.join("")}${etas.map(([p, ts]) => `<div class="geta" style="left:${x(ts)}px;--pc:${esc(p.color)}" title="${esc(t("Fine stimata di {p}: {w}", {p: p.name, w: whenAbs(ts)}))}">⚑</div>`).join("")}</div>
         ${closedHead}
         ${rows.map(r => `<div class="grow2 ${r.online ? "" : "off"}">${closedRow}${pl.bars.filter(b => b.sn === r.sn).map(bar).join("")}</div>`).join("")}
-        <div class="gnow" style="left:${x(now)}px"><span>${t("adesso")}</span></div>
+        ${now >= t0 && now <= t1 ? `<div class="gnow" style="left:${x(now)}px"><span>${t("adesso")}</span></div>` : ""}
         ${ticks.map(tk => tk.replace('class="gt', 'class="gline gt')).join("")}
       </div></div></div>
       <p class="sub small">${t("La pianificazione segue le priorità e l'ordine degli ordini, la durata stimata di ogni piatto e il tempo di cambio piatto. Si aggiorna da sola: una stampa fallita viene rilanciata e il piano slitta.")}
@@ -176,10 +185,12 @@ function renderGantt() {
           : pl.calendar_mode === "full" ? t("Calendario lavorativo attivo: le stampe iniziano e finiscono in orario lavorativo.")
           : t("Calendario lavorativo attivo: le nuove stampe partono solo in orario lavorativo.")}</p>`
       : `<div class="empty">${t("Nessuna stampante da pianificare.")}</div>`}`;
+  $$("#pbody [data-nav]").forEach(b => b.onclick = () => {
+    const d = +b.dataset.nav; POFF = d === 0 ? 0 : POFF + d * Math.max(6, PZOOM / 2); RENDER.production(); });
   $$("#pbody [data-z]").forEach(b => b.onclick = () => { PZOOM = +b.dataset.z; localStorage.setItem("fb_pzoom", PZOOM); RENDER.production(); });
   box.onclick = e => { const h = e.target.closest("[data-hp]"); if (!h) return; PHILITE = PHILITE === +h.dataset.hp ? null : +h.dataset.hp; renderGantt(); };
   if ($("#pco")) $("#pco").onchange = async e => { await act(() => api("/api/production/settings", {method: "PUT", body: {changeover_min: +e.target.value}}), t("Salvato")); RENDER.production(); };
-  const gw = $("#pbody .gw"); if (gw) gw.scrollLeft = Math.max(0, x(now) - 80);
+  const gw = $("#pbody .gw"); if (gw) gw.scrollLeft = POFF ? 0 : Math.max(0, x(now) - 80);
 }
 
 // ------------------------------------------------------------------------ nuovo ordine

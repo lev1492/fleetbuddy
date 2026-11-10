@@ -3,6 +3,25 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.19.0] – 2026-11-10
+
+### Novità
+- Stampante offline durante una stampa: il lavoro non resta aperto all'infinito. Viene considerato concluso all'ora
+  di fine stimata (ultimo contatto + tempo rimanente di allora), con il consumo previsto, ed è segnato "(stima)"
+  nello storico; il pezzo di produzione risulta completato. In pausa la fine non si può stimare e il lavoro resta
+  aperto.
+- Ritorno online:
+  - se sta ancora stampando lo stesso lavoro, la chiusura stimata viene annullata e il lavoro riaperto;
+  - se sta stampando un altro lavoro, l'inizio di questo viene ricostruito a ritroso dal tempo già trascorso e il
+    lavoro precedente si chiude al più tardi a quell'ora: se prima della sua fine stimata (oltre 15 minuti), risulta
+    interrotto, con avanzamento e consumo stimati a quell'ora, e il pezzo di produzione torna da rilanciare (anche se
+    l'ordine risultava completato);
+  - se è ferma e comunica che il lavoro era annullato o fallito, l'esito viene corretto.
+- Ricostruzione a ritroso più precisa: il tempo trascorso è quello comunicato dalla stampante (Klipper, OctoPrint,
+  Duet, PrusaLink, Repetier, UltiMaker, Raise3D, INTAMSYS), altrimenti è ricavato da avanzamento e tempo rimanente.
+- Pianificazione: scorrimento avanti e indietro nel tempo (◀ Adesso ▶), con le stampe già fatte dallo storico
+  (riuscite, fallite, annullate, interrotte, concluse per stima).
+
 ## [0.18.0] – 2026-11-09
 
 ### Novità – connessione più stabile

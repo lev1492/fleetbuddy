@@ -65,6 +65,7 @@ class PrusaLinkClient(DirectClient):
             task_id=f"{sjob.get('id') or job.get('id') or ''}:{task}",
             progress=int(sjob.get("progress") or job.get("progress") or 0),
             remaining_min=int((sjob.get("time_remaining") or job.get("time_remaining") or 0) // 60),
+            elapsed_s=sjob.get("time_printing") or job.get("time_printing") or 0,
             nozzles=[nozzle(0, "T0", pr.get("temp_nozzle"), pr.get("target_nozzle"))],
             bed=pr.get("temp_bed"), bed_target=pr.get("target_bed"),
             speed_pct=int(pr.get("speed") or 100),

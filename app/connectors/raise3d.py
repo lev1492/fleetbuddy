@@ -100,7 +100,7 @@ class Raise3DClient(DirectClient):
         return base_state(
             self, True, error, state=state, task_name=task if show_job else "",
             task_id=job.get("job_id") or task, progress=int(min(100, job.get("print_progress") or 0)),
-            remaining_min=int(max(0, total - done) // 60), layer=job.get("printed_layer") or 0,
+            remaining_min=int(max(0, total - done) // 60), elapsed_s=done, layer=job.get("printed_layer") or 0,
             total_layers=job.get("total_layer") or 0, nozzles=noz, dual_nozzle=dual,
             beds=[bed(0, "", basic.get("heatbed_cur_temp"), basic.get("heatbed_tar_temp"))],
             speed_pct=int(basic.get("feed_cur_rate") or 100),

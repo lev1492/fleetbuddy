@@ -314,7 +314,7 @@ class UltimakerClient(DirectClient):
         return base_state(
             self, True, error, state=state, task_name=name if (state in ("RUNNING", "PAUSE", "PREPARE", "FINISH") or result) else "",
             task_id=job.get("uuid") or name, progress=int(round((job.get("progress") or (elapsed / total if total else 0)) * 100)),
-            remaining_min=int(max(0, total - elapsed) // 60),
+            remaining_min=int(max(0, total - elapsed) // 60), elapsed_s=elapsed,
             nozzles=noz, beds=[bed(0, "", bt.get("current"), bt.get("target"))],
             trays=trays, ams_units=units, firmware=str(sysd.get("firmware") or cp.get("firmware_version") or ""),
             model=str(sysd.get("variant") or cp.get("machine_variant") or "UltiMaker"),

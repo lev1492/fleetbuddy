@@ -105,7 +105,7 @@ class MoonrakerClient(DirectClient):
         fan = (s.get("fan") or {}).get("speed")
         return base_state(
             self, True, error, state=state, task_name=task if state in ("RUNNING", "PAUSE") or kstate in RESULT else "",
-            progress=int(progress * 100), remaining_min=int(remaining // 60), layer=layer, total_layers=total,
+            progress=int(progress * 100), remaining_min=int(remaining // 60), elapsed_s=dur, layer=layer, total_layers=total,
             nozzles=noz, beds=[bed(i, f"{i + 1}" if len(self._beds) > 1 else "", (s.get(o) or {}).get("temperature"),
                                    (s.get(o) or {}).get("target"), key="bed" if i == 0 else f"bed:{i}")
                                for i, o in enumerate(self._beds)],

@@ -848,6 +848,31 @@ def intamsys_api(path: str, req: Request, body: dict):
     return JSONResponse({"status": 0}, 404)
 
 
+# ------------------------------------------------------------------ prove: rete staccata mentre la stampa prosegue
+@app.middleware("http")
+async def net_switch(request: Request, call_next):
+    if K.get("net_off") and not request.url.path.startswith("/debug/"):
+        return Response(status_code=503)
+    return await call_next(request)
+
+
+@app.get("/debug/net")
+def debug_net(off: int = 1):
+    K["net_off"] = bool(off)
+    return {"net_off": K["net_off"]}
+
+
+@app.get("/debug/job")
+def debug_job(name: str = "", dur: int = 0, ago: int = 0):
+    """Durante le prove: nuova stampa già avviata da `ago` secondi, oppure durata cambiata."""
+    if name:
+        start(name)
+        P["t0"] = time.time() - ago
+    if dur:
+        K["dur"] = dur
+    return {"file": P["file"], "dur": K["dur"], "progress": round(progress(), 3)}
+
+
 PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
                     "1f15c4890000000d49444154789c63f8cfc0f00f0004850180848a8c210000000049454e44ae426082")
 

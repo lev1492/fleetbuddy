@@ -1540,8 +1540,8 @@ async def productions_unit(request: Request, uid: int, action: str):
 
 
 @app.get("/api/production/plan")
-async def production_plan(request: Request, hours: float = 72):
-    return production.plan(S(), U(request), horizon_h=max(6, min(24 * 14, hours)))
+async def production_plan(request: Request, hours: float = 72, start: float | None = None):
+    return production.plan(S(), U(request), horizon_h=max(6, min(24 * 14, hours)), start=start)
 
 
 @app.put("/api/production/settings")

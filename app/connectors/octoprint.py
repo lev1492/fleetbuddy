@@ -66,7 +66,7 @@ class OctoPrintClient(DirectClient):
         active = state in ("RUNNING", "PAUSE")
         return base_state(
             self, True, error, state=state, task_name=task if (active or done) else "",
-            progress=int(done), remaining_min=int((prog.get("printTimeLeft") or 0) // 60),
+            progress=int(done), remaining_min=int((prog.get("printTimeLeft") or 0) // 60), elapsed_s=prog.get("printTime") or 0,
             nozzles=noz, bed=(temps.get("bed") or {}).get("actual"), bed_target=(temps.get("bed") or {}).get("target"),
             chamber=(temps.get("chamber") or {}).get("actual"), chamber_target=(temps.get("chamber") or {}).get("target") or 0,
             firmware=(raw.get("version") or {}).get("server", ""), model="OctoPrint", speed_pct=self._speed,

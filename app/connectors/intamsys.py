@@ -124,7 +124,7 @@ class IntamsysClient(DirectClient):
         return base_state(
             self, True, error, state=state, task_name=task if (state in ("RUNNING", "PAUSE", "PREPARE") or (result and rs != "idle")) else "",
             task_id=task, progress=int(min(100, num(job.get("print_progress")) or 0)),
-            remaining_min=int(max(0, total - done) // 60), nozzles=noz, dual_nozzle=len(noz) > 1,
+            remaining_min=int(max(0, total - done) // 60), elapsed_s=done, nozzles=noz, dual_nozzle=len(noz) > 1,
             beds=[bed(0, "", num(bp.get("current_temperature")), num(bp.get("target_temperature")) or 0)],
             chamber=num(ch.get("current_temperature")), chamber_target=num(ch.get("target_temperature")) or 0,
             extra_temps=extra, firmware=sysd.get("firmware_version") or "", model=sysd.get("model") or "INTAMSYS",

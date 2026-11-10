@@ -510,6 +510,17 @@ button.danger.solid{background:var(--err);border-color:var(--err);color:#fff}
 .cq.warn{background:color-mix(in srgb,var(--pause) 18%,transparent);color:var(--pause)}
 .cq.bad{background:color-mix(in srgb,var(--err) 18%,transparent);color:var(--err)}
 
+/* Gantt: scorrimento nel tempo e stampe già fatte */
+.gnav{display:flex;align-items:center;gap:4px}
+.gnav button{padding:5px 10px}
+.gnav button.on{background:var(--ink);color:var(--surface)}
+.gnav span{margin-left:6px}
+.gb.past{opacity:.62;background:color-mix(in srgb,var(--pc,#7c8791) 70%,var(--surface));border:1px solid color-mix(in srgb,var(--pc,#7c8791) 80%,#000);box-shadow:none}
+.gb.past.st-failed,.gb.past.st-unknown{border:2px solid var(--err)}
+.gb.past.st-cancelled{background-image:repeating-linear-gradient(-45deg,transparent 0 6px,rgba(0,0,0,.18) 6px 12px)}
+.gb.past.est{border-style:dashed}
+.gb.past:hover{opacity:.95}
+
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
 .gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}

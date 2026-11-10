@@ -67,7 +67,7 @@ class RepetierClient(DirectClient):
         return base_state(
             self, True, error, state=state, task_name=job.rsplit(".", 1)[0] if job else "",
             task_id=f"{p.get('jobid') or ''}:{job}", progress=int(p.get("done") or 0),
-            remaining_min=int(max(0, total - elapsed) // 60), layer=s.get("layer") or 0,
+            remaining_min=int(max(0, total - elapsed) // 60), elapsed_s=elapsed, layer=s.get("layer") or 0,
             nozzles=noz, bed=bed.get("tempRead"), bed_target=bed.get("tempSet"),
             chamber=ch.get("tempRead"), chamber_target=ch.get("tempSet") or 0,
             speed_pct=int(s.get("speedMultiply") or 100), fans={"part": part, "aux": None, "chamber": None},

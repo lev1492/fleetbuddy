@@ -175,6 +175,8 @@ def on_job_closed(svc, job_id: int, status: str, printer_name: str):
         # torna in attesa davanti agli altri pezzi del suo ordine: il piano slitta
         svc.db.x("UPDATE production_units SET status='pending', job_id=NULL, printer_sn=NULL, attempts=attempts+1, "
                  "message=? WHERE id=?", (_msg("non riuscita su {printer}: verrà rilanciata", printer=printer_name), u["id"]))
+        # l'ordine poteva risultare completato (es. pezzo chiuso per stima e poi risultato interrotto): si riapre
+        svc.db.x("UPDATE productions SET status='active', completed_at=NULL WHERE id=? AND status='completed'", (u["production_id"],))
         svc.toast("Produzione {name}: pezzo non riuscito su {printer}, verrà rilanciato", "error",
                   name=u["prod_name"], printer=printer_name)
     else:
@@ -264,7 +266,7 @@ async def dispatch(svc):
 
 
 # ---------------------------------------------------------------------- pianificazione (Gantt)
-def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72) -> dict:
+def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72, start: float | None = None) -> dict:
     """Simula la produzione nel tempo con lo stesso criterio dell'assegnazione reale.
     draft: ordine non ancora salvato, per l'anteprima (stesso formato della creazione)."""
     db = svc.db
@@ -302,9 +304,10 @@ def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72) -> di
             seen, last = svc._last_online.get(sn, (now, {}))
             rows[sn]["last_seen"] = seen
             if job:
-                rem = max(60, (last.get("remaining_min") or 0) * 60 - (now - seen))
+                # fine stimata = ultimo contatto + tempo rimanente di allora (non si allunga col passare del tempo:
+                # superata, il lavoro viene chiuso come concluso per stima)
+                end = max(now, seen + (last.get("remaining_min") or 0) * 60)
                 u = unit_of_job.get(job.get("id"))
-                end = now + rem
                 bars.append({"sn": sn, "start": job.get("started_at") or seen, "end": end, "kind": "current", "offline": True,
                              "label": job.get("task_name") or last.get("task_name") or "", "progress": last.get("progress", 0),
                              "production_id": u["production_id"] if u else None, "color": u["color"] if u else None})
@@ -385,8 +388,19 @@ def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72) -> di
         r["saturation"] = round(100 * busy / (horizon - now))
         r["free_at"] = free_at.get(sn)
         r["used"] = any(b["sn"] == sn for b in bars)
-    closed = cal.closed_spans(now - 3600, horizon) if cal.active() else []
+    # finestra visualizzata (scorrimento avanti e indietro nel tempo): stampe già fatte dallo storico
+    win0 = start if start else now - 3600
+    win1 = win0 + (horizon_h + 1) * 3600
+    for r in db.q("""SELECT j.id, j.printer_sn, j.task_name, j.status, j.started_at, j.ended_at, j.estimated, j.progress,
+                            u.production_id, pr.color, pr.name AS prod_name
+                     FROM jobs j LEFT JOIN production_units u ON u.job_id=j.id LEFT JOIN productions pr ON pr.id=u.production_id
+                     WHERE j.status!='running' AND j.started_at < ? AND j.ended_at > ?""", (win1, win0)):
+        if r["printer_sn"] in rows:
+            bars.append({"sn": r["printer_sn"], "start": r["started_at"], "end": r["ended_at"], "kind": "past",
+                         "status": r["status"], "estimated": bool(r["estimated"]), "label": r["task_name"] or "",
+                         "production_id": r["production_id"], "color": r["color"], "progress": r["progress"]})
+    closed = cal.closed_spans(win0, win1) if cal.active() else []
     return {"now": now, "changeover_s": co, "horizon_h": horizon_h, "rows": list(rows.values()), "bars": bars,
-            "closed": closed, "calendar_mode": cal.mode if cal.active() else "always",
+            "closed": closed, "calendar_mode": cal.mode if cal.active() else "always", "window": [win0, win1],
             "eta": {str(k): v for k, v in eta.items()}, "unplaced": {str(k): v for k, v in unplaced.items()},
             "end": max([b["end"] for b in bars] + [now])}

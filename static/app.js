@@ -965,7 +965,7 @@ RENDER.history = async function renderHistory() {
       <td>${j.snapshot ? `<img class="snap" loading="lazy" alt="${esc(t("Foto a fine stampa"))}" src="/api/jobs/${j.id}/snapshot">` : ""}</td>
       <td>${fmtDate(j.started_at)}</td><td>${esc(j.printer_name)}</td><td>${esc(j.task_name)}</td><td>${esc(j.started_by_name || "—")}</td>
       <td>${fmtDur((j.ended_at || Date.now() / 1000) - j.started_at)}</td><td>${filCell(j)}</td>
-      <td><span class="st ${j.status}">${jobName(j.status)}</span>${j.status !== "finished" && j.status !== "running" ? ` · ${j.progress}%` : ""}${j.error ? `<br><small>${esc(j.error)}</small>` : ""}</td>
+      <td><span class="st ${j.status}">${jobName(j.status)}</span>${j.estimated ? ` <small class="muted" title="${esc(t("La stampante era offline: il lavoro è stato considerato concluso all'ora di fine stimata. Se torna online con altre informazioni, l'esito viene corretto."))}">(${t("stima")})</small>` : ""}${j.status !== "finished" && j.status !== "running" ? ` · ${j.progress}%` : ""}${j.error ? `<br><small>${esc(j.error)}</small>` : ""}</td>
       <td style="white-space:nowrap">${j.file_id && canOperate() ? `<button data-reprint>${t("Ristampa")}</button>` : ""} ${isAdmin() ? `<button class="danger" data-del aria-label="${esc(t("Elimina"))}">✕</button>` : ""}</td></tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">${t("Ancora nessuna stampa registrata.")}</div>`);
   el.onclick = async e => {
