@@ -370,6 +370,30 @@ class Service:
         # il tempo rimanente arriva in minuti interi (troncati): in media mezzo minuto in più
         return round(self._elapsed_s(p) + rem + 30) if rem > 0 else 0.0
 
+    async def _save_job_thumb(self, job: dict | None, p: dict):
+        """Anteprima della stampa per lo storico, quando non viene dall'archivio (il file ha già la sua miniatura):
+        quella che la stampante ricava dal G-code. Si riprova ogni 30 secondi nei primi 15 minuti, perché alcune
+        stampanti la preparano solo dopo l'avvio."""
+        if not job or job.get("file_id") or job.get("thumb") or not p.get("active"):
+            return
+        c = self.direct.get(p["sn"])
+        now = time.time()
+        key = -job["id"]                                   # stessa tabella dei tentativi del consumo previsto
+        if not c or now - (job.get("started_at") or now) > 15 * 60 or now - self._plan_try.get(key, 0) < 30:
+            return
+        self._plan_try[key] = now
+        try:
+            img = await asyncio.to_thread(c.job_thumbnail, self.raw.get(p["sn"]))
+        except Exception:  # noqa: BLE001 - dato facoltativo
+            img = None
+        if not img or img[:8] != b"\x89PNG\r\n\x1a\n" and img[:2] != b"\xff\xd8":
+            return
+        ext = "png" if img.startswith(b"\x89PNG") else "jpg"
+        rel = f"snapshots/job_{job['id']}_thumb.{ext}"
+        (self.cfg.data_path / rel).write_bytes(img)
+        job["thumb"] = rel
+        self.db.update_job(job["id"], thumb=rel)
+
     async def _retry_plan(self, job: dict | None, p: dict):
         """Consumo previsto non disponibile all'avvio (es. la stampante non ha ancora i dati del file appena avviato):
         si riprova ogni 30 secondi nei primi 15 minuti della stampa."""
@@ -821,6 +845,7 @@ class Service:
             job["planned_s"] = round(self._elapsed_s(p) + p["remaining_min"] * 60 + 30)
             self.db.update_job(job["id"], planned_s=job["planned_s"])
         await self._retry_plan(job, p)
+        await self._save_job_thumb(job, p)
         if not p["active"] and job:
             if p["state"] == "FINISH":
                 # piatto da liberare anche dopo uno stop (es. UltiMaker: wait_cleanup con result "Aborted"):

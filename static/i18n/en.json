@@ -62,6 +62,8 @@
  "Annullare l'ordine? I pezzi non ancora avviati non verranno stampati; quelli in stampa terminano normalmente.": "Cancel the order? Pieces not yet started will not be printed; those printing will finish normally.",
  "Annullata": "Cancelled",
  "Annullate": "Cancelled",
+ "Anteprima del file": "File preview",
+ "Anteprima del file (nessuna foto a fine stampa)": "File preview (no photo at the end of the print)",
  "Anteprima del piatto": "Plate preview",
  "Anteprima della stampa (nessuna camera)": "Print preview (no camera)",
  "Applicazione": "Application",

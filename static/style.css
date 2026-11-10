@@ -531,6 +531,8 @@ button.danger.solid{background:var(--err);border-color:var(--err);color:#fff}
 button.ok{border-color:var(--run);color:var(--run)}
 .ust.review{color:var(--pause)}
 
+img.snap.thumb{object-fit:contain;background:var(--sunk);padding:3px;border:1px dashed var(--line)}
+
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
 .gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}

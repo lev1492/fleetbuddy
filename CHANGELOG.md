@@ -3,6 +3,14 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.19.5] – 2026-11-11
+
+### Novità
+- Storico: se non c'è la foto di fine stampa compare l'anteprima del file (bordo tratteggiato): la miniatura del file
+  in archivio, oppure, per le stampe avviate direttamente sulla stampante, l'anteprima che la stampante ricava dal
+  G-code, salvata da FleetBuddy all'avvio (Klipper, Duet, OctoPrint, PrusaLink, UltiMaker con Connect…). Un clic la
+  ingrandisce, come la foto.
+
 ## [0.19.4] – 2026-11-11
 
 ### Modifiche

@@ -1057,7 +1057,9 @@ async def jobs(request: Request, limit: int = 200, printer: str | None = None):
                        ORDER BY j.started_at DESC LIMIT ?""", (limit * 3 if not u.is_admin else limit,))
     rows = [r for r in rows if u.sees_printer(r["printer_sn"]) and (not printer or r["printer_sn"] == printer)][:limit]
     fil = job_filaments([r["id"] for r in rows])
+    with_thumb = {f["id"] for f in S().db.q("SELECT id, meta FROM files") if '"has_thumb": true' in (f["meta"] or "")}
     for r in rows:
+        r["has_thumb"] = bool(r.get("thumb")) or (r.get("file_id") in with_thumb)
         plan = r.pop("filaments", None)
         r["filaments"] = fil.get(r["id"], [])
         if r["status"] == "running" and not r["filaments"]:
@@ -1104,6 +1106,25 @@ async def job_delete(request: Request, jid: int):
         (cfg.data_path / j["snapshot"]).unlink(missing_ok=True)
     S().db.x("DELETE FROM jobs WHERE id=?", (jid,))
     return {"ok": True}
+
+
+@app.get("/api/jobs/{jid}/thumb")
+async def job_thumb(request: Request, jid: int):
+    """Anteprima della stampa: quella salvata dalla stampante all'avvio, oppure la miniatura del file in archivio."""
+    j = S().db.one("SELECT thumb, file_id, plate, printer_sn FROM jobs WHERE id=?", (jid,))
+    if not j or not U(request).sees_printer(j["printer_sn"]):
+        raise HTTPException(404)
+    if j["thumb"] and (cfg.data_path / j["thumb"]).exists():
+        return FileResponse(cfg.data_path / j["thumb"], headers={"Cache-Control": "private, max-age=86400"})
+    f = S().db.file(j["file_id"]) if j["file_id"] else None
+    if not f or not cfg.path(f["path"]).exists():
+        raise HTTPException(404)
+    plate = j["plate"] or 1
+    img = await asyncio.to_thread(thumbnail_png if f["meta"].get("kind") == "gcode" else (lambda pth: thumbnail(pth, plate)),
+                                  cfg.path(f["path"]))
+    if not img:
+        raise HTTPException(404)
+    return Response(img, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.get("/api/jobs/{jid}/snapshot")

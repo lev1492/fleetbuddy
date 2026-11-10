@@ -965,7 +965,8 @@ RENDER.history = async function renderHistory() {
     (toConfirm ? `<div class="pwait"><b>${t("{n} stampe da confermare", {n: toConfirm})}</b><span class="small">${t("La stampante era offline quando il tempo di stampa è scaduto: indica se la stampa è riuscita (il consumo previsto va nelle statistiche) o fallita (conta solo il fallimento).")}</span></div>` : "") +
     (jobs.length ? `<div class="tablewrap"><table><thead><tr><th></th><th>${t("Avvio")}</th><th>${t("Stampante")}</th><th>${t("Lavoro")}</th><th>${t("Utente")}</th><th>${t("Durata")}</th><th>${t("Filamento")}</th><th>${t("Esito")}</th><th></th></tr></thead><tbody>
     ${jobs.map(j => `<tr data-id="${j.id}" data-file="${j.file_id || ""}">
-      <td>${j.snapshot ? `<img class="snap" loading="lazy" alt="${esc(t("Foto a fine stampa"))}" src="/api/jobs/${j.id}/snapshot">` : ""}</td>
+      <td>${j.snapshot ? `<img class="snap" loading="lazy" alt="${esc(t("Foto a fine stampa"))}" title="${esc(t("Foto a fine stampa"))}" src="/api/jobs/${j.id}/snapshot">`
+        : j.has_thumb ? `<img class="snap thumb" loading="lazy" alt="${esc(t("Anteprima del file"))}" title="${esc(t("Anteprima del file (nessuna foto a fine stampa)"))}" src="/api/jobs/${j.id}/thumb" onerror="this.remove()">` : ""}</td>
       <td>${fmtDate(j.started_at)}</td><td>${esc(j.printer_name)}</td><td>${esc(j.task_name)}</td><td>${esc(j.started_by_name || "—")}</td>
       <td>${fmtDur((j.ended_at || Date.now() / 1000) - j.started_at)}${j.planned_s ? `<br><small class="muted" title="${esc(t("Durata prevista"))}">${t("prevista {d}", {d: fmtDur(j.planned_s)})}</small>` : ""}</td><td>${filCell(j)}</td>
       <td><span class="st ${j.status}">${jobName(j.status)}</span>${j.estimated ? (j.confirmed_by ? ` <small class="muted">(${esc(j.confirmed_by === "stampante" ? t("comunicato dalla stampante") : t("confermata da {u}", {u: j.confirmed_by}))})</small>`
