@@ -3,6 +3,12 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.19.4] – 2026-11-11
+
+### Modifiche
+- Il numero accanto a "Coda" conta le stampe da fare, comprese le copie (es. un file con 5 copie e uno con 2 → 7),
+  invece del numero di file in coda; passando il mouse si vede anche il numero di file.
+
 ## [0.19.3] – 2026-11-10
 
 ### Novità

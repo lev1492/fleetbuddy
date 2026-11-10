@@ -190,7 +190,9 @@ class Service:
             "printers": sorted(self.printers.values(), key=lambda p: p["name"].lower()),
             "hub_ok": self.hub_ok, "hub_error": self.hub_error, "last_poll": self.last_poll,
             "queue_paused": self.db.get_setting("queue_paused", False),
-            "queue_count": self.db.one("SELECT COUNT(*) n FROM queue WHERE status='queued'")["n"],
+            # stampe in coda: ogni voce conta per le copie che le restano da stampare
+            "queue_count": self.db.one("SELECT COALESCE(SUM(MAX(COALESCE(copies, 1), 1)), 0) n FROM queue WHERE status='queued'")["n"],
+            "queue_items": self.db.one("SELECT COUNT(*) n FROM queue WHERE status='queued'")["n"],
         }
 
     # ------------------------------------------------------------------ ciclo

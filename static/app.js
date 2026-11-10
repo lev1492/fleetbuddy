@@ -244,6 +244,7 @@ function connect() {
       hs.innerHTML = `${t("{a} di {b} stampanti connesse", {a: online, b: S.printers.length})}`
         + (hubUsed ? `<small>${S.hub_ok ? t("Fleet Hub connesso") : esc(S.hub_error || t("Hub non raggiungibile"))}</small>` : "");
       $("#qbadge").textContent = S.queue_count || "";
+      $("#qbadge").title = S.queue_count ? t("{n} stampe in coda ({f} file)", {n: S.queue_count, f: S.queue_items || S.queue_count}) : "";
       if (S.settings && S.settings.camera_refresh_s !== oldRefresh) startCamTimer();
       if (view === "printers") RENDER.printers();
     } else if (m.kind === "toast") {

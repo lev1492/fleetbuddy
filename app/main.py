@@ -188,9 +188,10 @@ def state_for(u: User) -> dict:
     st = S().snapshot_state()
     st["printers"] = [dict(p) for p in st["printers"] if u.sees_printer(p["sn"])]   # copie: i dati aggiunti sono per utente
     if not u.is_admin:
-        rows = S().db.q("SELECT q.printer_sn, q.group_id, f.project_id FROM queue q LEFT JOIN files f "
-                        "ON f.id=q.file_id WHERE q.status='queued'")
-        st["queue_count"] = sum(1 for r in rows if queue_visible(u, r))
+        rows = [r for r in S().db.q("SELECT q.printer_sn, q.group_id, q.copies, f.project_id FROM queue q LEFT JOIN files f "
+                                    "ON f.id=q.file_id WHERE q.status='queued'") if queue_visible(u, r)]
+        st["queue_count"] = sum(max(r["copies"] or 1, 1) for r in rows)      # copie da stampare, non voci
+        st["queue_items"] = len(rows)
         if not st["hub_ok"]:
             st["hub_error"] = _("Hub non raggiungibile: avvisa l'amministratore")
     elif not st["hub_ok"] and S().hub_error_obj is not None:

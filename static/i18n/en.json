@@ -906,6 +906,7 @@
  "{n} piatti": "{n} plates",
  "{n} riuscite": "{n} successful",
  "{n} stampe da confermare": "{n} prints to confirm",
+ "{n} stampe in coda ({f} file)": "{n} prints in the queue ({f} files)",
  "{n} utensili": "{n} tools",
  "{printer} offline: tempo di stampa scaduto, conferma l'esito di {task}": "{printer} offline: print time is up, confirm the outcome of {task}",
  "{printer}: esito della stampa da confermare": "{printer}: print outcome to confirm",

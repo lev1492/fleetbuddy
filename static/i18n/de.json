@@ -906,6 +906,7 @@
  "{n} piatti": "{n} Platten",
  "{n} riuscite": "{n} erfolgreich",
  "{n} stampe da confermare": "{n} Drucke zu bestätigen",
+ "{n} stampe in coda ({f} file)": "{n} Drucke in der Warteschlange ({f} Dateien)",
  "{n} utensili": "{n} Werkzeuge",
  "{printer} offline: tempo di stampa scaduto, conferma l'esito di {task}": "{printer} offline: Druckzeit abgelaufen, Ergebnis von {task} bestätigen",
  "{printer}: esito della stampa da confermare": "{printer}: Druckergebnis zu bestätigen",
