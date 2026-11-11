@@ -3,6 +3,22 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.20.1] – 2026-11-12
+
+### Correzioni
+- Storico: una stampante offline che il Fleet Hub mostrava ancora "in stampa" (ultimo stato noto) faceva aprire e
+  chiudere lo stesso lavoro a ogni ciclo, creando centinaia di righe "da confermare" con durata negativa (e notifiche
+  ripetute). Ora una stampante offline non apre né chiude lavori sui suoi dati vecchi: la stampa in corso resta
+  aperta, alla fine prevista diventa "da confermare" una sola volta e al ritorno online ci si riallinea. Una fine
+  non può più precedere l'inizio.
+- Pulizia automatica una tantum dello storico: vengono eliminate le righe create da questo errore (lavori stimati con
+  fine precedente all'inizio e copie dello stesso lavoro chiuse per stima), con il loro eventuale consumo.
+- Ritorno online su "stampa finita, piatto da liberare" (o in errore) per lo stesso lavoro rimasto da confermare:
+  l'esito viene confermato automaticamente.
+- Fine stampa riconosciuta subito, senza contare il tempo della schermata "rimuovi il pezzo": Elegoo Centauri
+  Carbon (completata ma ancora "occupata"), INTAMSYS (lavoro completato con la macchina ancora attiva), UltiMaker
+  (fase post_print). La stampante risulta "piatto da liberare" finché non si conferma sul display.
+
 ## [0.20.0] – 2026-11-12
 
 ### Novità

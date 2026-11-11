@@ -123,8 +123,10 @@ def advance():
 
 
 def device(sn, p):
+    if p.get("frozen"):                                   # offline: ultimo stato noto, congelato
+        p = {**p, **p["frozen"]}
     return {
-        "dev_sn": sn, "dev_model": p["model"], "dev_ip": "10.0.0." + sn[-1], "name": p["name"], "online": True,
+        "dev_sn": sn, "dev_model": p["model"], "dev_ip": "10.0.0." + sn[-1], "name": p["name"], "online": not p.get("offline"),
         "mqtt_status": 2, "liveview_time": "2026-11-02T10:00:00Z",
         "latest_print_cmd_send_fail_reason": p.get("fail_reason", ""), "print_cmd_send_retry_cnt": 3 if p.get("fail_reason") else 0,
         "upgrade_info": {"current_ver": "01.08.00.00", "upgrade_state": "IDLE"},
@@ -167,6 +169,19 @@ def mock_delay_next(sn: str, s: int = 60):
 def mock_fail_next(sn: str, reason: str = "download failed"):
     """Solo per i test: il prossimo comando di stampa viene accettato dal Hub ma la stampante non parte."""
     FAIL_NEXT[sn] = reason
+    return ok()
+
+
+@app.post("/mock/offline/{sn}")
+def mock_offline(sn: str, off: bool = True):
+    """Solo per i test: la stampante va offline; il Hub continua a mostrare l'ultimo stato (es. "in stampa"),
+    congelato, come fa il Fleet Hub reale."""
+    p = PRINTERS[sn]
+    p["offline"] = off
+    if off:
+        p["frozen"] = {k: p[k] for k in ("state", "pct")}
+    else:
+        p.pop("frozen", None)
     return ok()
 
 

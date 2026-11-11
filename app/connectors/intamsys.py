@@ -89,7 +89,9 @@ class IntamsysClient(DirectClient):
         t, job, sysd = raw.get("temps") or {}, raw.get("job") or {}, raw.get("system") or {}
         rs = str((raw.get("running") or {}).get("running_status") or "idle").lower()
         js = str(job.get("job_status") or "").lower()
-        if js in JOB and rs != "idle":
+        if js == "completed" and rs != "idle":
+            state = "FINISH"                         # completata, in attesa che si tolga il pezzo: non è più stampa
+        elif js in JOB and rs != "idle":
             state = JOB[js]
         elif rs == "idle":
             state = "IDLE"

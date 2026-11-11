@@ -151,6 +151,10 @@ class Service:
         # produzione: tabelle e riallineamento dei pezzi (dopo che tutto il resto è pronto)
         production.init(self.db)
         try:
+            self._fix_offline_duplicates()          # dopo la creazione delle tabelle della produzione
+        except Exception:  # noqa: BLE001 - una correzione dei dati non deve mai impedire l'avvio
+            log.exception("Pulizia dello storico non riuscita")
+        try:
             production.reconcile(self)
         except Exception:  # noqa: BLE001 - non deve impedire l'avvio
             log.exception("Produzione: riallineamento all'avvio non riuscito")
@@ -445,6 +449,7 @@ class Service:
             est_end = self._offline_estimate(sn, job, now)[0]
             if now < est_end:
                 continue
+            est_end = max(est_end, job.get("started_at") or est_end)      # mai una fine prima dell'inizio
             await self._close_job(job, {**last, "online": False, "progress": 100}, "to_confirm", ended_at=est_end, estimated=True)
             log.info("%s offline: %s doveva finire alle %s, esito da confermare", last.get("name", sn), job.get("task_name"),
                      time.strftime("%H:%M", time.localtime(est_end)))
@@ -616,6 +621,34 @@ class Service:
             else:
                 self.db.x("UPDATE queue SET status='error', message=? WHERE id=? AND status='sent'", (why, q["id"]))
 
+    def _fix_offline_duplicates(self):
+        """Correzione una tantum (0.20.1): una stampante offline che il Fleet Hub mostrava ancora "in stampa" faceva
+        aprire e chiudere per stima lo stesso lavoro a ogni ciclo, con fine precedente all'inizio. Si eliminano quei
+        lavori: stimati con fine prima dell'inizio, e copie dello stesso lavoro (stessa stampante e stesso lavoro,
+        avviate a pochi minuti di distanza) chiuse per stima, tenendo la prima."""
+        if self.db.get_setting("fix_offline_dup", False):
+            return
+        bad = {r["id"] for r in self.db.q("SELECT id FROM jobs WHERE estimated=1 AND ended_at IS NOT NULL AND ended_at < started_at")}
+        rows = self.db.q("SELECT id, printer_sn, task_id, started_at, status, estimated FROM jobs "
+                         "WHERE task_id IS NOT NULL AND task_id != '' ORDER BY printer_sn, task_id, started_at, id")
+        prev = None
+        for r in rows:
+            same = prev and prev["printer_sn"] == r["printer_sn"] and prev["task_id"] == r["task_id"] \
+                and abs((r["started_at"] or 0) - (prev["started_at"] or 0)) < 10 * 60
+            if same and r["estimated"] and r["status"] in ("to_confirm", "finished", "unknown"):
+                bad.add(r["id"])                                  # copia: si tiene la prima
+                continue
+            if r["id"] not in bad:
+                prev = r
+        if bad:
+            ids = ",".join(str(i) for i in bad)
+            for u in self.db.q(f"SELECT id FROM production_units WHERE job_id IN ({ids})"):
+                self.db.x("UPDATE production_units SET status='pending', job_id=NULL, printer_sn=NULL WHERE id=?", (u["id"],))
+            self.db.x(f"DELETE FROM job_filaments WHERE job_id IN ({ids})")
+            self.db.x(f"DELETE FROM jobs WHERE id IN ({ids})")
+            log.warning("Storico: eliminate %d copie errate di lavori creati mentre una stampante era offline", len(bad))
+        self.db.set_setting("fix_offline_dup", True)
+
     def _fix_ultimaker_volume(self):
         """Correzione una tantum (0.16.2): lo storico UltiMaker indica il volume (mm³), che era stato trattato come
         lunghezza di filamento da 2,85 mm (grammi × 6,38 rispetto al vero). Si ricalcola e, per le stampe non
@@ -749,11 +782,21 @@ class Service:
         sn = p["sn"]
         job = self._open_jobs.get(sn)
         key = p["task_id"] + "/" + p["subtask_id"]
+        if not p.get("online"):
+            # Stampante offline: lo stato che arriva è quello vecchio (es. il Fleet Hub ripete l'ultimo "in stampa").
+            # Non si aprono né si chiudono lavori su questi dati: il lavoro in corso resta aperto e, se il tempo
+            # previsto scade, diventa "da confermare" (_offline_jobs); al ritorno online ci si riallinea.
+            self._watch_pending(p)
+            return
 
         if p["online"] and not p["active"] and prev is not None and not prev.get("online"):
             # tornata online ferma: se dice che il lavoro chiuso per stima era annullato o fallito, si corregge l'esito
             est = self._estimated_job(sn)
             lr = p.get("last_result")
+            if not lr and est and est.get("task_id") == key:
+                # nessun esito esplicito, ma la stampante è su "stampa finita, piatto da liberare" (o in errore):
+                # anche questo è l'esito di quel lavoro
+                lr = {"FINISH": "finished", "FAILED": "failed"}.get(p.get("state"))
             if est and est.get("task_id") == key and lr in ("cancelled", "failed", "finished"):
                 if est["status"] == "to_confirm":
                     # la stampante comunica l'esito: è la conferma (riuscita → consumo nelle statistiche)
@@ -884,6 +927,8 @@ class Service:
         self._hms_seen[sn] = codes
 
     async def _close_job(self, job: dict, p: dict, status: str, ended_at: float | None = None, estimated: bool = False):
+        if ended_at is not None and job.get("started_at") and ended_at < job["started_at"]:
+            ended_at = job["started_at"]                                   # mai una fine prima dell'inizio
         """estimated: stampante offline, lavoro chiuso all'ora di fine stimata (si corregge se torna online)."""
         if status == "failed" and p["sn"] in self.stopped_by_user:
             status = "cancelled"

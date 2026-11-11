@@ -118,6 +118,10 @@ class ElegooClient(DirectClient):
         busy = 1 in (s.get("CurrentStatus") or [])
         if code in PAUSED:
             state = "PAUSE"
+        elif code in DONE:
+            # completata: la stampa è finita anche se la stampante resta "occupata" sulla schermata finale
+            # (pezzo da togliere): quel tempo non conta come stampa
+            state = "FINISH" if busy else "IDLE"
         elif busy or code in STOPPING:
             state = "RUNNING" if code not in (0,) or busy else "IDLE"
         else:

@@ -28,7 +28,8 @@ from ..gcodemeta import parse_fdm_material as parse_material
 from .base import DirectClient, base_state, bed, nozzle
 
 JOB_STATE = {"printing": "RUNNING", "pre_print": "PREPARE", "pausing": "PAUSE", "paused": "PAUSE", "resuming": "RUNNING",
-             "post_print": "RUNNING", "wait_cleanup": "FINISH", "wait_user_action": "PAUSE", "sent_to_printer": "PREPARE"}
+             # post_print e wait_cleanup: dopo la stampa (raffreddamento, "rimuovi la stampa"), non è più stampa
+             "post_print": "FINISH", "wait_cleanup": "FINISH", "wait_user_action": "PAUSE", "sent_to_printer": "PREPARE"}
 PRINTER_STATE = {"idle": "IDLE", "printing": "RUNNING", "error": "FAILED", "maintenance": "PREPARE", "booting": "PREPARE",
                  "pre_print": "PREPARE", "unreachable": "OFFLINE"}
 RESULT = {"finished": "finished", "aborted": "cancelled", "failed": "failed"}
