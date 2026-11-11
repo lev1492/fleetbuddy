@@ -42,6 +42,7 @@ class DirectClient:
         self.password = row.get("password") or ""
         self.extra = (row.get("extra") or "").strip()
         self.snapshot_url = (row.get("snapshot_url") or "").strip()
+        self.web_override = (row.get("web_url") or "").strip()
         self.brand = (row.get("brand") or "").strip() or self.default_brand
         self.printer_model = (row.get("printer_model") or "").strip()
         self.auto_snapshot_url = ""          # trovato dalla stampante stessa (es. OctoPrint, Moonraker)
@@ -69,6 +70,23 @@ class DirectClient:
 
     def start(self, local_path: str, name: str, options: dict | None = None):
         raise HubError(key="Comando non disponibile per questa stampante")
+
+    # interfaccia web della stampante (link sull'indirizzo IP nella scheda); None = il sistema non ne ha una
+    web_default: str | None = None          # "base": indirizzo dell'API; "host": http://IP/; "host:PORTA"
+
+    @property
+    def web_url(self) -> str | None:
+        if self.web_override:
+            return self.web_override if "://" in self.web_override else "http://" + self.web_override
+        if not self.web_default:
+            return None
+        if self.web_default == "base":
+            return self.base.rstrip("/") + "/"
+        host = urllib.parse.urlsplit(self.base).hostname or ""
+        if ":" in host:
+            host = f"[{host}]"                  # IPv6
+        port = self.web_default.split(":", 1)[1] if ":" in self.web_default else ""
+        return f"http://{host}{':' + port if port else ''}/"
 
     def job_thumbnail(self, raw: dict | None) -> bytes | None:
         """Miniatura PNG della stampa in corso fornita dalla stampante, se l'API la espone."""
@@ -198,6 +216,7 @@ def base_state(client: DirectClient, online: bool, error: str = "", **kw) -> dic
     st.update(kw)
     st["caps"].setdefault("print_options", [])
     st["brand"] = client.brand
+    st["web_url"] = client.web_url
     st["printer_model"] = client.printer_model or st.get("model") or ""
     if st["nozzles"]:
         st["nozzle"], st["nozzle_target"] = st["nozzles"][0]["temp"], st["nozzles"][0]["target"]

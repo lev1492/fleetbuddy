@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import re
 import secrets
 import time
@@ -17,7 +18,49 @@ from dataclasses import dataclass, field
 from .db import DB
 from .i18n import _
 
-ROLES = ("admin", "operator", "viewer")
+ROLES = ("admin", "manager", "operator", "viewer")    # ruoli predefiniti (l'amministratore può crearne altri)
+
+def N_(s: str) -> str:
+    """Segna una frase da tradurre."""
+    return s
+
+
+# Permessi che l'amministratore combina nei ruoli (chiave → descrizione nel catalogo traduzioni)
+PERMISSIONS = {
+    "all": N_("Vede tutte le stampanti e tutti i file"),
+    "control": N_("Comanda le stampanti (pausa, stop, temperature, velocità, filamenti)"),
+    "print": N_("Avvia stampe e gestisce la coda"),
+    "files": N_("Carica e organizza i file e le cartelle dell'archivio"),
+    "production": N_("Gestisce la produzione (ordini, priorità, avvio dei pezzi)"),
+    "confirm": N_("Conferma l'esito delle stampe da confermare"),
+    "history": N_("Corregge lo storico (elimina voci)"),
+    "stats": N_("Vede le statistiche e le esporta"),
+    "users": N_("Gestisce gli utenti dei ruoli indicati"),
+}
+OPERATIVE = ["control", "print", "files", "production", "confirm", "stats"]
+BUILTIN_ROLES = {
+    # chiave: (nome, permessi, ruoli assegnabili da chi ha "users")
+    "admin": (N_("Amministratore"), list(PERMISSIONS), []),
+    "manager": (N_("Manager"), ["all", *OPERATIVE, "history", "users"], ["operator", "viewer"]),
+    "operator": (N_("Operatore"), OPERATIVE, []),
+    "viewer": (N_("Visitatore"), ["stats"], []),
+}
+
+
+def ensure_roles(db):
+    """Tabella dei ruoli con quelli predefiniti (al primo avvio o dopo l'aggiornamento)."""
+    db._conn.executescript("""CREATE TABLE IF NOT EXISTS roles (
+        key TEXT PRIMARY KEY, name TEXT, perms TEXT, assign TEXT, builtin INTEGER DEFAULT 0, position INTEGER DEFAULT 0)""")
+    for i, (k, (name, perms, assign)) in enumerate(BUILTIN_ROLES.items()):
+        if not db.one("SELECT 1 FROM roles WHERE key=?", (k,)):
+            db.x("INSERT INTO roles(key, name, perms, assign, builtin, position) VALUES(?,?,?,?,1,?)",
+                 (k, name, json.dumps(perms), json.dumps(assign), i))
+    # l'amministratore ha sempre tutti i permessi, anche quelli aggiunti nelle versioni successive
+    db.x("UPDATE roles SET perms=? WHERE key='admin'", (json.dumps(list(PERMISSIONS)),))
+
+
+def role_keys(db) -> list[str]:
+    return [r["key"] for r in db.q("SELECT key FROM roles ORDER BY position, key")]
 SESSION_DAYS = 30
 PBKDF2_ROUNDS = 120_000          # ~0,3 s su un Pi 3: sufficiente e non blocca l'interfaccia
 
@@ -58,26 +101,41 @@ class User:
     printers: set[str] = field(default_factory=set)   # seriali consentiti (non usato per admin)
     projects: set[int] = field(default_factory=set)   # progetti consentiti (non usato per admin)
     must_change_pw: bool = False                      # password assegnata dall'admin: proporre di cambiarla
+    perms: set[str] = field(default_factory=set)      # permessi del ruolo
+    assign: set[str] = field(default_factory=set)     # ruoli che può assegnare (con il permesso "users")
+    role_name: str = ""
 
     @property
     def is_admin(self) -> bool:
         return self.role == "admin"
 
+    def can(self, perm: str) -> bool:
+        return self.is_admin or perm in self.perms
+
     @property
-    def can_operate(self) -> bool:
-        return self.role in ("admin", "operator")
+    def can_operate(self) -> bool:                    # compatibilità: comandi delle stampanti
+        return self.can("control")
+
+    @property
+    def sees_all(self) -> bool:
+        return self.is_admin or "all" in self.perms
 
     def sees_printer(self, sn: str | None) -> bool:
-        return self.is_admin or (sn is not None and sn in self.printers)
+        return self.sees_all or (sn is not None and sn in self.printers)
 
     def sees_project(self, pid: int | None) -> bool:
-        # i file senza progetto sono visibili solo agli amministratori
-        return self.is_admin or (pid is not None and pid in self.projects)
+        # i file senza progetto sono visibili solo a chi vede tutto
+        return self.sees_all or (pid is not None and pid in self.projects)
+
+    def can_assign(self, role: str) -> bool:
+        """Può creare o modificare utenti di questo ruolo? (l'amministratore tutti, gli altri solo quelli indicati)"""
+        return self.is_admin or (self.can("users") and role in self.assign)
 
     def public(self) -> dict:
-        # nome e cognome restano nella sola gestione utenti dell'amministratore
+        # nome e cognome restano nella sola gestione utenti
         return {"id": self.id, "username": self.username, "role": self.role, "language": self.language,
-                "must_change_pw": self.must_change_pw}
+                "must_change_pw": self.must_change_pw, "perms": sorted(PERMISSIONS if self.is_admin else self.perms),
+                "assign": sorted(self.assign), "role_name": self.role_name}
 
 
 class Auth:
@@ -94,7 +152,7 @@ class Auth:
         username = username.strip()
         if not re.fullmatch(r"[A-Za-z0-9._@-]{2,32}", username):
             raise ValueError(_("Nome utente: 2–32 caratteri tra lettere, numeri e . _ @ -"))
-        if role not in ROLES:
+        if role not in role_keys(self.db):
             raise ValueError(_("Ruolo non valido"))
         problem = password_problem(password)
         if problem:
@@ -111,6 +169,9 @@ class Auth:
         if not r:
             return None
         u = User(r["id"], r["username"], r["role"], r.get("language"), must_change_pw=bool(r.get("must_change_pw")))
+        role = self.db.one("SELECT * FROM roles WHERE key=?", (r["role"],))
+        if role:
+            u.perms, u.assign, u.role_name = set(json.loads(role["perms"] or "[]")), set(json.loads(role["assign"] or "[]")), role["name"]
         if not u.is_admin:
             acc = self.db.q("SELECT kind, ref FROM access WHERE user_id=?", (uid,))
             groups = printer_groups if printer_groups is not None else self.group_members()

@@ -3,6 +3,21 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.20.0] – 2026-11-12
+
+### Novità
+- Ruoli configurabili: l'amministratore crea e modifica i ruoli (Amministrazione → Utenti → Ruoli e permessi) e ne
+  sceglie i permessi: vede tutte le stampanti e tutti i file, comandi delle stampanti, stampe e coda, archivio,
+  produzione, conferma degli esiti, correzione dello storico, statistiche, gestione degli utenti di ruoli indicati.
+  Impostazioni, Fleet Hub, stampanti, aggiornamenti e ruoli restano riservati agli amministratori.
+- Nuovo ruolo predefinito Manager: vede tutto, ha i permessi operativi e gestisce gli utenti, ma può creare e
+  modificare solo operatori e visitatori. I ruoli Operatore e Visitatore mantengono i permessi di prima.
+- Il server controlla ogni azione con il permesso corrispondente; chi gestisce utenti non può assegnare ruoli che
+  non gli sono consentiti né modificare utenti di altri ruoli.
+- Schede delle stampanti: l'indirizzo IP è un link (sottolineato, con l'icona "apri in una nuova scheda") che apre
+  l'interfaccia web della stampante: Mainsail/Fluidd (Klipper), OctoPrint, Duet Web Control, PrusaLink,
+  Repetier-Server, UltiMaker, Elegoo Centauri Carbon. L'indirizzo si può indicare a mano nel modulo della stampante.
+
 ## [0.19.5] – 2026-11-11
 
 ### Novità

@@ -28,6 +28,7 @@ CHUNK = 1024 * 1024
 
 class ElegooClient(DirectClient):
     kind = "elegoo"
+    web_default = "host:3030"                      # interfaccia web
     label = "Elegoo (SDCP)"
     default_brand = "Elegoo"
     caps = {"temperature": False, "speed": False, "filament": False, "bed_clean": False,

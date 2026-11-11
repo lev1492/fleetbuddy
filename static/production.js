@@ -40,7 +40,7 @@ RENDER.production = async function renderProduction() {
   el.innerHTML = `<div class="head"><div><h1>${t("Produzione")}</h1>
       <p class="sub">${act_.length ? t("{a} ordini attivi · {b} pezzi da completare", {a: act_.length, b: pending}) + (lastEta ? " · " + t("fine prevista {w}", {w: whenAbs(lastEta)}) : "")
         : t("Nessun ordine di produzione attivo")}</p></div>
-      ${canOperate() ? `<button class="primary" id="pnew">＋ ${t("Nuovo ordine")}</button>` : ""}</div>
+      ${can("production") ? `<button class="primary" id="pnew">＋ ${t("Nuovo ordine")}</button>` : ""}</div>
     <div class="tabs" role="tablist"><a href="#" data-pt="orders" class="${PTAB === "orders" ? "on" : ""}" role="tab">${t("Ordini")}</a>
       <a href="#" data-pt="gantt" class="${PTAB === "gantt" ? "on" : ""}" role="tab">${t("Pianificazione")}</a></div>
     ${waitingBox(data)}
@@ -65,7 +65,7 @@ function waitingBox(data) {
   return `<div class="pwait"><b>${t("In attesa dell'operatore")}</b>
     ${!data.working ? `<span class="small muted">${data.allow_offhours ? t("Fuori orario: i pezzi partono solo su conferma.") : t("Fuori orario: l'avvio non è consentito, i pezzi partiranno con l'orario lavorativo.")}</span>` : ""}
     <div class="pwl">${w.map(x => `<div class="pwi"><span><b>${esc(x.name)}</b> <small class="muted">${why(x)}</small></span>
-      ${canOperate() && x.can_start ? `<button type="button" class="primary" data-go="${esc(x.sn)}">▶ ${t("Avvia il prossimo pezzo")}</button>` : ""}</div>`).join("")}</div></div>`;
+      ${can("production") && x.can_start ? `<button type="button" class="primary" data-go="${esc(x.sn)}">▶ ${t("Avvia il prossimo pezzo")}</button>` : ""}</div>`).join("")}</div></div>`;
 }
 
 // ------------------------------------------------------------------------ ordini
@@ -79,13 +79,13 @@ function orderCard(p, i, list) {
       <span class="prio p${p.priority}">${t(PRIO[p.priority])}</span>
       ${p.status !== "active" ? `<span class="bdg">${t(PSTATE[p.status])}</span>` : ""}
       <span class="grow"></span>
-      ${open && canOperate() ? `<div class="po-actions">
+      ${open && can("production") ? `<div class="po-actions">
         <button type="button" data-po="up" title="${esc(t("Sposta prima"))}" ${i === 0 ? "disabled" : ""}>↑</button>
         <button type="button" data-po="down" title="${esc(t("Sposta dopo"))}" ${i === list.length - 1 ? "disabled" : ""}>↓</button>
         <select data-po="prio" aria-label="${esc(t("Priorità"))}">${Object.entries(PRIO).map(([k, l]) => `<option value="${k}" ${+k === p.priority ? "selected" : ""}>${t(l)}</option>`).join("")}</select>
         <button type="button" data-po="${p.status === "paused" ? "resume" : "pause"}">${p.status === "paused" ? "▶ " + t("Riprendi") : "⏸ " + t("Pausa")}</button>
         <button type="button" class="danger" data-po="cancel">${t("Annulla")}</button></div>`
-        : canOperate() && !open ? `<button type="button" class="linkbtn" data-po="delete">${t("Elimina")}</button>` : ""}</div>
+        : can("production") && !open ? `<button type="button" class="linkbtn" data-po="delete">${t("Elimina")}</button>` : ""}</div>
     <div class="po-bar">${seg(s.done, "d")}${seg(s.printing, "r")}${seg(s.failed, "f")}${seg(s.pending, "w")}${seg(s.cancelled, "c")}</div>
     <div class="po-meta"><b>${s.done}/${s.total}</b> ${t("pezzi")}${s.printing ? " · " + t("{n} in stampa", {n: s.printing}) : ""}${s.review ? ` · <span class="warn">${t("{n} da confermare", {n: s.review})}</span>` : ""}${s.failed ? ` · <span class="warn">${t("{n} non riusciti", {n: s.failed})}</span>` : ""}
       ${open && p.eta ? ` · ${t("fine stimata")} <b>${whenAbs(p.eta)}</b> <span class="muted">(${whenRel(p.eta)})</span>` : ""}
@@ -99,9 +99,9 @@ function orderCard(p, i, list) {
         <td><span class="ust ${u.status}">${t(USTATE[u.status] || u.status)}</span>${u.attempts ? ` <small class="muted">${t("tentativo {n}", {n: u.attempts + 1})}</small>` : ""}
           ${u.message ? `<br><small class="muted">${esc(pmsg(u.message))}</small>` : ""}</td>
         <td>${esc(u.printer_name || "")}</td>
-        <td>${canOperate() && ["failed", "cancelled"].includes(u.status) ? `<button type="button" data-u="retry">${t("Rilancia")}</button>` : ""}
-          ${canOperate() && u.status === "pending" ? `<button type="button" class="linkbtn" data-u="skip">${t("Salta")}</button>` : ""}
-          ${canOperate() && u.status === "review" && u.job_id ? `<button type="button" class="ok" data-outcome="finished" data-job="${u.job_id}">✓ ${t("Riuscita")}</button>
+        <td>${can("production") && ["failed", "cancelled"].includes(u.status) ? `<button type="button" data-u="retry">${t("Rilancia")}</button>` : ""}
+          ${can("production") && u.status === "pending" ? `<button type="button" class="linkbtn" data-u="skip">${t("Salta")}</button>` : ""}
+          ${can("confirm") && u.status === "review" && u.job_id ? `<button type="button" class="ok" data-outcome="finished" data-job="${u.job_id}">✓ ${t("Riuscita")}</button>
             <button type="button" class="danger" data-outcome="failed" data-job="${u.job_id}">✗ ${t("Fallita")}</button>` : ""}</td></tr>`).join("")}
       </tbody></table></div></details></article>`;
 }
@@ -112,7 +112,7 @@ function renderOrders() {
   const closed = PDATA.productions.filter(p => !["active", "paused"].includes(p.status));
   box.innerHTML = (list.length ? `<div class="porders">${list.map(orderCard).join("")}</div>`
     : `<div class="empty pempty"><div class="big">🏭</div><p>${t("Crea un ordine di produzione: scegli i modelli, il numero di copie e le stampanti. FleetBuddy distribuisce i pezzi e ti mostra quando finirà.")}</p>
-       ${canOperate() ? `<button class="primary" id="pnew2">＋ ${t("Nuovo ordine")}</button>` : ""}</div>`)
+       ${can("production") ? `<button class="primary" id="pnew2">＋ ${t("Nuovo ordine")}</button>` : ""}</div>`)
     + (closed.length ? `<details class="pclosed"><summary>${t("Concluse")} (${closed.length})</summary><div class="porders">${closed.map(orderCard).join("")}</div></details>` : "");
   if ($("#pnew2")) $("#pnew2").onclick = () => newOrderDialog();
   box.onclick = async e => {

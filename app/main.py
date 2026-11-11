@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from . import APP_NAME, REPO_URL, __version__
-from .auth import ROLES, Auth, User, password_problem
+from .auth import PERMISSIONS, Auth, User, ensure_roles, password_problem, role_keys
 from .config import BASE_DIR, load_config
 from .i18n import LANGS, _, current_lang, from_accept_language, normalize
 from .hub_client import HubError
@@ -42,6 +42,7 @@ async def lifespan(_app: FastAPI):
     global svc, auth
     log.info("Avvio %s v%s", APP_NAME, __version__)
     svc = Service(cfg)
+    ensure_roles(svc.db)
     auth = Auth(svc.db)
     if not auth.has_users() and cfg.app.ui_password:
         try:   # primo avvio: l'utente di config.toml diventa amministratore
@@ -103,9 +104,14 @@ def need_admin(u: User):
         raise HTTPException(403, _("Operazione riservata agli amministratori"))
 
 
-def need_operator(u: User):
-    if not u.can_operate:
-        raise HTTPException(403, _("Il tuo profilo è di sola visualizzazione"))
+def need(u: User, perm: str):
+    """Il ruolo dell'utente deve avere questo permesso (l'amministratore li ha tutti)."""
+    if not u.can(perm):
+        raise HTTPException(403, _("Il tuo ruolo non consente questa operazione"))
+
+
+def need_operator(u: User):                           # compatibilità: comandi delle stampanti
+    need(u, "control")
 
 
 def printer_for(u: User, sn: str) -> dict:
@@ -135,14 +141,14 @@ def groups_with_members() -> list[dict]:
 
 
 def group_targetable(u: User, gid: int) -> bool:
-    if u.is_admin:
+    if u.sees_all:
         return True
     members = auth.group_members().get(gid, set())
     return bool(members) and members <= u.printers
 
 
 def queue_visible(u: User, row: dict) -> bool:
-    if u.is_admin:
+    if u.sees_all:
         return True
     if not u.sees_project(row.get("project_id")):
         return False
@@ -187,7 +193,7 @@ def job_materials(p: dict) -> list[dict]:
 def state_for(u: User) -> dict:
     st = S().snapshot_state()
     st["printers"] = [dict(p) for p in st["printers"] if u.sees_printer(p["sn"])]   # copie: i dati aggiunti sono per utente
-    if not u.is_admin:
+    if not u.sees_all:
         rows = [r for r in S().db.q("SELECT q.printer_sn, q.group_id, q.copies, f.project_id FROM queue q LEFT JOIN files f "
                                     "ON f.id=q.file_id WHERE q.status='queued'") if queue_visible(u, r)]
         st["queue_count"] = sum(max(r["copies"] or 1, 1) for r in rows)      # copie da stampare, non voci
@@ -432,11 +438,28 @@ async def general_put(request: Request, body: dict):
 
 
 # ====================================================================== utenti (admin)
+def _users_manager(request: Request) -> User:
+    """Amministratore, oppure ruolo con il permesso "gestione utenti" (solo per i ruoli che può assegnare)."""
+    me = U(request)
+    need(me, "users")
+    return me
+
+
+def _managed_user(me: User, uid: int) -> dict:
+    row = S().db.one("SELECT * FROM users WHERE id=?", (uid,))
+    if not row:
+        raise HTTPException(404)
+    if not me.can_assign(row["role"]):
+        raise HTTPException(403, _("Non puoi modificare utenti con questo ruolo"))
+    return row
+
+
 @app.get("/api/users")
 async def users_list(request: Request):
-    need_admin(U(request))
+    me = _users_manager(request)
     rows = S().db.q("SELECT id, username, first_name, last_name, role, active, language, created_at, last_login, "
                     "must_change_pw FROM users ORDER BY username")
+    rows = [r for r in rows if me.can_assign(r["role"]) or r["id"] == me.id]
     acc = S().db.q("SELECT * FROM access")
     for r in rows:
         mine = [a for a in acc if a["user_id"] == r["id"]]
@@ -448,7 +471,9 @@ async def users_list(request: Request):
 
 @app.post("/api/users")
 async def users_add(request: Request, body: dict):
-    need_admin(U(request))
+    me = _users_manager(request)
+    if not me.can_assign(str(body.get("role", "operator"))):
+        raise HTTPException(403, _("Non puoi creare utenti con questo ruolo"))
     uid = await asyncio.to_thread(auth.create_user, str(body.get("username", "")), str(body.get("password", "")),
                                   str(body.get("role", "operator")), normalize(body.get("language")) or current_lang.get(),
                                   str(body.get("first_name", "")), str(body.get("last_name", "")))
@@ -459,17 +484,16 @@ async def users_add(request: Request, body: dict):
 
 @app.patch("/api/users/{uid}")
 async def users_edit(request: Request, uid: int, body: dict):
-    me = U(request)
-    need_admin(me)
-    row = S().db.one("SELECT * FROM users WHERE id=?", (uid,))
-    if not row:
-        raise HTTPException(404)
+    me = _users_manager(request)
+    row = _managed_user(me, uid)
     demote = ("role" in body and body["role"] != "admin") or ("active" in body and not body["active"])
     if row["role"] == "admin" and demote and auth.admins_left(uid) == 0:
         raise HTTPException(409, _("Deve restare almeno un amministratore attivo"))
     if "role" in body:
-        if body["role"] not in ROLES:
+        if body["role"] not in role_keys(S().db):
             raise HTTPException(400, _("Ruolo non valido"))
+        if not me.can_assign(body["role"]):
+            raise HTTPException(403, _("Non puoi assegnare questo ruolo"))
         S().db.x("UPDATE users SET role=? WHERE id=?", (body["role"], uid))
     for col in ("first_name", "last_name"):
         if col in body:
@@ -494,10 +518,10 @@ async def users_edit(request: Request, uid: int, body: dict):
 
 @app.delete("/api/users/{uid}")
 async def users_delete(request: Request, uid: int):
-    me = U(request)
-    need_admin(me)
+    me = _users_manager(request)
     if uid == me.id:
         raise HTTPException(409, _("Non puoi eliminare il tuo stesso utente"))
+    _managed_user(me, uid)
     row = S().db.one("SELECT role FROM users WHERE id=?", (uid,))
     if row and row["role"] == "admin" and auth.admins_left(uid) == 0:
         raise HTTPException(409, _("Deve restare almeno un amministratore attivo"))
@@ -509,12 +533,80 @@ async def users_delete(request: Request, uid: int):
 
 @app.put("/api/users/{uid}/access")
 async def users_access(request: Request, uid: int, body: dict):
-    need_admin(U(request))
+    me = _users_manager(request)
+    _managed_user(me, uid)
     db = S().db
+    if not me.sees_all:                     # si assegnano solo stampanti, gruppi e progetti che si vedono
+        body = {"printers": [x for x in body.get("printers") or [] if me.sees_printer(x)],
+                "groups": [x for x in body.get("groups") or [] if group_targetable(me, int(x))],
+                "projects": [x for x in body.get("projects") or [] if me.sees_project(int(x))]}
     db.x("DELETE FROM access WHERE user_id=?", (uid,))
     for kind, key in (("printer", "printers"), ("group", "groups"), ("project", "projects")):
         for ref in body.get(key) or []:
             db.x("INSERT OR IGNORE INTO access(user_id, kind, ref) VALUES(?,?,?)", (uid, kind, str(ref)))
+    return {"ok": True}
+
+
+# ====================================================================== ruoli (solo amministratore)
+@app.get("/api/roles")
+async def roles_list(request: Request):
+    U(request)                              # elenco visibile a chi gestisce utenti (per i menu dei ruoli)
+    counts = {r["role"]: r["n"] for r in S().db.q("SELECT role, COUNT(*) AS n FROM users GROUP BY role")}
+    return {"roles": [{**r, "perms": json.loads(r["perms"] or "[]"), "assign": json.loads(r["assign"] or "[]"),
+                       "users": counts.get(r["key"], 0)} for r in S().db.q("SELECT * FROM roles ORDER BY position, key")],
+            "permissions": [{"key": k, "label": _(v)} for k, v in PERMISSIONS.items()]}
+
+
+def _role_body(body: dict) -> tuple[str, list, list]:
+    name = str(body.get("name", "")).strip()[:40]
+    if not name:
+        raise HTTPException(400, _("Dai un nome al ruolo"))
+    perms = [p for p in body.get("perms") or [] if p in PERMISSIONS]
+    keys = role_keys(S().db)
+    assign = [r for r in body.get("assign") or [] if r in keys and r != "admin"] if "users" in perms else []
+    return name, perms, assign
+
+
+@app.post("/api/roles")
+async def roles_add(request: Request, body: dict):
+    _admin(request)
+    name, perms, assign = _role_body(body)
+    key = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:24] or "ruolo"
+    base, n = key, 2
+    while S().db.one("SELECT 1 FROM roles WHERE key=?", (key,)):
+        key, n = f"{base}_{n}", n + 1
+    pos = (S().db.one("SELECT MAX(position) AS m FROM roles") or {}).get("m") or 0
+    S().db.x("INSERT INTO roles(key, name, perms, assign, builtin, position) VALUES(?,?,?,?,0,?)",
+             (key, name, json.dumps(perms), json.dumps(assign), pos + 1))
+    return {"key": key}
+
+
+@app.patch("/api/roles/{key}")
+async def roles_edit(request: Request, key: str, body: dict):
+    _admin(request)
+    if key == "admin":
+        raise HTTPException(409, _("Il ruolo Amministratore ha sempre tutti i permessi e non si può modificare"))
+    if not S().db.one("SELECT 1 FROM roles WHERE key=?", (key,)):
+        raise HTTPException(404)
+    name, perms, assign = _role_body(body)
+    S().db.x("UPDATE roles SET name=?, perms=?, assign=? WHERE key=?", (name, json.dumps(perms), json.dumps([a for a in assign if a != key]), key))
+    return {"ok": True}
+
+
+@app.delete("/api/roles/{key}")
+async def roles_delete(request: Request, key: str):
+    _admin(request)
+    row = S().db.one("SELECT * FROM roles WHERE key=?", (key,))
+    if not row:
+        raise HTTPException(404)
+    if row["builtin"]:
+        raise HTTPException(409, _("I ruoli predefiniti non si possono eliminare (se ne possono cambiare i permessi)"))
+    if S().db.one("SELECT 1 FROM users WHERE role=?", (key,)):
+        raise HTTPException(409, _("Ci sono utenti con questo ruolo: assegna loro un altro ruolo prima di eliminarlo"))
+    S().db.x("DELETE FROM roles WHERE key=?", (key,))
+    for r in S().db.q("SELECT key, assign FROM roles"):           # non più assegnabile
+        a = [x for x in json.loads(r["assign"] or "[]") if x != key]
+        S().db.x("UPDATE roles SET assign=? WHERE key=?", (json.dumps(a), r["key"]))
     return {"ok": True}
 
 
@@ -524,7 +616,7 @@ async def groups_list(request: Request):
     u = U(request)
     out = []
     for g in groups_with_members():
-        if not u.is_admin:
+        if not u.sees_all:
             g["printers"] = [sn for sn in g["printers"] if u.sees_printer(sn)]
             if not g["printers"]:
                 continue
@@ -611,7 +703,7 @@ async def projects_list(request: Request):
         rows.append({**r, "path": [x["name"] for x in path], "root_id": path[0]["id"] if path else r["id"],
                      "depth": len(path) - 1, "files_total": r["files"] + sum(tree[x]["files"] for x in sub),
                      "children": sum(1 for x in tree.values() if x.get("parent_id") == r["id"])})
-    if u.is_admin:
+    if u.sees_all:
         n = S().db.one("SELECT COUNT(*) n FROM files WHERE project_id IS NULL")["n"]
         rows.append({"id": None, "name": "Senza progetto", "description": "", "color": "#8A949C", "files": n,
                      "files_total": n, "parent_id": None, "path": [], "root_id": None, "depth": 0, "children": 0})
@@ -623,7 +715,7 @@ def _can_manage_folder(u: User, parent_id: int | None):
     if parent_id is None:
         need_admin(u)
     else:
-        need_operator(u)
+        need(u, "files")
         if not u.sees_project(parent_id):
             raise HTTPException(403, _("Non hai accesso a questo progetto"))
 
@@ -698,7 +790,7 @@ async def projects_delete(request: Request, pid: int):
 @app.post("/api/printers/{sn}/opt")
 async def printer_opt(request: Request, sn: str, body: dict):
     u = U(request)
-    need_operator(u)
+    need(u, "control")
     p = printer_for(u, sn)
     opt = body.get("opt")
     allowed = {
@@ -722,7 +814,7 @@ async def printer_opt(request: Request, sn: str, body: dict):
 async def printer_files(request: Request, sn: str, dir: str = "Local"):
     """File presenti nella memoria della stampante (per i tipi che non permettono di caricarne, es. Raise3D)."""
     u = U(request)
-    need_operator(u)
+    need(u, "print")
     p = printer_for(u, sn)
     c = S().direct.get(sn)
     if not c or not (p.get("caps") or {}).get("remote_files"):
@@ -733,7 +825,7 @@ async def printer_files(request: Request, sn: str, dir: str = "Local"):
 @app.post("/api/printers/{sn}/start_remote")
 async def printer_start_remote(request: Request, sn: str, body: dict):
     u = U(request)
-    need_operator(u)
+    need(u, "print")
     p = printer_for(u, sn)
     if not S().direct.get(sn) or not (p.get("caps") or {}).get("remote_files"):
         raise HTTPException(400, _("Comando non disponibile per questa stampante"))
@@ -748,7 +840,7 @@ async def printer_start_remote(request: Request, sn: str, body: dict):
 async def printer_temperature(request: Request, sn: str, body: dict):
     """Temperatura obiettivo di ugello (tool:N), piano (bed) o camera (chamber); solo stampanti dirette."""
     u = U(request)
-    need_operator(u)
+    need(u, "control")
     p = printer_for(u, sn)
     if not (p.get("caps") or {}).get("temperature"):
         raise HTTPException(400, _("Questa stampante non permette di modificare le temperature tramite la sua API")
@@ -761,7 +853,7 @@ async def printer_temperature(request: Request, sn: str, body: dict):
 @app.post("/api/printers/{sn}/speed")
 async def printer_speed(request: Request, sn: str, body: dict):
     u = U(request)
-    need_operator(u)
+    need(u, "control")
     p = printer_for(u, sn)
     if not (p.get("caps") or {}).get("speed"):
         raise HTTPException(400, _("Questa stampante non permette di modificare la velocità tramite la sua API")
@@ -811,7 +903,7 @@ async def filament_presets():
 @app.post("/api/printers/{sn}/filament")
 async def printer_filament(request: Request, sn: str, body: dict):
     u = U(request)
-    need_operator(u)
+    need(u, "control")
     p = printer_for(u, sn)
     if sn in S().direct:
         raise HTTPException(400, _("Comando non disponibile per questa stampante"))
@@ -853,7 +945,7 @@ async def files(request: Request, project: str | None = None):
 @app.post("/api/files")
 async def upload_file(request: Request, file: UploadFile = File(...), project_id: str = Form("")):
     u = U(request)
-    need_operator(u)
+    need(u, "files")
     pid = int(project_id) if project_id.isdigit() else None
     if not u.sees_project(pid):
         raise HTTPException(403, _("Scegli un progetto a cui hai accesso"))
@@ -893,7 +985,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
 async def delete_file(request: Request, fid: int):
     u = U(request)
     f = file_for(u, fid)
-    if not (u.is_admin or (u.can_operate and f.get("uploaded_by") == u.id)):
+    if not (u.is_admin or (u.can("files") and (u.sees_all or f.get("uploaded_by") == u.id))):
         raise HTTPException(403, _("Puoi eliminare solo i file caricati da te"))
     cfg.path(f["path"]).unlink(missing_ok=True)
     S().db.x("DELETE FROM files WHERE id=?", (fid,))
@@ -904,7 +996,7 @@ async def delete_file(request: Request, fid: int):
 @app.patch("/api/files/{fid}")
 async def edit_file(request: Request, fid: int, body: dict):
     u = U(request)
-    need_operator(u)
+    need(u, "files")
     file_for(u, fid)
     if "notes" in body:
         S().db.x("UPDATE files SET notes=? WHERE id=?", (str(body.get("notes", ""))[:2000], fid))
@@ -948,7 +1040,7 @@ async def file_automap(request: Request, fid: int, body: dict):
 @app.post("/api/print")
 async def print_now(request: Request, body: dict):
     u = U(request)
-    need_operator(u)
+    need(u, "print")
     file_for(u, int(body["file_id"]))
     p = printer_for(u, body["printer_sn"])
     if not is_ready(p) or S().has_pending(p["sn"]):
@@ -983,7 +1075,7 @@ async def queue_list(request: Request):
 @app.post("/api/queue")
 async def queue_add(request: Request, body: dict):
     u = U(request)
-    need_operator(u)
+    need(u, "print")
     file_for(u, int(body["file_id"]))
     sn = body.get("printer_sn") or None
     gid = int(body["group_id"]) if body.get("group_id") else None
@@ -993,7 +1085,7 @@ async def queue_add(request: Request, body: dict):
     elif gid:
         if not group_targetable(u, gid):
             raise HTTPException(403, _("Non hai accesso a tutte le stampanti di questo gruppo"))
-    elif not u.is_admin:
+    elif not u.sees_all:
         raise HTTPException(400, _("Scegli una stampante o un gruppo"))
     pos = (S().db.one("SELECT MAX(position) m FROM queue")["m"] or 0) + 1
     qid = S().db.x("INSERT INTO queue(file_id, plate, printer_sn, group_id, mapping, options, position, created_at, "
@@ -1009,7 +1101,7 @@ def _queue_item(u: User, qid: int) -> dict:
     r = S().db.one("SELECT q.*, f.project_id FROM queue q LEFT JOIN files f ON f.id=q.file_id WHERE q.id=?", (qid,))
     if not r or not queue_visible(u, r):
         raise HTTPException(404)
-    need_operator(u)
+    need(u, "print")
     return r
 
 
@@ -1054,7 +1146,7 @@ async def queue_pause(request: Request, body: dict):
 async def jobs(request: Request, limit: int = 200, printer: str | None = None):
     u = U(request)
     rows = S().db.q("""SELECT j.*, us.username AS started_by_name FROM jobs j LEFT JOIN users us ON us.id=j.started_by
-                       ORDER BY j.started_at DESC LIMIT ?""", (limit * 3 if not u.is_admin else limit,))
+                       ORDER BY j.started_at DESC LIMIT ?""", (limit * 3 if not u.sees_all else limit,))
     rows = [r for r in rows if u.sees_printer(r["printer_sn"]) and (not printer or r["printer_sn"] == printer)][:limit]
     fil = job_filaments([r["id"] for r in rows])
     with_thumb = {f["id"] for f in S().db.q("SELECT id, meta FROM files") if '"has_thumb": true' in (f["meta"] or "")}
@@ -1100,7 +1192,7 @@ def filament_totals(where: str, args: list) -> list[dict]:
 
 @app.delete("/api/jobs/{jid}")
 async def job_delete(request: Request, jid: int):
-    need_admin(U(request))
+    need(U(request), "history")
     j = S().db.one("SELECT snapshot FROM jobs WHERE id=?", (jid,))
     if j and j["snapshot"]:
         (cfg.data_path / j["snapshot"]).unlink(missing_ok=True)
@@ -1138,7 +1230,7 @@ async def job_snapshot(request: Request, jid: int):
 
 def _stats_filter(u: User, days: int, group: int | None) -> tuple[str, list]:
     """Clausola WHERE per le stampe visibili all'utente nel periodo (e nel gruppo scelto)."""
-    sns = None if u.is_admin else set(u.printers)
+    sns = None if u.sees_all else set(u.printers)
     if group:
         members = auth.group_members().get(group, set())
         sns = members if sns is None else sns & members
@@ -1161,6 +1253,7 @@ def _stats_filter(u: User, days: int, group: int | None) -> tuple[str, list]:
 
 @app.get("/api/stats/export.xlsx")
 async def stats_export(request: Request, days: int = 30, group: int | None = None):
+    need(U(request), "stats")
     from .export import build_stats_xlsx
     u = U(request)
     days = max(1, min(3650, days))
@@ -1170,7 +1263,7 @@ async def stats_export(request: Request, days: int = 30, group: int | None = Non
                         .replace('printer_sn', 'j.printer_sn')} ORDER BY j.started_at""", args)
     gname = S().db.one("SELECT name FROM printer_groups WHERE id=?", (group,)) if group else None
     scope = (_("Gruppo {g}", g=gname["name"]) if gname else
-             (_("Tutte") if u.is_admin else _("Tutte quelle assegnate all'utente")))
+             (_("Tutte") if u.sees_all else _("Tutte quelle assegnate all'utente")))
     data = await asyncio.to_thread(build_stats_xlsx, jobs, filaments=filament_totals(where, args),
                                    days=days, scope=scope, user=u.username,
                                    lang=current_lang.get())
@@ -1218,6 +1311,7 @@ def _bucket_edges(span: int, step: int) -> tuple[float, int]:
 
 @app.get("/api/stats/utilization")
 async def stats_utilization(request: Request, period: str = Query("24h", alias="range"), group: int | None = None):
+    need(U(request), "stats")
     """Tasso di utilizzo: per ogni intervallo, il tempo di stampa diviso per il tempo disponibile
     di tutte le stampanti considerate (stampanti visibili all'utente, eventualmente di un gruppo)."""
     u = U(request)
@@ -1260,6 +1354,7 @@ async def stats_utilization(request: Request, period: str = Query("24h", alias="
 @app.get("/api/stats")
 async def stats(request: Request, days: int = 30, group: int | None = None, period: str | None = None):
     u = U(request)
+    need(u, "stats")
     data = _stats_data(u, days, group)
     if period in PERIODS:
         span, _, step = PERIODS[period]
@@ -1289,7 +1384,7 @@ def _stats_jobs(u: User, days: int, group: int | None) -> list[dict]:
 def _scope_label(u: User, group: int | None) -> str:
     gname = S().db.one("SELECT name FROM printer_groups WHERE id=?", (group,)) if group else None
     return (_("Gruppo {g}", g=gname["name"]) if gname else
-            (_("Tutte") if u.is_admin else _("Tutte quelle assegnate all'utente")))
+            (_("Tutte") if u.sees_all else _("Tutte quelle assegnate all'utente")))
 
 
 def _download(data: bytes, media: str, days: int, ext: str, kind: str = "") -> Response:
@@ -1300,6 +1395,7 @@ def _download(data: bytes, media: str, days: int, ext: str, kind: str = "") -> R
 
 @app.get("/api/stats/export.json")
 async def stats_export_json(request: Request, days: int = 30, group: int | None = None):
+    need(U(request), "stats")
     """Tutto in un unico file: riepilogo, per stampante, per giorno, filamenti e dettaglio delle stampe."""
     u = U(request)
     days = max(1, min(3650, days))
@@ -1316,6 +1412,7 @@ async def stats_export_json(request: Request, days: int = 30, group: int | None 
 
 @app.get("/api/stats/export.csv")
 async def stats_export_csv(request: Request, kind: str = "jobs", days: int = 30, group: int | None = None):
+    need(U(request), "stats")
     """CSV di una tabella: jobs (dettaglio stampe), filaments, printers, daily."""
     from .export import build_csv
     u = U(request)
@@ -1413,7 +1510,7 @@ async def admin_update_install(request: Request):
 
 # ====================================================================== produzione
 def _prod_visible(u: User, row: dict) -> bool:
-    return u.is_admin or any(u.sees_printer(sn) for sn in json.loads(row["printers"] or "[]"))
+    return u.sees_all or any(u.sees_printer(sn) for sn in json.loads(row["printers"] or "[]"))
 
 
 def _prod_row(u: User, pid: int) -> dict:
@@ -1472,7 +1569,7 @@ async def productions_list(request: Request):
 @app.post("/api/productions")
 async def productions_create(request: Request, body: dict):
     u = U(request)
-    need_operator(u)
+    need(u, "production")
     try:
         pid = production.create(S().db, _prod_body(u, body), u.id)
     except ValueError as e:
@@ -1496,7 +1593,7 @@ async def productions_preview(request: Request, body: dict):
 @app.patch("/api/productions/{pid}")
 async def productions_edit(request: Request, pid: int, body: dict):
     u = U(request)
-    need_operator(u)
+    need(u, "production")
     row = _prod_row(u, pid)
     if "name" in body:
         S().db.x("UPDATE productions SET name=? WHERE id=?", (str(body["name"]).strip()[:80] or row["name"], pid))
@@ -1517,7 +1614,7 @@ async def productions_edit(request: Request, pid: int, body: dict):
 async def job_outcome(request: Request, jid: int, body: dict):
     """Esito di una stampa "da confermare" (stampante offline oltre il tempo previsto): riuscita o fallita."""
     u = U(request)
-    need_operator(u)
+    need(u, "confirm")
     job = S().db.one("SELECT * FROM jobs WHERE id=?", (jid,))
     if not job or not u.sees_printer(job["printer_sn"]):
         raise HTTPException(404, _("Stampa non trovata"))
@@ -1535,7 +1632,7 @@ async def job_outcome(request: Request, jid: int, body: dict):
 async def production_go(request: Request, sn: str):
     """OK dell'operatore: piatto libero, si può avviare il prossimo pezzo su questa stampante."""
     u = U(request)
-    need_operator(u)
+    need(u, "production")
     printer_for(u, sn)
     cal = S().workcal()
     if cal.active() and not cal.is_working(time.time()) and not cal.cfg.get("allow_offhours_start"):
@@ -1548,7 +1645,7 @@ async def production_go(request: Request, sn: str):
 @app.post("/api/productions/{pid}/move")
 async def productions_move(request: Request, pid: int, body: dict):
     u = U(request)
-    need_operator(u)
+    need(u, "production")
     _prod_row(u, pid)
     production.move(S().db, pid, "up" if body.get("direction") == "up" else "down")
     return {"ok": True}
@@ -1558,7 +1655,7 @@ async def productions_move(request: Request, pid: int, body: dict):
 async def productions_cancel(request: Request, pid: int):
     """Annulla i pezzi non ancora avviati; quelli in stampa terminano normalmente."""
     u = U(request)
-    need_operator(u)
+    need(u, "production")
     _prod_row(u, pid)
     S().db.x("UPDATE production_units SET status='cancelled' WHERE production_id=? AND status='pending'", (pid,))
     S().db.x("UPDATE productions SET status='cancelled', completed_at=? WHERE id=?", (time.time(), pid))
@@ -1568,7 +1665,7 @@ async def productions_cancel(request: Request, pid: int):
 @app.delete("/api/productions/{pid}")
 async def productions_delete(request: Request, pid: int):
     u = U(request)
-    need_operator(u)
+    need(u, "production")
     row = _prod_row(u, pid)
     if row["status"] in ("active", "paused"):
         raise HTTPException(409, _("Annulla la produzione prima di eliminarla"))
@@ -1580,7 +1677,7 @@ async def productions_delete(request: Request, pid: int):
 @app.post("/api/productions/units/{uid}/{action}")
 async def productions_unit(request: Request, uid: int, action: str):
     u = U(request)
-    need_operator(u)
+    need(u, "production")
     unit = S().db.one("SELECT * FROM production_units WHERE id=?", (uid,))
     if not unit:
         raise HTTPException(404)
@@ -1615,7 +1712,7 @@ DIRECT_KINDS = tuple(KINDS)
 
 def _direct_row(body: dict, old: dict | None = None) -> dict:
     row = dict(old or {})
-    for k in ("name", "host", "snapshot_url", "username", "extra", "brand", "printer_model"):
+    for k in ("name", "host", "snapshot_url", "username", "extra", "brand", "printer_model", "web_url"):
         if k in body:
             row[k] = str(body[k] or "").strip()[:200]
     for k in ("password", "api_key"):   # segreti: un campo vuoto in modifica significa "non cambiare"
@@ -1627,7 +1724,7 @@ def _direct_row(body: dict, old: dict | None = None) -> dict:
     if not row.get("host"):
         raise HTTPException(400, _("Indica l'indirizzo della stampante"))
     row.setdefault("name", row["host"])
-    for k in ("password", "snapshot_url", "api_key", "username", "extra", "brand", "printer_model"):
+    for k in ("password", "snapshot_url", "api_key", "username", "extra", "brand", "printer_model", "web_url"):
         row.setdefault(k, "")
     return row
 
@@ -1635,7 +1732,7 @@ def _direct_row(body: dict, old: dict | None = None) -> dict:
 @app.get("/api/direct")
 async def direct_list(request: Request):
     _admin(request)
-    rows = S().db.q("SELECT id, kind, name, host, snapshot_url, username, extra, brand, printer_model, enabled, created_at, "
+    rows = S().db.q("SELECT id, kind, name, host, snapshot_url, username, extra, brand, printer_model, web_url, enabled, created_at, "
                     "password <> '' AS has_password, api_key <> '' AS has_api_key FROM direct_printers ORDER BY name")
     for r in rows:
         sn = f"{r['kind']}-{r['id']}"
@@ -1696,9 +1793,9 @@ async def direct_add(request: Request, body: dict):
     _admin(request)
     row = _direct_row(body)
     rid = S().db.x("INSERT INTO direct_printers(kind, name, host, password, snapshot_url, api_key, username, extra, brand, "
-                   "printer_model, enabled, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,1,?)",
+                   "printer_model, web_url, enabled, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)",
                    (row["kind"], row["name"], row["host"], row["password"], row["snapshot_url"], row["api_key"],
-                    row["username"], row["extra"], row["brand"], row["printer_model"], time.time()))
+                    row["username"], row["extra"], row["brand"], row["printer_model"], row["web_url"], time.time()))
     S().reload_direct()
     return {"id": rid, "sn": f"{row['kind']}-{rid}"}
 
@@ -1712,9 +1809,9 @@ async def direct_edit(request: Request, rid: int, body: dict):
     row = _direct_row(body, old)
     enabled = 1 if body.get("enabled", old["enabled"]) else 0
     S().db.x("UPDATE direct_printers SET name=?, host=?, password=?, snapshot_url=?, api_key=?, username=?, extra=?, "
-             "brand=?, printer_model=?, enabled=? WHERE id=?",
+             "brand=?, printer_model=?, web_url=?, enabled=? WHERE id=?",
              (row["name"], row["host"], row["password"], row["snapshot_url"], row["api_key"], row["username"], row["extra"],
-              row["brand"], row["printer_model"], enabled, rid))
+              row["brand"], row["printer_model"], row["web_url"], enabled, rid))
     S().reload_direct()
     return {"ok": True}
 

@@ -16,6 +16,7 @@ from .base import DirectClient, base_state, mm_to_grams, nozzle, plan_from_meta
 
 class OctoPrintClient(DirectClient):
     kind = "octoprint"
+    web_default = "base"                      # interfaccia web
     label = "OctoPrint"
     caps = {"temperature": True, "speed": True, "filament": False, "bed_clean": False}
 

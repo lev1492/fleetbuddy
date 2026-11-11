@@ -16,6 +16,7 @@ from .base import DirectClient, base_state, nozzle
 
 class RepetierClient(DirectClient):
     kind = "repetier"
+    web_default = "base"                      # interfaccia web
     label = "Repetier-Server"
     default_port = 3344
     caps = {"temperature": True, "speed": True, "filament": False, "bed_clean": False}

@@ -31,6 +31,7 @@ TIMEOUT = 6
 
 class DuetClient(DirectClient):
     kind = "duet"
+    web_default = "base"                      # interfaccia web
     label = "Duet / RepRapFirmware 3"
     caps = {"temperature": True, "speed": True, "filament": False, "bed_clean": False}
 

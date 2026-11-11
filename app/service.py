@@ -270,6 +270,7 @@ class Service:
                 old.name = r["name"] or sn
                 old.brand = (r.get("brand") or "").strip() or old.default_brand    # marca e modello cambiano subito
                 old.printer_model = (r.get("printer_model") or "").strip()
+                old.web_override = (r.get("web_url") or "").strip()
                 keep[sn] = old
             else:
                 c = make_client(r)
@@ -280,7 +281,7 @@ class Service:
         for sn, c in keep.items():
             st = getattr(self, "printers", {}).get(sn)   # all'avvio l'elenco non esiste ancora
             if st:
-                st.update(name=c.name, brand=c.brand, printer_model=c.printer_model or st.get("model") or "")
+                st.update(name=c.name, brand=c.brand, printer_model=c.printer_model or st.get("model") or "", web_url=c.web_url)
 
     @staticmethod
     def _elapsed_s(p: dict) -> float:

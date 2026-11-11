@@ -78,6 +78,7 @@ MIGRATIONS = [
     ("direct_printers", "extra", "TEXT DEFAULT ''"),
     ("direct_printers", "brand", "TEXT DEFAULT ''"),
     ("direct_printers", "printer_model", "TEXT DEFAULT ''"),
+    ("direct_printers", "web_url", "TEXT DEFAULT ''"),
     ("projects", "parent_id", "INTEGER"),
     ("jobs", "estimated", "INTEGER DEFAULT 0"),
     ("jobs", "planned_s", "REAL DEFAULT 0"),

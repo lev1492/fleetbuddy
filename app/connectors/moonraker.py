@@ -20,6 +20,7 @@ RESULT = {"complete": "finished", "cancelled": "cancelled", "error": "failed"}
 
 class MoonrakerClient(DirectClient):
     kind = "moonraker"
+    web_default = "host"                      # interfaccia web
     label = "Klipper (Moonraker)"
     default_port = None
     caps = {"temperature": True, "speed": True, "filament": False, "bed_clean": False}

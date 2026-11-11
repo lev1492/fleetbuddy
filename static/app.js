@@ -37,18 +37,24 @@ const STATES = {IDLE: "Inattiva", PREPARE: "Preparazione", RUNNING: "In stampa",
   FINISH: "Completata", FAILED: "Fallita", UNKNOWN: "Sconosciuto", SLICING: "Preparazione"};
 const JOBS = {finished: "Completata", failed: "Fallita", cancelled: "Annullata", running: "In corso", unknown: "Interrotta",
   queued: "In attesa", sent: "In partenza", error: "Errore", to_confirm: "Da confermare"};
-const ROLES = {admin: "Amministratore", operator: "Operatore", viewer: "Osservatore"};
+const ROLES = {admin: "Amministratore", manager: "Manager", operator: "Operatore", viewer: "Visitatore"};
+let ROLE_LIST = [];   // ruoli configurati dall'amministratore (/api/roles)
 const SPEEDS = {1: "Silenziosa", 2: "Normale", 3: "Sport", 4: "Ludicrous"};
 const stateName = s => t(STATES[s] || s);
 const jobName = s => t(JOBS[s] || s);
-const roleName = r => t(ROLES[r] || r);
+const roleName = r => { const x = ROLE_LIST.find(y => y.key === r); return x ? t(x.name) : ME && r === ME.role && ME.role_name ? t(ME.role_name) : t(ROLES[r] || r); };
 const trayLabel = l => l === "EXT" ? t("Esterna") : l === "EXT_R" ? t("Esterna dx") : l === "EXT_L" ? t("Esterna sx") : l;
 
 let APP = {name: "FleetBuddy", version: "", repo: ""}, UPDATE = null;
 let S = {printers: [], hub_ok: false, settings: {camera_refresh_s: 60}}, view = "printers", presets = [];
 let ME = null, GROUPS = [], PROJECTS = [], groupFilter = localStorage.getItem("fb_group") || "", es = null;
+// icona "apri in una nuova scheda" (quadrato con freccia), come sui siti web
+const EXT_ICON = `<svg class="exticon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>`;
 const isAdmin = () => ME && ME.role === "admin";
-const canOperate = () => ME && ME.role !== "viewer";
+// permessi del ruolo (l'amministratore li ha tutti): vedi PERMISSIONS in app/auth.py
+const can = perm => !!ME && (ME.role === "admin" || (ME.perms || []).includes(perm));
+const seesAll = () => can("all");
+const canOperate = () => can("control");
 
 async function api(path, opts = {}) {
   const o = {...opts, headers: {...(opts.headers || {}), "Accept-Language": LANG}, credentials: "same-origin"};
@@ -130,6 +136,7 @@ async function boot() {
   await setLang(ME.language || detectLang(), !ME.language);
   document.body.classList.remove("locked");
   document.body.classList.toggle("is-admin", isAdmin());
+  for (const perm of ["users", "stats", "print", "files", "production", "control"]) document.body.classList.toggle("can-" + perm, can(perm));
   document.body.classList.toggle("is-viewer", ME.role === "viewer");
   $("#login").hidden = true;
   $("#mename").textContent = `${ME.username} · ${roleName(ME.role)}`;
@@ -205,13 +212,14 @@ $("#mepwd").onclick = () => {
 const RENDER = {};
 function go() {
   view = (location.hash || "#printers").slice(1);
-  if (["hub", "admin", "direct", "general"].includes(view) && !isAdmin()) view = "printers";
+  if (["hub", "direct", "general"].includes(view) && !isAdmin()) view = "printers";
+  if ((view === "admin" && !can("users")) || (view === "stats" && !can("stats"))) view = "printers";
   const navView = ["hub", "direct", "general"].includes(view) ? "admin" : view;   // schede di Amministrazione
   $$(".nav a").forEach(a => a.classList.toggle("on", a.dataset.view === navView));
   $$(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + view));
   (RENDER[view] || RENDER.printers)();
 }
-const adminTabs = active => `<div class="tabs" role="tablist">
+const adminTabs = active => !isAdmin() ? `<div class="tabs" role="tablist"><a href="#admin" class="on">${t("Utenti")}</a></div>` : `<div class="tabs" role="tablist">
   <a href="#general" role="tab" aria-selected="${active === "general"}" class="${active === "general" ? "on" : ""}">${t("Generali")}</a>
   <a href="#admin" role="tab" aria-selected="${active === "admin"}" class="${active === "admin" ? "on" : ""}">${t("Utenti e gruppi")}</a>
   <a href="#hub" role="tab" aria-selected="${active === "hub"}" class="${active === "hub" ? "on" : ""}">Fleet Hub</a>
@@ -296,7 +304,8 @@ function cardTop(p) {
     p.firmware ? `<span class="bdg ${p.fw_min ? "warn" : ""}" title="${p.fw_min ? esc(t("Firmware {v} inferiore al minimo supportato dal Hub ({min}).", {v: p.firmware, min: p.fw_min})) : ""}">fw ${esc(p.firmware)}</span>` : "",
   ].join("");
   return `<div class="pc-title"><div class="pc-name">${esc(p.name)}</div>
-      <div class="pc-model">${esc([p.brand, p.printer_model || p.model].filter(Boolean).join(" "))}${diam ? " · " + esc(diam) : ""} · ${esc(p.direct ? (p.ip || "").replace(/\/.*$/, "") : p.sn)}</div></div>
+      <div class="pc-model">${esc([p.brand, p.printer_model || p.model].filter(Boolean).join(" "))}${diam ? " · " + esc(diam) : ""} · ${p.direct && p.web_url ? `<a class="iplink" href="${esc(p.web_url)}" target="_blank" rel="noopener noreferrer" title="${esc(t("Apri l'interfaccia web della stampante in una nuova scheda"))}">${esc((p.ip || "").replace(/\/.*$/, ""))}${EXT_ICON}</a>`
+        : esc(p.direct ? (p.ip || "").replace(/\/.*$/, "") : p.sn)}</div></div>
     <div class="bdgs">${badges}</div>`;
 }
 function statusInfo(p) {
@@ -344,7 +353,7 @@ function filamentCards(p) {
 function cardBody(p) {
   const done = p.state === "FINISH" || p.state === "FAILED";
   const dual = p.nozzles.length > 1;
-  const direct = !!p.direct, caps = p.caps || {}, editT = direct && caps.temperature && canOperate() && p.online;
+  const direct = !!p.direct, caps = p.caps || {}, editT = direct && caps.temperature && can("control") && p.online;
   const tiles = [];
   const tile = (label, v, tgt, key, fault) => {
     const val = fault ? `<span class="warn" title="${esc(t("Sensore di temperatura guasto o scollegato"))}">⚠ ${t("sensore")}</span>` : deg(v, tgt);
@@ -400,7 +409,7 @@ function cardBody(p) {
     ${fans.length ? `<div class="tiles fans">${fans.map(([k, l]) => `<div class="tile"><span>${l}</span><b>${f[k]}%</b></div>`).join("")}</div>` : ""}
     ${done && canOperate() && (!p.direct || caps.bed_clean) ? `<button class="platebtn" data-opt="bed_clean">${t("Segna il piatto come liberato")}</button>` : ""}
     <div class="sec">${t("Comandi")}</div>
-    <div class="ctrls">${caps.remote_files && canOperate() && p.online ? `<button type="button" data-remote>${t("File sulla stampante")}</button>` : ""}${direct ? (caps.speed ? `<button type="button" class="bdg edit" data-speed="${p.speed_pct}" ${canOperate() && p.online ? "" : "disabled"}>${t("Velocità")} · ${p.speed_pct}% ✎</button>`
+    <div class="ctrls">${caps.remote_files && can("print") && p.online ? `<button type="button" data-remote>${t("File sulla stampante")}</button>` : ""}${direct ? (caps.speed ? `<button type="button" class="bdg edit" data-speed="${p.speed_pct}" ${canOperate() && p.online ? "" : "disabled"}>${t("Velocità")} · ${p.speed_pct}% ✎</button>`
       : `<span class="bdg">${t("Velocità")} · ${p.speed_pct}%</span>`)
       : `<span class="bdg">${t("Velocità")} · ${esc(t(SPEEDS[p.speed_lvl] || "—"))}</span>`}<span class="grow"></span>${btns.join("") || `<span class="muted small">${t("Nessun comando disponibile in questo stato")}</span>`}</div>
     ${direct && !p.trays.length ? "" : `<div class="sec">${t("Filamenti")}</div>
@@ -675,7 +684,7 @@ RENDER.archive = async function renderArchive() {
   await loadMeta();
   if (projFilter && projFilter !== "none" && !PROJECTS.some(p => String(p.id) === projFilter)) projFilter = "";
   const sel = projFilter === "none" ? PROJECTS.find(p => p.id === null) : PROJECTS.find(p => String(p.id) === projFilter);
-  const uploadPid = sel ? sel.id : (!isAdmin() && PROJECTS.length === 1 ? PROJECTS[0].id : (isAdmin() ? null : undefined));
+  const uploadPid = sel ? sel.id : (!seesAll() && PROJECTS.length === 1 ? PROJECTS[0].id : (seesAll() ? null : undefined));
   const dropText = uploadPid === undefined ? t("Seleziona un progetto per caricare file")
     : (sel ? t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti) nel progetto {p} oppure sceglilo dal computer", {p: `<b>${esc(projPath(sel))}</b>`})
       : uploadPid === null ? t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti), sarà senza progetto, oppure sceglilo dal computer")
@@ -691,12 +700,12 @@ RENDER.archive = async function renderArchive() {
     ${sel ? `<div class="projhead"><div>
         ${sel.id !== null && sel.depth > 0 ? `<nav class="crumbs">${PROJECTS.filter(x => x.id !== null && sel.path.slice(0, -1).length && isAncestor(x, sel)).map(x => `<a href="#" data-p="${x.id}">${esc(x.name)}</a>`).join(" › ")} ›</nav>` : ""}
         <h2 style="margin:0">${sel.id !== null && sel.depth > 0 ? "📁 " : ""}${esc(projName(sel))}</h2>${sel.id === null ? `<p>${t("Visibili solo agli amministratori")}</p>` : sel.description ? `<p>${esc(sel.description)}</p>` : ""}</div>
-      ${sel.id !== null && canOperate() ? `<div class="row">${canManage(sel.id) ? `<button id="newsub">＋ ${t("Nuova cartella")}</button>` : ""}
+      ${sel.id !== null && can("files") ? `<div class="row">${canManage(sel.id) ? `<button id="newsub">＋ ${t("Nuova cartella")}</button>` : ""}
         ${canManage(sel.parent_id) ? `<button id="editproj">${t("Modifica")}</button><button class="danger" id="delproj">${sel.depth > 0 ? t("Elimina cartella") : t("Elimina progetto")}</button>` : ""}</div>` : ""}</div>
       ${sel.id !== null ? (() => { const subs = PROJECTS.filter(x => x.parent_id === sel.id);
         return subs.length ? `<div class="folders">${subs.map(x => `<button type="button" class="folder" data-p="${x.id}" style="--c:${esc(x.color)}"><span class="fic">📁</span><b>${esc(x.name)}</b>
           <small class="muted">${t("{n} file", {n: x.files_total})}${x.children ? " · " + t("{n} cartelle", {n: x.children}) : ""}</small></button>`).join("")}</div>` : ""; })() : ""}` : ""}
-    ${canOperate() ? `<div class="drop" id="drop">${dropText}<input type="file" id="fpick" accept=".3mf,.gcode,.gco,.g,.bgcode,.ufp" multiple hidden></div>` : ""}
+    ${can("files") ? `<div class="drop" id="drop">${dropText}<input type="file" id="fpick" accept=".3mf,.gcode,.gco,.g,.bgcode,.ufp" multiple hidden></div>` : ""}
     <div class="list" id="flist"><div class="empty">${t("Caricamento…")}</div></div>`;
   $("#pchips").onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; projFilter = c.dataset.p; localStorage.setItem("fb_proj", projFilter); RENDER.archive(); };
   $$("#v-archive .folders, #v-archive .crumbs").forEach(box => box.onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; e.preventDefault();
@@ -723,15 +732,15 @@ RENDER.archive = async function renderArchive() {
   const files = await api(`/api/files${projFilter ? "?project=" + projFilter : ""}`).catch(e => (toast(e.message, "error"), []));
   $("#flist").innerHTML = files.length ? files.map(f => {
     const pl = f.meta.plates || [], p0 = pl[0] || {}, pr = projectOf(f.project_id);
-    const canDel = isAdmin() || (canOperate() && f.uploaded_by === ME.id);
+    const canDel = isAdmin() || (can("files") && (seesAll() || f.uploaded_by === ME.id));
     return `<div class="item" data-id="${f.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${f.id}/thumb/${p0.index || 1}">
       <div><div class="t" title="${esc(f.filename)}">${esc(f.filename)}</div>
         <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.id === undefined ? pr.name : projPath(pr))}</span> · <span class="bdg">${f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
         <div class="m">${t("Caricato il {d}", {d: fmtDate(f.uploaded_at)})} · ${t("stampato {n} volte", {n: f.prints})}${f.prints ? " " + t("({n} riuscite)", {n: f.ok}) : ""}</div></div>
-      <div class="a">${canOperate() ? `<button class="primary" data-print>${t("Stampa")}</button><button data-move>${t("Sposta")}</button>` : ""}
+      <div class="a">${can("print") ? `<button class="primary" data-print>${t("Stampa")}</button>` : ""}${can("files") ? `<button data-move>${t("Sposta")}</button>` : ""}
         <a class="btn" href="/api/files/${f.id}/download">${t("Scarica")}</a>${canDel ? `<button class="danger" data-del>${t("Elimina")}</button>` : ""}</div></div>`;
-  }).join("") : `<div class="empty">${PROJECTS.length || isAdmin() ? t("Nessun file qui. Esporta dallo slicer con \"Esporta G-code del piatto\" e trascinalo nell'area qui sopra.") : t("Nessun progetto assegnato al tuo utente. Chiedi all'amministratore.")}</div>`;
+  }).join("") : `<div class="empty">${PROJECTS.length || seesAll() ? t("Nessun file qui. Esporta dallo slicer con \"Esporta G-code del piatto\" e trascinalo nell'area qui sopra.") : t("Nessun progetto assegnato al tuo utente. Chiedi all'amministratore.")}</div>`;
   $("#flist").onclick = async e => {
     const it = e.target.closest(".item"); if (!it) return;
     const f = files.find(x => x.id === +it.dataset.id);
@@ -770,9 +779,9 @@ function isAncestor(a, b) {
   return false;
 }
 // si possono creare, modificare ed eliminare cartelle dentro questa? (i progetti principali solo dagli amministratori)
-const canManage = parentId => parentId == null ? isAdmin() : canOperate();
+const canManage = parentId => parentId == null ? isAdmin() : can("files");
 function moveDialog(f) {
-  const opts = PROJECTS.filter(p => p.id !== null || isAdmin());
+  const opts = PROJECTS.filter(p => p.id !== null || seesAll());
   openDialog(`<h3>${t("Sposta {f}", {f: esc(f.filename)})}</h3>
     <label>${t("Cartella di destinazione")}<select name="pid">${opts.map(p => `<option value="${p.id === null ? "none" : p.id}" ${p.id === f.project_id ? "selected" : ""}>${"\u00a0\u00a0\u00a0".repeat(p.depth || 0)}${p.depth ? "└ " : ""}${esc(projName(p))}</option>`).join("")}</select></label>
     <div class="dlgfoot">${btnCancel()}<button class="primary" id="mvok">${t("Sposta")}</button></div>`);
@@ -796,13 +805,13 @@ async function printDialog(f, presetPrinter) {
   const isG = f.meta.kind === "gcode";   // .gcode → stampanti dirette (Duet); .gcode.3mf → Bambu
   const online = S.printers.filter(p => p.online && !!p.direct === isG && (p.caps || {}).upload !== false
     && (f.meta.format !== "ufp" || (p.caps || {}).ufp));
-  const myGroups = GROUPS.filter(g => isAdmin() || (g.printers.length && g.printers.every(sn => S.printers.some(p => p.sn === sn))));
+  const myGroups = GROUPS.filter(g => seesAll() || (g.printers.length && g.printers.every(sn => S.printers.some(p => p.sn === sn))));
   openDialog(`<h3>${t("Stampa {f}", {f: esc(f.filename)})}</h3>
     <div class="printhead"><img class="platethumb" id="platethumb" alt="${esc(t("Anteprima del piatto"))}" src="/api/files/${f.id}/thumb/${plates[0].index}">
     <div class="printinfo"><div class="row">
       ${plates.length > 1 ? `<label>${t("Piatto")}<select name="plate">${plates.map(p => `<option value="${p.index}">${t("Piatto {n}", {n: p.index})} · ${fmtDur(p.prediction_s)}</option>`).join("")}</select></label>` : `<input type="hidden" name="plate" value="${plates[0].index}">`}
       <label>${t("Destinazione")}<select name="dest">
-        ${isAdmin() ? `<option value="">${t("Qualsiasi stampante libera (solo coda)")}</option>` : ""}
+        ${seesAll() ? `<option value="">${t("Qualsiasi stampante libera (solo coda)")}</option>` : ""}
         ${myGroups.length ? `<optgroup label="${esc(t("Gruppi (solo coda)"))}">${myGroups.map(g => `<option value="g:${g.id}">${t("Gruppo {g}", {g: esc(g.name)})}</option>`).join("")}</optgroup>` : ""}
         <optgroup label="${esc(t("Stampanti"))}">${online.map(p => `<option value="p:${p.sn}" ${p.sn === presetPrinter ? "selected" : ""}>${esc(p.name)} – ${stateName(p.state)}</option>`).join("")}</optgroup>
       </select></label>
@@ -971,8 +980,8 @@ RENDER.history = async function renderHistory() {
       <td>${fmtDur((j.ended_at || Date.now() / 1000) - j.started_at)}${j.planned_s ? `<br><small class="muted" title="${esc(t("Durata prevista"))}">${t("prevista {d}", {d: fmtDur(j.planned_s)})}</small>` : ""}</td><td>${filCell(j)}</td>
       <td><span class="st ${j.status}">${jobName(j.status)}</span>${j.estimated ? (j.confirmed_by ? ` <small class="muted">(${esc(j.confirmed_by === "stampante" ? t("comunicato dalla stampante") : t("confermata da {u}", {u: j.confirmed_by}))})</small>`
         : ` <small class="muted" title="${esc(t("La stampante era offline quando la stampa doveva finire: l'ora di fine è stimata. Se torna online con altre informazioni, l'esito viene corretto."))}">(${t("stima")})</small>`) : ""}${j.status !== "finished" && j.status !== "running" ? ` · ${j.progress}%` : ""}${j.error ? `<br><small>${esc(j.error)}</small>` : ""}</td>
-      <td style="white-space:nowrap">${j.status === "to_confirm" && canOperate() ? `<button class="ok" data-outcome="finished" title="${esc(t("Il consumo previsto va nelle statistiche"))}">✓ ${t("Riuscita")}</button>
-        <button class="danger" data-outcome="failed" title="${esc(t("Conta come fallimento, senza consumo"))}">✗ ${t("Fallita")}</button> ` : ""}${j.file_id && canOperate() ? `<button data-reprint>${t("Ristampa")}</button>` : ""} ${isAdmin() ? `<button class="danger" data-del aria-label="${esc(t("Elimina"))}">✕</button>` : ""}</td></tr>`).join("")}
+      <td style="white-space:nowrap">${j.status === "to_confirm" && can("confirm") ? `<button class="ok" data-outcome="finished" title="${esc(t("Il consumo previsto va nelle statistiche"))}">✓ ${t("Riuscita")}</button>
+        <button class="danger" data-outcome="failed" title="${esc(t("Conta come fallimento, senza consumo"))}">✗ ${t("Fallita")}</button> ` : ""}${j.file_id && can("print") ? `<button data-reprint>${t("Ristampa")}</button>` : ""} ${can("history") ? `<button class="danger" data-del aria-label="${esc(t("Elimina"))}">✕</button>` : ""}</td></tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">${t("Ancora nessuna stampa registrata.")}</div>`);
   el.onclick = async e => {
     const tr = e.target.closest("tr"); if (!tr) return;
@@ -1298,13 +1307,15 @@ function directDialog(r) {
     <label data-f="slug">${t("Stampante su Repetier-Server (slug, facoltativo)")}<input name="slug" value="${esc(r ? r.extra || "" : "")}" placeholder="ender3"></label>
     <label>${t("Indirizzo della foto della webcam (facoltativo)")}<input name="snap" value="${esc(r ? r.snapshot_url : "")}" placeholder="http://192.168.1.179:8080/?action=snapshot · rtsp://192.168.1.180/live"></label>
     <p class="sub small" style="margin:-4px 0 6px">${t("Accetta l'indirizzo di un'immagine (http) o di un flusso video RTSP, es. Prusa Buddy3D Camera: rtsp://IP-della-camera/live.")}</p>
+    <label data-f="web">${t("Indirizzo dell'interfaccia web (facoltativo)")}<input name="web" value="${esc(r ? r.web_url || "" : "")}" placeholder="${esc(t("automatico, es. http://192.168.1.60/"))}"></label>
     ${r ? `<label class="inline"><input type="checkbox" name="en" ${r.enabled ? "checked" : ""}> ${t("Attiva")}</label>` : ""}
     <div id="dtest" class="small"></div>
     <div class="dlgfoot"><button value="cancel">${t("Annulla")}</button><button type="button" id="dtry">${t("Prova connessione")}</button><button class="primary" id="dsave">${t("Salva")}</button></div>`);
   const fm = $("#dlgbody"), val = n => fm.elements.namedItem(n);
   const showFields = () => {   // solo i campi che servono al tipo scelto
     const d = DIRECT_KINDS[val("kind").value], f = d.fields.map(x => x.replace("!", ""));
-    $$("#dlgbody [data-f]").forEach(l => l.hidden = !f.includes(l.dataset.f));
+    const noWeb = ["raise3d", "intamsys"].includes(val("kind").value);    // senza interfaccia web
+    $$("#dlgbody [data-f]").forEach(l => l.hidden = !(f.includes(l.dataset.f) || (l.dataset.f === "web" && !noWeb)));
     $("#khint").textContent = t(DIRECT_HINTS[val("kind").value]);
     val("host").placeholder = d.host;
     $("#dlgbody [data-pl]").textContent = r && r.has_password ? t("Password (lascia vuoto per non cambiarla)") : t("Password");
@@ -1336,7 +1347,7 @@ function directDialog(r) {
   showFields(); if (!r && !val("brand").value) { val("brand").value = KIND_BRAND[val("kind").value] || ""; fillModels(); }
   const body = () => ({id: r ? r.id : undefined, name: val("dname").value || val("host").value, kind: val("kind").value, host: val("host").value,
     password: val("pw").value, api_key: val("api").value, username: val("user").value, extra: val("slug").value,
-    brand: val("brand").value.trim(), printer_model: val("pmodel").value.trim(),
+    brand: val("brand").value.trim(), printer_model: val("pmodel").value.trim(), web_url: val("web").value.trim(),
     snapshot_url: val("snap").value, ...(r ? {enabled: val("en").checked} : {})});
   $("#dtry").onclick = async () => {
     $("#dtest").innerHTML = `<span class="muted">${t("Collegamento in corso…")}</span>`;
@@ -1355,7 +1366,9 @@ function directDialog(r) {
 RENDER.admin = async function renderAdmin() {
   const el = $("#v-admin");
   await loadMeta();
-  const [users, allGroups] = await Promise.all([api("/api/users").catch(e => (toast(e.message, "error"), [])), api("/api/groups").catch(() => [])]);
+  const [users, allGroups, rl] = await Promise.all([api("/api/users").catch(e => (toast(e.message, "error"), [])), api("/api/groups").catch(() => []),
+    api("/api/roles").catch(() => ({roles: [], permissions: []}))]);
+  ROLE_LIST = rl.roles; PERMS = rl.permissions;
   const projs = PROJECTS.filter(p => p.id !== null && p.parent_id == null);   // le sottocartelle sono incluse
   el.innerHTML = `<div class="head"><div><h1>${t("Amministrazione")}</h1></div></div>${adminTabs("admin")}
     <p class="sub">${t("Utenti, gruppi di stampanti e permessi di accesso.")}</p>
@@ -1363,26 +1376,37 @@ RENDER.admin = async function renderAdmin() {
     <div class="row" style="margin-bottom:12px"><button class="primary" id="uadd">${t("Nuovo utente")}</button></div>
     <div class="tablewrap"><table><thead><tr><th>${t("Nome utente")}</th><th>${t("Nome e cognome")}</th><th>${t("Ruolo")}</th><th>${t("Lingua")}</th><th>${t("Può vedere")}</th><th>${t("Ultimo accesso")}</th><th></th></tr></thead><tbody>
     ${users.map(u => {
-      const sees = u.role === "admin" ? t("Tutto") : [
+      const ru = ROLE_LIST.find(x => x.key === u.role);
+      const sees = u.role === "admin" || (ru && ru.perms.includes("all")) ? t("Tutto") : [
         ...u.groups.map(id => { const g = allGroups.find(x => x.id === id); return g ? t("gruppo {g}", {g: esc(g.name)}) : ""; }),
         ...u.printers.map(sn => esc(printerName(sn))),
         ...u.projects.map(id => { const p = projs.find(x => x.id === id); return p ? t("progetto {p}", {p: esc(p.name)}) : ""; })].filter(Boolean).join(", ") || `<span class="muted">${t("Niente (da configurare)")}</span>`;
       return `<tr data-id="${u.id}" class="${u.active ? "" : "muted"}"><td><b>${esc(u.username)}</b>${u.active ? "" : ` <small class="muted">· ${t("disattivato")}</small>`}</td><td>${esc(fullName(u)) || `<span class="muted">—</span>`}</td>
         <td><span class="role ${u.role}">${roleName(u.role)}</span></td><td>${esc(LANGS[u.language] || "—")}</td><td style="max-width:360px">${sees}</td><td>${fmtDate(u.last_login)}</td>
-        <td style="white-space:nowrap">${u.role !== "admin" ? `<button data-acc>${t("Permessi")}</button>` : ""} <button data-edit>${t("Modifica")}</button> ${u.id !== ME.id ? `<button class="danger" data-del>${t("Elimina")}</button>` : ""}</td></tr>`;
+        <td style="white-space:nowrap">${u.role !== "admin" && u.id !== ME.id ? `<button data-acc>${t("Permessi")}</button>` : ""} ${u.id !== ME.id || isAdmin() ? `<button data-edit>` : `<button hidden data-edit>`}${t("Modifica")}</button> ${u.id !== ME.id ? `<button class="danger" data-del>${t("Elimina")}</button>` : ""}</td></tr>`;
     }).join("")}</tbody></table></div>
-    <p class="sub" style="margin-top:8px">${t("Amministratore: tutto. Operatore: comanda le stampanti e stampa i file dei progetti assegnati. Osservatore: solo visualizzazione. Le modifiche ai permessi si applicano entro un minuto.")}</p>
+    <p class="sub" style="margin-top:8px">${t("Ciò che può fare ogni ruolo è descritto nella tabella Ruoli e permessi. Le modifiche ai permessi si applicano subito.")}</p>
 
-    <h2>${t("Gruppi di stampanti")}</h2>
+    ${isAdmin() ? rolesSection() : ""}
+
+    <div class="admin-only"><h2>${t("Gruppi di stampanti")}</h2>
     <div class="row" style="margin-bottom:12px"><button class="primary" id="gadd">${t("Nuovo gruppo")}</button></div>
     ${allGroups.length ? `<div class="list">${allGroups.map(g => `<div class="item" style="grid-template-columns:1fr auto" data-id="${g.id}">
       <div><div class="t"><span class="tag" style="--c:${esc(g.color)};font-size:15px;color:var(--ink)"><i></i>${esc(g.name)}</span></div>
       <div class="m">${g.printers.length ? g.printers.map(printerName).map(esc).join(", ") : t("Nessuna stampante")}</div></div>
       <div class="a"><button data-gedit>${t("Modifica")}</button><button class="danger" data-gdel>${t("Elimina")}</button></div></div>`).join("")}</div>`
-      : `<p class="sub">${t("Nessun gruppo. I gruppi servono a filtrare le stampanti, a mettere in coda \"sulla prima libera del gruppo\" e a dare accesso a più stampanti in un colpo solo.")}</p>`}`;
+      : `<p class="sub">${t("Nessun gruppo. I gruppi servono a filtrare le stampanti, a mettere in coda \"sulla prima libera del gruppo\" e a dare accesso a più stampanti in un colpo solo.")}</p>`}</div>`;
 
   $("#uadd").onclick = () => userDialog();
-  $("#gadd").onclick = () => groupDialog();
+  if ($("#gadd")) $("#gadd").onclick = () => groupDialog();
+  if ($("#roles")) $("#roles").onclick = async e => {
+    const b = e.target.closest("button"); if (!b) return;
+    const r = ROLE_LIST.find(x => x.key === b.closest("[data-role]")?.dataset.role);
+    if (b.id === "radd") return roleDialog();
+    if (b.dataset.redit !== undefined) return roleDialog(r);
+    if (b.dataset.rdel !== undefined && await uiConfirm(t("Eliminare il ruolo {r}?", {r: t(r.name)}), {danger: true}))
+      if (await act(() => api(`/api/roles/${r.key}`, {method: "DELETE"}), t("Ruolo eliminato"))) RENDER.admin();
+  };
   el.querySelector("table").onclick = async e => {
     const tr = e.target.closest("tr[data-id]"); if (!tr) return; const u = users.find(x => x.id === +tr.dataset.id);
     if (e.target.closest("[data-acc]")) accessDialog(u, allGroups, projs);
@@ -1403,6 +1427,43 @@ const filCell = j => j.filaments && j.filaments.length
   : j.status === "running" && (j.materials || []).length
   ? `<div class="fils" title="${esc(t("Materiali in uso: il consumo si registra a fine stampa"))}">${j.materials.map(m => `<span><i style="--c:${esc(m.color || "#888")}"></i>${esc(m.type)}</span>`).join("")}</div>`
   : (j.filament_g ? `${j.filament_g} g` : `<span class="muted" title="${esc(t("Consumo non disponibile: la stampa non è partita da FleetBuddy e il file non è nell'archivio"))}">—</span>`);
+let PERMS = [];
+// Ruoli e permessi: una colonna per ruolo, una riga per permesso (solo amministratore)
+function rolesSection() {
+  const yes = `<span class="pyes">✓</span>`, no = `<span class="pno">—</span>`;
+  return `<h2>${t("Ruoli e permessi")}</h2>
+    <div id="roles"><div class="row" style="margin-bottom:12px"><button class="primary" id="radd">${t("Nuovo ruolo")}</button></div>
+    <div class="tablewrap"><table class="roles"><thead><tr><th>${t("Permesso")}</th>${ROLE_LIST.map(r => `<th data-role="${esc(r.key)}"><b>${esc(t(r.name))}</b>
+      <small class="muted">${t("{n} utenti", {n: r.users})}</small>
+      ${r.key !== "admin" ? `<div class="racts"><button type="button" class="linkbtn" data-redit>${t("Modifica")}</button>${r.builtin ? "" : `<button type="button" class="linkbtn danger" data-rdel>${t("Elimina")}</button>`}</div>` : ""}</th>`).join("")}</tr></thead><tbody>
+      ${PERMS.map(p => `<tr><td>${esc(p.label)}</td>${ROLE_LIST.map(r => `<td>${r.key === "admin" || r.perms.includes(p.key) ? yes : no}</td>`).join("")}</tr>`).join("")}
+      <tr><td>${t("Può creare utenti dei ruoli")}</td>${ROLE_LIST.map(r => `<td><small>${r.key === "admin" ? t("tutti")
+        : r.perms.includes("users") ? (r.assign.map(k => esc(roleName(k))).join(", ") || "—") : "—"}</small></td>`).join("")}</tr>
+      <tr><td>${t("Impostazioni, Fleet Hub, stampanti, aggiornamenti, ruoli")}</td>${ROLE_LIST.map(r => `<td>${r.key === "admin" ? yes : no}</td>`).join("")}</tr>
+    </tbody></table></div></div>`;
+}
+function roleDialog(r) {
+  const others = ROLE_LIST.filter(x => x.key !== "admin" && (!r || x.key !== r.key));
+  openDialog(`<h3>${r ? t("Ruolo {r}", {r: esc(t(r.name))}) : t("Nuovo ruolo")}</h3>
+    <label>${t("Nome")}<input name="rname" maxlength="40" value="${esc(r ? t(r.name) : "")}"></label>
+    <h4>${t("Permessi")}</h4>
+    <div class="pchecks">${PERMS.map(p => `<label class="inline"><input type="checkbox" name="perm" value="${p.key}" ${r && r.perms.includes(p.key) ? "checked" : ""}> ${esc(p.label)}</label>`).join("")}</div>
+    <div id="rassign"><h4>${t("Può creare e modificare utenti dei ruoli")}</h4>
+      <div class="pchecks">${others.map(x => `<label class="inline"><input type="checkbox" name="assign" value="${x.key}" ${r && r.assign.includes(x.key) ? "checked" : ""}> ${esc(roleName(x.key))}</label>`).join("")}</div></div>
+    <p class="sub small">${t("Impostazioni, Fleet Hub, stampanti, aggiornamenti e ruoli restano riservati agli amministratori. Senza «Vede tutte le stampanti e tutti i file», l'utente vede solo stampanti, gruppi e progetti assegnati con il pulsante Permessi.")}</p>
+    <div class="dlgfoot"><button value="cancel">${t("Annulla")}</button><button class="primary" id="rsave">${t("Salva")}</button></div>`);
+  const f = $("#dlgbody");
+  const sync = () => { $("#rassign").hidden = !f.querySelector('input[name="perm"][value="users"]').checked; };
+  f.onchange = sync; sync();
+  $("#rsave").onclick = async e => {
+    e.preventDefault();
+    const body = {name: f.elements.namedItem("rname").value.trim(), perms: [...f.querySelectorAll('input[name="perm"]:checked')].map(x => x.value),
+                  assign: [...f.querySelectorAll('input[name="assign"]:checked')].map(x => x.value)};
+    if (await act(() => r ? api(`/api/roles/${r.key}`, {method: "PATCH", body}) : api("/api/roles", {method: "POST", body}), t("Ruolo salvato"))) {
+      $("#dlg").close(); RENDER.admin();
+    }
+  };
+}
 const fullName = u => [u.first_name, u.last_name].filter(Boolean).join(" ");
 // Password casuale di 14 caratteri (lettere, numeri e simboli), senza caratteri che si confondono (0/O, 1/l/I)
 function generatePassword(len = 14) {
@@ -1481,7 +1542,7 @@ function userDialog(u) {
       <label>${t("Nome utente")}<input name="username" ${u ? `value="${esc(u.username)}" disabled` : ""} autocomplete="off" maxlength="32"></label>
     </div>
     <div class="row">
-      <label>${t("Ruolo")}<select name="role">${Object.keys(ROLES).map(k => `<option value="${k}" ${(u ? u.role : "operator") === k ? "selected" : ""}>${roleName(k)}</option>`).join("")}</select></label>
+      <label>${t("Ruolo")}<select name="role">${ROLE_LIST.filter(r => isAdmin() || (ME.assign || []).includes(r.key)).map(r => r.key).map(k => `<option value="${k}" ${(u ? u.role : "operator") === k ? "selected" : ""}>${roleName(k)}</option>`).join("")}</select></label>
       <label>${t("Lingua")}<select name="language">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${(u ? u.language || LANG : LANG) === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>
     </div>
     <label>${u ? t("Nuova password (lascia vuoto per non cambiarla)") : t("Password")}

@@ -173,6 +173,8 @@ body.locked .nav,body.locked main{visibility:hidden}
 .tabs a:hover{color:var(--ink)}
 .tabs a.on{color:var(--ink);border-bottom-color:var(--run)}
 body:not(.is-admin) .admin-only{display:none!important}
+body:not(.can-users) .perm-users{display:none!important}
+body:not(.can-stats) .perm-stats{display:none!important}
 body.is-viewer .operator-only{display:none!important}
 
 /* ---- chip (gruppi, progetti) */
@@ -532,6 +534,17 @@ button.ok{border-color:var(--run);color:var(--run)}
 .ust.review{color:var(--pause)}
 
 img.snap.thumb{object-fit:contain;background:var(--sunk);padding:3px;border:1px dashed var(--line)}
+
+table.roles th,table.roles td{text-align:center;vertical-align:middle}
+table.roles th:first-child,table.roles td:first-child{text-align:left}
+table.roles th small{display:block;font-weight:400}
+.racts{display:flex;gap:6px;justify-content:center}
+.pyes{color:var(--run);font-weight:800}.pno{color:var(--muted)}
+.pchecks{display:flex;flex-direction:column;gap:4px}
+
+a.iplink{color:inherit;text-decoration:underline;text-decoration-color:color-mix(in srgb,currentColor 55%,transparent);text-underline-offset:2px;white-space:nowrap}
+a.iplink:hover{color:var(--done);text-decoration-color:currentColor}
+.exticon{margin-left:3px;vertical-align:-1px;opacity:.75}
 
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */

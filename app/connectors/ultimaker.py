@@ -79,6 +79,7 @@ def _color(name: str | None) -> str:
 
 class UltimakerClient(DirectClient):
     kind = "ultimaker"
+    web_default = "host"                      # interfaccia web
     label = "UltiMaker"
     default_brand = "UltiMaker"
     caps = {"temperature": True, "speed": False, "filament": False, "bed_clean": False, "print_options": [],
