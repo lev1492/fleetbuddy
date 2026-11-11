@@ -374,6 +374,8 @@ async def put_settings(request: Request, body: dict):
         cur["notify_lang"] = normalize(body["notify_lang"])
     if body.get("theme") in ("auto", "light", "dark"):
         cur["theme"] = body["theme"]
+    if body.get("poll_interval") in (5, 10, 15):
+        cur["poll_interval"] = int(body["poll_interval"])
     if body.get("offline_grace_s") in (10, 20, 30, 60, 120, 300):
         cur["offline_grace_s"] = int(body["offline_grace_s"])
     S().db.set_setting("ui_settings", cur)
@@ -403,6 +405,7 @@ async def general_get(request: Request):
     from . import workcal
     cal = S().workcal()
     return {"calendar": cal.cfg, "theme": settings().get("theme", "auto"), "countries": workcal.countries(),
+            "poll_default": int(cfg.app.poll_interval) if int(cfg.app.poll_interval) in (5, 10, 15) else 5,
             "timezones": workcal.timezones(), "days_off": cal.upcoming_days_off(400)}
 
 

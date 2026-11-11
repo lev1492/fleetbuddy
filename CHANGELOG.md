@@ -3,6 +3,13 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.20.2] – 2026-11-12
+
+### Novità
+- Amministrazione → Generali → Impostazioni: "Lettura delle stampanti" ogni 5 (consigliato), 10 o 15 secondi. Un
+  intervallo più lungo alleggerisce la rete Wi-Fi. Si applica subito, senza riavviare, e ha la precedenza su
+  poll_interval di config.toml.
+
 ## [0.20.1] – 2026-11-12
 
 ### Correzioni

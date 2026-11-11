@@ -23,7 +23,7 @@ activation_key = "fh_sk_live_..."   # dal Developer Center, formato fh_sk_live_<
 [app]
 listen = "0.0.0.0"
 port = 8000
-poll_interval = 5              # secondi tra un'interrogazione e l'altra del Hub
+poll_interval = 5              # secondi tra una lettura e l'altra delle stampanti (si può cambiare anche da Amministrazione → Generali)
 data_dir = "data"
 # Primo amministratore di FleetBuddy, creato al primo avvio se il database non ha ancora utenti.
 # Se lasci vuota la password, il primo accesso dal browser chiederà di crearlo.

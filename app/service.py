@@ -256,7 +256,7 @@ class Service:
                 self.hub_error_obj = HubError(key="Errore interno: {e}", params={"e": e})
                 log.exception("Errore nel ciclo di polling")
             self.emit("state", self.snapshot_state())
-            await asyncio.sleep(max(1.0, self.cfg.app.poll_interval - (time.time() - t0)))
+            await asyncio.sleep(max(1.0, self.poll_s() - (time.time() - t0)))
 
     # ------------------------------------------------------------------ stampanti dirette
     def reload_direct(self):
@@ -453,6 +453,11 @@ class Service:
             await self._close_job(job, {**last, "online": False, "progress": 100}, "to_confirm", ended_at=est_end, estimated=True)
             log.info("%s offline: %s doveva finire alle %s, esito da confermare", last.get("name", sn), job.get("task_name"),
                      time.strftime("%H:%M", time.localtime(est_end)))
+
+    def poll_s(self) -> float:
+        """Intervallo di lettura delle stampanti: quello scelto in Amministrazione → Generali, altrimenti config.toml."""
+        v = (self.db.get_setting("ui_settings", {}) or {}).get("poll_interval")
+        return float(v) if v in (5, 10, 15) else float(self.cfg.app.poll_interval)
 
     def grace_s(self) -> float:
         """Secondi senza risposta prima di considerare una stampante offline (Amministrazione → Generali)."""
@@ -907,7 +912,7 @@ class Service:
                     prog = job.get("progress", 0) or 0
                     if p.get("direct"):
                         rate = prog / max(1.0, time.time() - (job.get("started_at") or time.time()))
-                        prog += rate * (self.cfg.app.poll_interval + 2)
+                        prog += rate * (self.poll_s() + 2)
                     await self._close_job(job, p, "finished" if prog >= 99 else "cancelled")
             elif not p["online"] and prev and prev["online"]:
                 pass  # resta aperto: potrebbe tornare online e continuare

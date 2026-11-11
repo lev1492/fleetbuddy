@@ -8,6 +8,7 @@ const CAL_MODES = {
   full: "Stampe interamente in orario lavorativo (iniziano e finiscono in orario)",
   always: "Sempre (24 ore su 24, 7 giorni su 7: il calendario è ignorato)",
 };
+const POLL_LABELS = {5: "ogni 5 secondi (consigliato)", 10: "ogni 10 secondi", 15: "ogni 15 secondi"};
 const GRACE_LABELS = {10: "10 secondi", 20: "20 secondi", 30: "30 secondi (consigliato)", 60: "1 minuto", 120: "2 minuti", 300: "5 minuti"};
 const REFRESH_LABELS = {15: "ogni 15 secondi", 30: "ogni 30 secondi", 60: "ogni minuto", 120: "ogni 2 minuti", 300: "ogni 5 minuti"};
 const REFRESH_OPTS = Object.entries(REFRESH_LABELS).map(([v, l]) => [+v, l]);
@@ -32,9 +33,11 @@ RENDER.general = async function renderGeneral() {
       <section class="box"><h2>${t("Impostazioni")}</h2>
         <div class="row">
           <label>${t("Aggiornamento camera nelle schede")}<select id="camref">${REFRESH_OPTS.map(([v, l]) => `<option value="${v}" ${v === S.settings.camera_refresh_s ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
+          <label>${t("Lettura delle stampanti")}<select id="poll">${Object.entries(POLL_LABELS).map(([v, l]) => `<option value="${v}" ${+v === (S.settings.poll_interval || GEN.poll_default || 5) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
           <label>${t("Offline dopo")}<select id="grace">${Object.entries(GRACE_LABELS).map(([v, l]) => `<option value="${v}" ${+v === (S.settings.offline_grace_s || 30) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
           <label>${t("Lingua delle notifiche")}<select id="notlang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === (S.settings.notify_lang || "it") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
-        </div><p class="sub small" style="margin:10px 0 0">${t("Una stampante che non risponde resta com'era per il tempo indicato prima di risultare offline: le brevi interruzioni del Wi-Fi non interrompono più schede, coda e produzione.")}
+        </div><p class="sub small" style="margin:10px 0 0">${t("Lettura delle stampanti: ogni quanto FleetBuddy chiede lo stato a ciascuna stampante. Un intervallo più lungo alleggerisce la rete Wi-Fi; schede e avvio delle stampe si aggiornano un po' più lentamente.")}
+          ${t("Una stampante che non risponde resta com'era per il tempo indicato prima di risultare offline: le brevi interruzioni del Wi-Fi non interrompono più schede, coda e produzione.")}
           ${t("La lingua delle notifiche vale per ntfy, Telegram e webhook, che non sono legati a un utente.")}</p></section>
 
       <section class="box"><h2>${t("Informazioni")}</h2>
@@ -122,6 +125,7 @@ RENDER.general = async function renderGeneral() {
   $("#camref").onchange = e => saveSetting({camera_refresh_s: +e.target.value});
   $("#notlang").onchange = e => saveSetting({notify_lang: e.target.value});
   $("#grace").onchange = e => saveSetting({offline_grace_s: +e.target.value});
+  $("#poll").onchange = e => saveSetting({poll_interval: +e.target.value});
   wireUpdateBox();
   $("#gtheme").onclick = e => { const b = e.target.closest("[data-v]"); if (!b) return; theme = b.dataset.v;
     $$("#gtheme button").forEach(x => x.classList.toggle("on", x === b)); applyTheme(theme); };
