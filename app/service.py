@@ -1070,12 +1070,14 @@ class Service:
             self.db.x("INSERT OR REPLACE INTO hms_cache(key, description) VALUES(?,?)", (key, desc))
         return desc
 
-    async def get_image(self, sn: str) -> tuple[bytes | None, str]:
-        """Immagine per la scheda: la camera se c'è, altrimenti l'anteprima della stampa in corso
-        (dalla stampante, se la fornisce, oppure dal file in archivio)."""
-        img = await self.get_snapshot(sn, max_age=10)
-        if img:
-            return img, "camera"
+    async def get_image(self, sn: str, want: str = "auto") -> tuple[bytes | None, str]:
+        """Immagine di una stampante. want: "camera" (solo la camera), "preview" (solo l'anteprima della stampa in
+        corso, dalla stampante o dal file in archivio: la scheda non interroga la camera), "auto" (camera, altrimenti
+        anteprima)."""
+        if want in ("auto", "camera"):
+            img = await self.get_snapshot(sn, max_age=5 if want == "camera" else 10)
+            if img or want == "camera":
+                return img, "camera" if img else ""
         p = self.printers.get(sn) or {}
         key = f"{sn}:{p.get('task_id') or p.get('task_name')}"
         hit = self._thumb_cache.get(key)

@@ -242,7 +242,7 @@ legend{font-size:13px;font-weight:700;color:var(--muted);padding:0 4px}
 .sec::after{content:"";flex:1;height:1px;background:var(--line)}
 .pc-body .sec{padding:0}
 .statusbox{margin:8px 16px 0;display:flex;gap:12px;background:var(--sunk);border-radius:var(--radius-sm);padding:10px}
-.statusbox .cam{flex:0 0 132px;aspect-ratio:4/3;border:0;padding:0;border-radius:6px;overflow:hidden;cursor:zoom-in;background:var(--bg)}
+.statusbox .cam{flex:0 0 132px;aspect-ratio:4/3;border:0;padding:0;border-radius:6px;overflow:hidden;background:var(--bg)}
 .st-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
 .st-line{display:flex;align-items:center;gap:8px}
 .chipst{font-size:12px;font-weight:700;padding:1px 8px;border-radius:10px}
@@ -549,6 +549,22 @@ a.iplink:hover{color:var(--done);text-decoration-color:currentColor}
 .brand .bname{display:flex;flex-direction:column;line-height:1.05}
 .brand .bname b{font-size:20px;letter-spacing:-.01em}
 .brand .bname small{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+
+/* scheda compatta: solo intestazione e stato; la freccina mostra tutto */
+.pc.compact .pc-body{display:none}
+.pc .expand{display:flex;justify-content:center;align-items:center;width:calc(100% - 32px);margin:6px 16px 8px;padding:2px 0;border:0;border-radius:var(--radius-sm);
+  background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1}
+.pc .expand:hover{background:var(--sunk);color:var(--ink)}
+.pc .expand span{display:inline-block;transition:transform .2s}
+.pc .expand[aria-expanded="true"] span{transform:rotate(180deg)}
+.pc.compact{padding-bottom:0}
+/* icona camera sull'anteprima: la camera si apre solo su richiesta */
+.cam .camicon{position:absolute;right:6px;bottom:6px;width:32px;height:32px;padding:0;display:grid;place-items:center;border-radius:50%;
+  border:1px solid var(--line);background:color-mix(in srgb,var(--surface) 88%,transparent);color:var(--ink);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+.cam .camicon:hover{background:var(--run);color:#fff;border-color:var(--run)}
+.cam .camicon[hidden]{display:none}
+.camlive{position:relative;min-height:200px;display:grid;place-items:center;background:var(--sunk);border-radius:8px;overflow:hidden;color:var(--muted)}
+.camlive img{width:100%;display:block}
 
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */

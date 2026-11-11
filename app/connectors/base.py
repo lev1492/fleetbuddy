@@ -217,6 +217,10 @@ def base_state(client: DirectClient, online: bool, error: str = "", **kw) -> dic
     st["caps"].setdefault("print_options", [])
     st["brand"] = client.brand
     st["web_url"] = client.web_url
+    try:
+        st["has_camera"] = bool(client.has_snapshot())
+    except Exception:  # noqa: BLE001
+        st["has_camera"] = False
     st["printer_model"] = client.printer_model or st.get("model") or ""
     if st["nozzles"]:
         st["nozzle"], st["nozzle_target"] = st["nozzles"][0]["temp"], st["nozzles"][0]["target"]

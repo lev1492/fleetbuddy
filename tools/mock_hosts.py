@@ -111,7 +111,11 @@ def o_download(path: str, req: Request):
 
 @app.get("/webcam/")
 def o_cam():
-    return Response(b"\xff\xd8\xff\xe0fakejpeg", media_type="image/jpeg")
+    # fotogramma vero se disponibile (/tmp/camtest.jpg), altrimenti dati minimi
+    try:
+        return Response(open("/tmp/camtest.jpg", "rb").read(), media_type="image/jpeg")
+    except OSError:
+        return Response(b"\xff\xd8\xff\xe0fakejpeg", media_type="image/jpeg")
 
 
 @app.get("/api/printer")

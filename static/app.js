@@ -288,7 +288,6 @@ function connect() {
 const hmsDesc = {};
 const IMGKIND = {};   // per stampante: "camera" oppure "thumbnail" (anteprima della stampa, quando manca la camera)
 function snapAge(p) {
-  if (IMGKIND[p.sn] === "thumbnail") return t("Anteprima della stampa (nessuna camera)");
   // solo l'orario della foto: il testo cambia quando arriva una foto nuova, non ogni minuto
   const ts = Date.parse(p.liveview_time || "");
   if (!ts || ts < Date.UTC(2000, 0, 1)) return p.direct ? t("Nessuna camera: durante la stampa compare l'anteprima") : t("Nessuna istantanea dal Hub");
@@ -338,7 +337,7 @@ function statusInfo(p) {
       : p.online ? (done ? t("Conferma che il piatto è libero per la prossima stampa") : t("Pronta per una nuova stampa")) : t("Non raggiungibile dal Hub")}</div>
     ${p.pending ? `<div class="small ${p.pending.warned ? "warn" : "muted"}">${p.pending.warned ? t("La stampa {f} non è partita: controlla la stampante", {f: esc(p.pending.task)})
       : t("Comando inviato: in attesa che la stampante scarichi {f} e parta…", {f: esc(p.pending.task)})}</div>` : ""}
-    <div class="muted small camage">${snapAge(p)}</div>${next}`;
+${next}`;
 }
 function slotBtn(x, num, side = "") {
   const pct = x.remain != null && x.remain >= 0 ? x.remain : null;
@@ -482,10 +481,13 @@ function createCard(p) {
   a.innerHTML = `<div class="pc-top"></div>
     <div class="sec">${t("Stato")}</div>
     <div class="statusbox">
-      <button type="button" class="cam" data-camzoom title="${esc(t("Ingrandisci"))}"><img alt="${esc(t("Camera di {name}", {name: p.name}))}" hidden><span class="camph">${t("Caricamento immagine…")}</span></button>
+      <div class="cam"><img alt="${esc(t("Anteprima della stampa"))}" hidden><span class="camph">${t("Caricamento immagine…")}</span>
+        <button type="button" class="camicon" data-camview hidden title="${esc(t("Apri la camera"))}" aria-label="${esc(t("Apri la camera"))}">${CAM_ICON}</button></div>
       <div class="st-info"></div>
     </div>
+    <button type="button" class="expand" data-expand aria-expanded="false" title="${esc(t("Mostra tutti i dettagli"))}"><span>▾</span></button>
     <div class="pc-body"></div>`;
+  a.classList.toggle("compact", !EXPANDED_CARDS.has(p.sn));
   if (isAdmin()) {   // menu "altre azioni" in alto a destra della scheda
     a.classList.add("has-menu");
     a.insertAdjacentHTML("afterbegin", `<div class="pc-menu">
@@ -493,9 +495,11 @@ function createCard(p) {
       <div class="menu" role="menu" hidden><button type="button" role="menuitem" data-rename>${t("Rinomina")}</button>
         <button type="button" role="menuitem" data-raw>${t("Dati tecnici")}</button></div></div>`);
   }
-  refreshCam(a);
   return a;
 }
+// Schede compatte (solo stato) o espanse: la scelta è ricordata per stampante
+const EXPANDED_CARDS = new Set(JSON.parse(localStorage.getItem("fb_expanded") || "[]"));
+const CAM_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M4 7h3l1.6-2.2A2 2 0 0 1 10.2 4h3.6a2 2 0 0 1 1.6.8L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Zm8 3.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Z"/></svg>`;
 function setHTML(el, html) { if (el._html !== html) { el.innerHTML = html; el._html = html; } }
 // ---------------------------------------------------------------- vista delle stampanti
 const CARDS = new Map();          // schede già create, riusate tra le viste (la camera non si ricarica)
@@ -517,6 +521,10 @@ function cardFor(p) {
   let card = CARDS.get(p.sn);
   if (!card) { card = createCard(p); CARDS.set(p.sn, card); }
   card.classList.toggle("offline", !p.online);
+  $(".camicon", card).hidden = !(p.has_camera && p.online);
+  const ex = $(".expand", card), open = !card.classList.contains("compact");
+  ex.setAttribute("aria-expanded", open); ex.title = open ? t("Riduci") : t("Mostra tutti i dettagli");
+  refreshCam(card);
   setHTML($(".pc-top", card), cardTop(p));
   setHTML($(".st-info", card), statusInfo(p));
   setHTML($(".pc-body", card), cardBody(p));
@@ -597,15 +605,19 @@ async function loadHms(model, code) {
   if (hmsDesc[key] && view === "printers") RENDER.printers();
 }
 // Scarica la nuova istantanea in memoria e la sostituisce solo quando è pronta: niente sfarfallio.
-async function refreshCam(card) {
+// Anteprima della stampa nella scheda: solo il file/l'anteprima della stampante (mai la camera), scaricata
+// solo quando cambia il lavoro. La camera si chiede solo quando la si apre (icona sull'anteprima).
+async function refreshCam(card, force = false) {
+  const p = S.printers.find(x => x.sn === card.dataset.sn) || {};
+  const key = `${p.task_id || ""}/${p.task_name || ""}/${p.active ? 1 : 0}`;
+  if (!force && card._previewKey === key) return;
+  card._previewKey = key;
   const img = $(".cam img", card), ph = $(".camph", card);
   if (card._camBusy) return; card._camBusy = true;
   try {
-    const r = await fetch(`/api/printers/${encodeURIComponent(card.dataset.sn)}/snapshot?t=${Date.now()}`, {credentials: "same-origin"});
-    if (!r.ok) { if (img.hidden) ph.textContent = t("Nessuna immagine disponibile"); return; }
-    const kind = r.headers.get("X-Image-Kind") || "camera";
-    if (IMGKIND[card.dataset.sn] !== kind) { IMGKIND[card.dataset.sn] = kind; card.querySelector(".st-info")._html = null; }
-    card.classList.toggle("thumbimg", kind === "thumbnail");
+    const r = await fetch(`/api/printers/${encodeURIComponent(card.dataset.sn)}/snapshot?kind=preview&t=${Date.now()}`, {credentials: "same-origin"});
+    if (!r.ok) { img.hidden = true; ph.textContent = p.task_name ? t("Nessuna anteprima") : t("Nessun lavoro in corso"); return; }
+    card.classList.add("thumbimg");
     const url = URL.createObjectURL(await r.blob());
     const pre = new Image();
     pre.onload = () => { const old = img._url; img.src = url; img._url = url; img.hidden = false; if (old) setTimeout(() => URL.revokeObjectURL(old), 1000); };
@@ -615,12 +627,31 @@ async function refreshCam(card) {
   finally { card._camBusy = false; }
 }
 let camTimer = null;
-function startCamTimer() {
-  clearInterval(camTimer);
-  const sec = (S.settings && S.settings.camera_refresh_s) || 60;
-  camTimer = setInterval(() => { if (view === "printers" && !document.hidden) $$("#v-printers .pc").forEach(refreshCam); }, sec * 1000);
+// Camera in sovrimpressione: aggiornata solo mentre è aperta (intervallo da Amministrazione → Generali)
+function startCamTimer() { clearInterval(camTimer); camTimer = null; }
+async function openCamera(p) {
+  openDialog(`<h3>${esc(p.name)} – ${t("Camera")}</h3>
+    <div class="camlive"><img id="camlive" alt="${esc(t("Camera di {name}", {name: p.name}))}" hidden><span id="camwait">${t("Caricamento immagine…")}</span></div>
+    <p class="sub small" id="camage" style="margin:6px 0 0"></p>
+    <div class="dlgfoot"><button value="cancel">${t("Chiudi")}</button></div>`);
+  const dlg = $("#dlg"), sec = Math.min(30, Math.max(5, (S.settings && S.settings.camera_refresh_s) || 10));
+  const stop = () => { clearInterval(timer); const i = $("#camlive"); if (i && i._url) URL.revokeObjectURL(i._url); };
+  const load = async () => {
+    const img = $("#camlive"); if (!img || !dlg.open) return stop();
+    try {
+      const r = await fetch(`/api/printers/${encodeURIComponent(p.sn)}/snapshot?kind=camera&t=${Date.now()}`, {credentials: "same-origin"});
+      if (!r.ok) { if (img.hidden) $("#camwait").textContent = t("Camera non disponibile"); return; }
+      const url = URL.createObjectURL(await r.blob()), old = img._url;
+      img.onload = () => { if (old) URL.revokeObjectURL(old); };
+      img.src = url; img._url = url; img.hidden = false; $("#camwait").hidden = true;
+      const q = S.printers.find(x => x.sn === p.sn) || p;
+      $("#camage").textContent = q.direct ? t("Aggiornata alle {time} · ogni {s} secondi", {time: new Date().toLocaleTimeString(LOCALES[LANG], {timeStyle: "short"}), s: sec}) : snapAge(q);
+    } catch { if (img.hidden) $("#camwait").textContent = t("Camera non disponibile"); }
+  };
+  const timer = setInterval(() => { if (!document.hidden) load(); }, sec * 1000);
+  dlg.addEventListener("close", stop, {once: true});
+  load();
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden && view === "printers") $$("#v-printers .pc").forEach(refreshCam); });
 
 function closeMenus() {
   $$(".pc-menu .dots[aria-expanded=true]").forEach(d => { d.setAttribute("aria-expanded", "false"); d.nextElementSibling.hidden = true; });
@@ -644,9 +675,13 @@ $("#v-printers").addEventListener("click", async e => {
     tempDialog(p, b.dataset.temp, b.dataset.label, +b.dataset.target);
   } else if (b.dataset.speed) {
     speedDialog(p, +b.dataset.speed);
-  } else if (b.hasAttribute("data-camzoom")) {
-    const img = $(".cam img", card);
-    if (!img.hidden) openDialog(`<img src="${img.src}" alt="" style="width:100%;border-radius:8px"><p class="sub" style="margin:0">${esc(snapAge(p))}</p><div class="dlgfoot"><button value="cancel">${t("Chiudi")}</button></div>`);
+  } else if (b.hasAttribute("data-camview")) {
+    openCamera(p);
+  } else if (b.hasAttribute("data-expand")) {
+    const open = card.classList.toggle("compact") === false;
+    open ? EXPANDED_CARDS.add(sn) : EXPANDED_CARDS.delete(sn);
+    localStorage.setItem("fb_expanded", JSON.stringify([...EXPANDED_CARDS]));
+    b.setAttribute("aria-expanded", open); b.title = open ? t("Riduci") : t("Mostra tutti i dettagli");
   } else if (b.classList.contains("dots")) {
     const open = b.getAttribute("aria-expanded") === "true";
     closeMenus();

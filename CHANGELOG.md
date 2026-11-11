@@ -3,6 +3,16 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.21.1] – 2026-11-12
+
+### Novità
+- Vista Schede più leggera: ogni scheda mostra di default solo intestazione e stato; una freccina in basso la espande
+  con temperature, comandi, filamenti e il resto. La scelta è ricordata per ogni stampante.
+- Nella scheda compare solo l'anteprima della stampa in corso (dal file o dalla stampante), scaricata solo quando
+  cambia il lavoro. La camera non viene più richiesta dalle schede: un'icona sull'anteprima la apre in
+  sovrimpressione, aggiornata solo mentre è aperta (ogni 5–30 secondi, da Amministrazione → Generali → "Aggiornamento
+  della camera aperta"); chiudendola le richieste si fermano. Meno traffico verso le stampanti e sulla rete Wi-Fi.
+
 ## [0.21.0] – 2026-11-12
 
 ### Novità

@@ -34,7 +34,7 @@ svc: Service | None = None
 auth: Auth | None = None
 COOKIE = "fb_session"
 PUBLIC = {"/", "/api/session", "/api/login", "/api/setup", "/api/logout"}
-DEFAULT_SETTINGS = {"theme": "auto", "offline_grace_s": 30, "camera_refresh_s": 60, "notify_lang": "it"}
+DEFAULT_SETTINGS = {"theme": "auto", "offline_grace_s": 30, "camera_refresh_s": 10, "notify_lang": "it"}
 
 
 @asynccontextmanager
@@ -373,7 +373,7 @@ async def put_settings(request: Request, body: dict):
     need_admin(U(request))
     cur = settings()
     if "camera_refresh_s" in body:
-        cur["camera_refresh_s"] = max(10, min(3600, int(body["camera_refresh_s"])))
+        cur["camera_refresh_s"] = max(5, min(30, int(body["camera_refresh_s"])))   # camera aperta in sovrimpressione
     if normalize(body.get("notify_lang")):
         cur["notify_lang"] = normalize(body["notify_lang"])
     if body.get("theme") in ("auto", "light", "dark"):
@@ -883,9 +883,10 @@ async def printer_name(request: Request, sn: str, body: dict):
 
 
 @app.get("/api/printers/{sn}/snapshot")
-async def printer_snapshot(request: Request, sn: str):
+async def printer_snapshot(request: Request, sn: str, kind: str = "auto"):
+    """kind=preview: anteprima della stampa (schede); kind=camera: camera (solo quando la si apre)."""
     printer_for(U(request), sn)
-    img, kind = await S().get_image(sn)
+    img, kind = await S().get_image(sn, kind if kind in ("auto", "camera", "preview") else "auto")
     if not img:
         raise HTTPException(404, _("Istantanea non disponibile"))
     media = "image/png" if img[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
