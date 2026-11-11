@@ -1,5 +1,5 @@
 "use strict";
-// FleetBuddy – frontend senza build step (adatto al Raspberry Pi)
+// Fabbrix Farm Manager – frontend senza build step (adatto al Raspberry Pi)
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -45,7 +45,7 @@ const jobName = s => t(JOBS[s] || s);
 const roleName = r => { const x = ROLE_LIST.find(y => y.key === r); return x ? t(x.name) : ME && r === ME.role && ME.role_name ? t(ME.role_name) : t(ROLES[r] || r); };
 const trayLabel = l => l === "EXT" ? t("Esterna") : l === "EXT_R" ? t("Esterna dx") : l === "EXT_L" ? t("Esterna sx") : l;
 
-let APP = {name: "FleetBuddy", version: "", repo: ""}, UPDATE = null;
+let APP = {name: "Fabbrix Farm Manager", version: "", repo: ""}, UPDATE = null;
 let S = {printers: [], hub_ok: false, settings: {camera_refresh_s: 60}}, view = "printers", presets = [];
 let ME = null, GROUPS = [], PROJECTS = [], groupFilter = localStorage.getItem("fb_group") || "", es = null;
 // icona "apri in una nuova scheda" (quadrato con freccia), come sui siti web
@@ -133,6 +133,7 @@ async function boot() {
   if (s.app) { APP = s.app; UPDATE = s.update || null; showVersion(); }
   if (!s.user) { await setLang(detectLang(), false); return showLogin(s.setup_needed); }
   ME = s.user;
+  applyTheme();                                       // il tema dell'account vale da subito
   await setLang(ME.language || detectLang(), !ME.language);
   document.body.classList.remove("locked");
   document.body.classList.toggle("is-admin", isAdmin());
@@ -146,7 +147,7 @@ async function boot() {
 }
 // Primo accesso con una password assegnata dall'amministratore: proposta di cambiarla (facoltativa)
 function firstLoginDialog() {
-  openDialog(`<h3>${t("Benvenuto in FleetBuddy")}</h3>
+  openDialog(`<h3>${t("Benvenuto in Fabbrix Farm Manager")}</h3>
     <p class="sub" style="margin:0">${t("La tua password è stata impostata dall'amministratore. Puoi sceglierne una tua adesso, oppure continuare a usare quella attuale.")}</p>
     <label>${t("Password attuale")}<input type="password" name="old" autocomplete="current-password"></label>
     <label>${t("Nuova password")}<input type="password" name="new" autocomplete="new-password"></label>
@@ -183,7 +184,7 @@ function showLogin(setup = false) {
 }
 function renderLoginTexts() {
   const setup = !!$("#loginform").dataset.setup;
-  $("#loginintro").textContent = setup ? t("Primo avvio: crea l'account amministratore di FleetBuddy.") : t("Accedi per gestire le stampanti.");
+  $("#loginintro").textContent = setup ? t("Primo avvio: crea l'account amministratore di Fabbrix Farm Manager.") : t("Accedi per gestire le stampanti.");
   $("#loginbtn").textContent = setup ? t("Crea amministratore") : t("Accedi");
 }
 $("#loginform").onsubmit = async e => {
@@ -196,7 +197,18 @@ $("#loginform").onsubmit = async e => {
   } catch (err) { $("#loginerr").textContent = err.message; }
 };
 $("#loginlang").onchange = async e => { await setLang(e.target.value, false); renderLoginTexts(); };
-$("#melang").onchange = async e => { await setLang(e.target.value); $("#mename").textContent = `${ME.username} · ${roleName(ME.role)}`; reRender(); };
+// tema dell'utente: Predefinito (dell'amministratore), Automatico, Chiaro, Scuro
+function drawThemeSel() {
+  const def = {auto: t("Automatico"), light: t("Chiaro"), dark: t("Scuro")}[(S.settings && S.settings.theme) || "auto"];
+  $("#metheme").title = t("Tema dell'interfaccia per il tuo account");
+  $("#metheme").innerHTML = [["", t("Predefinito ({t})", {t: def})], ["auto", t("Automatico")], ["light", t("Chiaro")], ["dark", t("Scuro")]]
+    .map(([v, l]) => `<option value="${v}" ${v === ((ME && ME.theme) || "") ? "selected" : ""}>${esc(l)}</option>`).join("");
+}
+$("#metheme").onchange = async e => {
+  const th = e.target.value;
+  if (await act(() => api("/api/me", {method: "PATCH", body: {theme: th}}))) { ME.theme = th; applyTheme(S.settings && S.settings.theme); drawThemeSel(); }
+};
+$("#melang").onchange = async e => { await setLang(e.target.value); $("#mename").textContent = `${ME.username} · ${roleName(ME.role)}`; drawThemeSel(); reRender(); };
 $("#logout").onclick = async () => { await api("/api/logout", {method: "POST"}).catch(() => {}); location.hash = ""; location.reload(); };
 $("#mepwd").onclick = () => {
   openDialog(`<h3>${t("Cambia la tua password")}</h3>
@@ -224,9 +236,10 @@ const adminTabs = active => !isAdmin() ? `<div class="tabs" role="tablist"><a hr
   <a href="#admin" role="tab" aria-selected="${active === "admin"}" class="${active === "admin" ? "on" : ""}">${t("Utenti e gruppi")}</a>
   <a href="#hub" role="tab" aria-selected="${active === "hub"}" class="${active === "hub" ? "on" : ""}">Fleet Hub</a>
   <a href="#direct" role="tab" aria-selected="${active === "direct"}" class="${active === "direct" ? "on" : ""}">${t("Altre stampanti")}</a></div>`;
-// tema: automatico (sistema operativo), chiaro o scuro; ricordato anche per la pagina di accesso
+// tema: automatico (sistema operativo), chiaro o scuro; ricordato anche per la pagina di accesso.
+// Vale quello scelto dall'utente per il suo account, altrimenti quello predefinito dall'amministratore.
 function applyTheme(th) {
-  th = th || localStorage.getItem("fb_theme") || "auto";
+  th = (ME && ME.theme) || th || localStorage.getItem("fb_theme") || "auto";
   if (th === "auto") document.documentElement.removeAttribute("data-theme");
   else document.documentElement.dataset.theme = th;
   localStorage.setItem("fb_theme", th);
@@ -246,6 +259,7 @@ function connect() {
       const oldRefresh = S.settings && S.settings.camera_refresh_s;
       S = m.data;
       applyTheme(S.settings && S.settings.theme);
+      if ($("#metheme") && !$("#metheme").options.length) drawThemeSel();
       const hs = $("#hubstate");
       const online = S.printers.filter(p => p.online).length, hubUsed = S.printers.some(p => !p.direct) || S.hub_ok || S.hub_error;
       hs.className = "hubstate " + (online === S.printers.length && (S.hub_ok || !hubUsed) ? "ok" : online ? "warn" : "ko");
@@ -264,7 +278,7 @@ function connect() {
   es.onerror = async () => {
     const s = await fetch("/api/session").then(r => r.json()).catch(() => null);
     if (s && !s.user) return showLogin();
-    $("#hubstate").className = "hubstate ko"; $("#hubstate").textContent = t("FleetBuddy non raggiungibile");
+    $("#hubstate").className = "hubstate ko"; $("#hubstate").textContent = t("Fabbrix Farm Manager non raggiungibile");
   };
 }
 
@@ -1117,8 +1131,8 @@ RENDER.stats = async function renderStats() {
     <h2>${t("Filamento consumato")}</h2>
     ${s.filaments && s.filaments.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Marca")}</th><th>${t("Colore")}</th><th>${t("Filamento (g)")}</th><th>${t("Metri")}</th><th>${t("Stampe")}</th></tr></thead><tbody>
     ${s.filaments.map(f => `<tr><td>${esc(f.type)}</td><td>${esc(f.brand || "—")}</td><td title="${esc(f.color || t("Generico"))}"><span class="sw" style="--c:${esc(f.color || "transparent")}"></span>${esc(colorName(f.color))}</td><td><b>${f.grams >= 1000 ? (f.grams / 1000).toFixed(2) + " kg" : Math.round(f.grams) + " g"}</b></td><td>${(f.meters || 0).toFixed(1)}</td><td>${f.prints}</td></tr>`).join("")}
-    </tbody></table></div><p class="sub" style="margin-top:8px">${t("Il consumo per tipo e colore è noto per le stampe avviate da FleetBuddy o il cui file è nell'archivio.")}</p>`
-      : `<p class="sub">${t("Nessun consumo registrato nel periodo. Il dettaglio è disponibile per le stampe avviate da FleetBuddy o il cui file è nell'archivio.")}</p>`}
+    </tbody></table></div><p class="sub" style="margin-top:8px">${t("Il consumo per tipo e colore è noto per le stampe avviate da Fabbrix Farm Manager o il cui file è nell'archivio.")}</p>`
+      : `<p class="sub">${t("Nessun consumo registrato nel periodo. Il dettaglio è disponibile per le stampe avviate da Fabbrix Farm Manager o il cui file è nell'archivio.")}</p>`}
     <h2>${t("Per stampante")}</h2>
     <div class="tablewrap"><table><thead><tr><th>${t("Stampante")}</th><th>${t("Stampe")}</th><th>${t("Riuscite")}</th><th>${t("Fallite")}</th><th>${t("Ore")}</th><th>${t("Filamento")}</th></tr></thead><tbody>
     ${s.per_printer.map(p => `<tr><td>${esc(p.name)}</td><td>${p.n}</td><td>${p.ok || 0}</td><td>${p.ko || 0}</td><td>${(p.secs / 3600).toFixed(1)}</td><td>${Math.round(p.grams)} g</td></tr>`).join("") || `<tr><td colspan="6">${t("Nessun dato")}</td></tr>`}
@@ -1153,7 +1167,7 @@ RENDER.hub = async function renderHub() {
     $("#hubinfo").innerHTML = `<div class="box"><dl><dt>${t("Nome")}</dt><dd>${esc(h.name)}</dd><dt>${t("Seriale")}</dt><dd>${esc(h.hub_sn)}</dd>
       <dt>${t("Attivazione")}</dt><dd>${h.activate_state === "Activate" ? t("Attivo") : t("Non attivato")}</dd><dt>${t("Firmware")}</dt><dd>${esc(h.version)}</dd>
       <dt>${t("Stampanti")}</dt><dd>${t("{n} di {max}", {n: S.printers.filter(p => !p.direct).length, max: h.max_bind_num})}
-        <br><small class="muted">${t("Solo le Bambu Lab collegate al Hub. Le altre {n} stampanti sono gestite direttamente da FleetBuddy (Amministrazione → Altre stampanti).", {n: S.printers.filter(p => p.direct).length})}</small></dd></dl></div>
+        <br><small class="muted">${t("Solo le Bambu Lab collegate al Hub. Le altre {n} stampanti sono gestite direttamente da Fabbrix Farm Manager (Amministrazione → Altre stampanti).", {n: S.printers.filter(p => p.direct).length})}</small></dd></dl></div>
       <div class="box"><dl><dt>${t("Memoria interna")}</dt><dd>${t("{u} GB usati, {a} GB liberi", {u: h.internal?.used ?? 0, a: h.internal?.available ?? 0})}</dd></dl>
       <div class="meter"><i style="width:${pct(h.internal?.used || 0, h.internal?.available || 0)}%"></i></div>
       <p class="sub" style="margin:10px 0 0">${t("Sotto i 20 GB liberi il Hub elimina da solo i file non usati da 30 giorni.")}</p></div>
@@ -1262,7 +1276,7 @@ RENDER.direct = async function renderDirect() {
   const el = $("#v-direct");
   const rows = await api("/api/direct").catch(e => (toast(e.message, "error"), []));
   el.innerHTML = `<div class="head"><div><h1>${t("Amministrazione")}</h1></div></div>${adminTabs("direct")}
-    <p class="sub">${t("Stampanti collegate direttamente a FleetBuddy, senza passare dal Fleet Hub. Compaiono nell'elenco delle stampanti insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi.")}</p>
+    <p class="sub">${t("Stampanti collegate direttamente a Fabbrix Farm Manager, senza passare dal Fleet Hub. Compaiono nell'elenco delle stampanti insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi.")}</p>
     <div class="row" style="margin-bottom:12px"><button class="primary" id="dadd">${t("Aggiungi stampante")}</button></div>
     ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Nome")}</th><th>${t("Tipo")}</th><th>${t("Indirizzo")}</th><th>${t("Stato")}</th><th></th></tr></thead><tbody>
       ${rows.map(r => `<tr data-id="${r.id}"><td><b>${esc(r.name)}</b>${r.enabled ? "" : ` <small class="muted">· ${t("disattivata")}</small>`}</td>
@@ -1286,7 +1300,7 @@ RENDER.direct = async function renderDirect() {
     const tr = e.target.closest("tr[data-id]"); if (!tr) return;
     const r = rows.find(x => x.id === +tr.dataset.id);
     if (e.target.closest("[data-edit]")) directDialog(r);
-    if (e.target.closest("[data-del]") && await uiConfirm(t("Eliminare la stampante {p} da FleetBuddy? Lo storico delle sue stampe resta.", {p: r.name}), {danger: true})) {
+    if (e.target.closest("[data-del]") && await uiConfirm(t("Eliminare la stampante {p} da Fabbrix Farm Manager? Lo storico delle sue stampe resta.", {p: r.name}), {danger: true})) {
       await act(() => api(`/api/direct/${r.id}`, {method: "DELETE"}), t("Stampante eliminata")); RENDER.direct();
     }
   };
@@ -1426,7 +1440,7 @@ const filCell = j => j.filaments && j.filaments.length
       return `<span title="${esc([f.type, f.brand, f.color].filter(Boolean).join(" · ") + (why ? " – " + why : ""))}"><i style="--c:${esc(f.color)}"></i>${esc(f.type && f.type !== "?" ? f.type : (f.brand || "?"))} ${est ? "≈" : ""}${f.grams} g${meas ? " ✓" : ""}</span>`; }).join("")}</div>`
   : j.status === "running" && (j.materials || []).length
   ? `<div class="fils" title="${esc(t("Materiali in uso: il consumo si registra a fine stampa"))}">${j.materials.map(m => `<span><i style="--c:${esc(m.color || "#888")}"></i>${esc(m.type)}</span>`).join("")}</div>`
-  : (j.filament_g ? `${j.filament_g} g` : `<span class="muted" title="${esc(t("Consumo non disponibile: la stampa non è partita da FleetBuddy e il file non è nell'archivio"))}">—</span>`);
+  : (j.filament_g ? `${j.filament_g} g` : `<span class="muted" title="${esc(t("Consumo non disponibile: la stampa non è partita da Fabbrix Farm Manager e il file non è nell'archivio"))}">—</span>`);
 let PERMS = [];
 // Ruoli e permessi: una colonna per ruolo, una riga per permesso (solo amministratore)
 function rolesSection() {
@@ -1479,7 +1493,7 @@ function updateBox(st) {
   const when = st ? `<br><small class="muted">${t("Ultimo controllo: {d}", {d: fmtDate(st.checked_at)})}</small>` : "";
   const msg = !st ? `<span class="muted">${t("Non ancora controllati")}</span>`
     : st.available ? `<b>${t("Disponibile la versione {v}", {v: esc(st.latest)})}</b>`
-    : `${t("FleetBuddy è aggiornato")} <span class="muted">(${t("ultima versione pubblicata: {v}", {v: esc(st.latest || APP.version)})})</span>`;
+    : `${t("Fabbrix Farm Manager è aggiornato")} <span class="muted">(${t("ultima versione pubblicata: {v}", {v: esc(st.latest || APP.version)})})</span>`;
   return `${msg}${when}<div class="row" style="margin-top:8px"><button type="button" id="updcheck">${t("Cerca aggiornamenti")}</button>
     ${st && st.available ? `<button type="button" class="primary" id="updinstall">${t("Installa la versione {v}", {v: esc(st.latest)})}</button>` : ""}</div>`;
 }
@@ -1489,7 +1503,7 @@ function wireUpdateBox(changelog) {
     ev.target.disabled = true; ev.target.textContent = t("Controllo in corso…");
     const r = await act(() => api("/api/admin/update/check", {method: "POST"}));
     if (r) { UPDATE = r.status; showVersion(); box.innerHTML = updateBox(r.status); wireUpdateBox(r.changelog);
-      toast(r.status && r.status.available ? t("Disponibile la versione {v}", {v: r.status.latest}) : t("FleetBuddy è aggiornato"), "ok"); }
+      toast(r.status && r.status.available ? t("Disponibile la versione {v}", {v: r.status.latest}) : t("Fabbrix Farm Manager è aggiornato"), "ok"); }
     else { ev.target.disabled = false; ev.target.textContent = t("Cerca aggiornamenti"); }
   };
   if ($("#updinstall")) $("#updinstall").onclick = () => installDialog(UPDATE.latest, changelog);
@@ -1497,7 +1511,7 @@ function wireUpdateBox(changelog) {
 function installDialog(version, changelog) {
   openDialog(`<h3>${t("Installa la versione {v}", {v: esc(version)})}</h3>
     ${changelog ? `<pre class="chlog">${esc(changelog)}</pre>` : ""}
-    <p class="sub" style="margin:0">${t("Prima dell'installazione viene fatto un backup. FleetBuddy si riavvierà per circa un minuto (le stampe in corso continuano); se la nuova versione non parte, si torna da soli a quella attuale.")}</p>
+    <p class="sub" style="margin:0">${t("Prima dell'installazione viene fatto un backup. Fabbrix Farm Manager si riavvierà per circa un minuto (le stampe in corso continuano); se la nuova versione non parte, si torna da soli a quella attuale.")}</p>
     <div class="dlgfoot"><button value="cancel">${t("Annulla")}</button><button class="primary" id="doinstall">${t("Installa ora")}</button></div>`);
   $("#doinstall").onclick = async ev => {
     ev.preventDefault();
@@ -1519,14 +1533,14 @@ function progressDialog(version) {
     const failed = info && /ripristino|ERRORE/.test(info.log || "") && !info.running;
     if (ver === version) {
       clearInterval(timer);
-      $("#updstate").textContent = t("FleetBuddy aggiornato alla versione {v}. La pagina si ricarica…", {v: version});
+      $("#updstate").textContent = t("Fabbrix Farm Manager aggiornato alla versione {v}. La pagina si ricarica…", {v: version});
       setTimeout(() => location.reload(), 2500);
     } else if (failed) {
       clearInterval(timer);
       $("#updstate").innerHTML = `<span class="warn">${t("Aggiornamento non riuscito: la versione precedente è stata ripristinata. Dettagli qui sotto.")}</span>`;
       $("#updclose").disabled = false;
     } else if (!info) {
-      $("#updstate").textContent = t("Riavvio di FleetBuddy…");
+      $("#updstate").textContent = t("Riavvio di Fabbrix Farm Manager…");
     } else if (Date.now() - started > 6 * 60 * 1000) {
       clearInterval(timer);
       $("#updstate").textContent = t("L'aggiornamento sta impiegando più del previsto: controlla sul Raspberry Pi con journalctl -u fleetbuddy-update-now");

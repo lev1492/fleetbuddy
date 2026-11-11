@@ -172,7 +172,7 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
     fs.cell(row=tf, column=4, value=f"=SUM(D2:D{last_f})" if frows else 0).number_format = "#,##0.0"
     fs.cell(row=tf, column=5, value=f"=SUM(E2:E{last_f})" if frows else 0).number_format = "#,##0.0"
     fs.cell(row=tf + 2, column=1, value=T(
-        "Il consumo per tipo e colore è noto per le stampe avviate da FleetBuddy o il cui file è nell'archivio.")).font = F_NOTE
+        "Il consumo per tipo e colore è noto per le stampe avviate da Fabbrix Farm Manager o il cui file è nell'archivio.")).font = F_NOTE
 
     # ------------------------------------------------------------ Riepilogo (primo foglio)
     rs = wb.create_sheet(sh("Riepilogo"), 0)

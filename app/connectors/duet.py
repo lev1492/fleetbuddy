@@ -21,7 +21,7 @@ from .base import DirectClient, base_state, bed, mm_to_grams, nozzle, plan_from_
 
 log = logging.getLogger("fleetbuddy.duet")
 
-# stato RRF → stato usato da FleetBuddy (lo stesso vocabolario delle stampanti Bambu)
+# stato RRF → stato usato da Fabbrix Farm Manager (lo stesso vocabolario delle stampanti Bambu)
 STATE = {"idle": "IDLE", "processing": "RUNNING", "simulating": "RUNNING", "resuming": "RUNNING",
          "paused": "PAUSE", "pausing": "PAUSE", "cancelling": "RUNNING", "busy": "PREPARE",
          "changingtool": "PREPARE", "starting": "PREPARE", "halted": "FAILED", "updating": "PREPARE",

@@ -13,7 +13,7 @@ Integrazione UltiMaker Connect (se risponde; sulla stampante "host" del gruppo):
   /material-station-api/v1/material-station/   umidità e bobine della Material Station
   /fault-api/v1/faults/              errori e avvisi della stampante
 Autorizzazione: i comandi richiedono Digest (SHA-256). Si ottiene con POST /api/v1/auth/request e
-l'approvazione sul display della stampante; FleetBuddy la richiede dal modulo in Amministrazione.
+l'approvazione sul display della stampante; Fabbrix Farm Manager la richiede dal modulo in Amministrazione.
 """
 from __future__ import annotations
 
@@ -390,7 +390,7 @@ class UltimakerClient(DirectClient):
         jobname = re.sub(r"\.(gcode\.gz|gcode|ufp)$", "", name, flags=re.I)
         try:
             with open(local_path, "rb") as fh:
-                self.request("POST", "/api/v1/print_job", data={"jobname": jobname, "owner": "FleetBuddy"},
+                self.request("POST", "/api/v1/print_job", data={"jobname": jobname, "owner": "Fabbrix Farm Manager"},
                              files={"file": (name, fh, "application/octet-stream")}, timeout=600)
         except HubError as e:
             self._auth_error(e)
@@ -412,7 +412,7 @@ class UltimakerClient(DirectClient):
         return info
 
     def job_plan(self, raw: dict | None) -> list[dict] | None:
-        """Consumo previsto del lavoro in corso, anche se non avviato da FleetBuddy: materiale e volume (mm³) per
+        """Consumo previsto del lavoro in corso, anche se non avviato da Fabbrix Farm Manager: materiale e volume (mm³) per
         estrusore dal lavoro del cluster (configuration[].material_used)."""
         out = []
         for c in ((raw or {}).get("cluster_job") or {}).get("configuration") or []:
@@ -465,7 +465,7 @@ class UltimakerClient(DirectClient):
         """POST /api/v1/auth/request. Il formato dei parametri cambia tra firmware: la S5 accetta un modulo,
         i modelli recenti (S6, S8, Factor 4) possono volere multipart, JSON o parametri nell'indirizzo."""
         import requests as rq
-        fields = {"application": "FleetBuddy", "user": user[:60] or "FleetBuddy"}
+        fields = {"application": "Fabbrix Farm Manager", "user": user[:60] or "Fabbrix Farm Manager"}
         attempts = (("form", {"data": fields}), ("multipart", {"files": {k: (None, v) for k, v in fields.items()}}),
                     ("json", {"json": fields}), ("query", {"params": fields}))
         last, tried = None, []

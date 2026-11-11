@@ -164,7 +164,7 @@ class FleetHubClient:
     # ------------------------------------------------------------------ login
     # Il Hub blocca i login per ~10 minuti dopo troppi tentativi (errore 1026), e ogni
     # tentativo durante il blocco lo prolunga. Per questo, dopo un login fallito,
-    # FleetBuddy smette di ritentare per un intervallo adeguato invece di riprovare a ogni polling.
+    # Fabbrix Farm Manager smette di ritentare per un intervallo adeguato invece di riprovare a ogni polling.
     LOGIN_BACKOFF = {1026: 11 * 60, 1023: 15 * 60}
 
     def login_blocked(self) -> tuple[float, str]:
@@ -198,7 +198,7 @@ class FleetHubClient:
                 secs = int(m.group(1)) * 60 + 60
             reason = "Il Hub ha bloccato temporaneamente i login (troppi tentativi)"
         elif e.code == 1023:
-            reason = "Nome utente o password dell'account API errati: correggi config.toml e riavvia FleetBuddy"
+            reason = "Nome utente o password dell'account API errati: correggi config.toml e riavvia Fabbrix Farm Manager"
         else:
             secs, reason = 30, "Login non riuscito"
         self._login_block_until = time.time() + secs

@@ -1,11 +1,11 @@
 [Unit]
-Description=FleetBuddy - aggiornamento avviato dal browser
+Description=Fabbrix Farm Manager - aggiornamento avviato dal browser
 
 [Service]
 Type=oneshot
 User=__USER__
 WorkingDirectory=__DIR__
-# gira fuori dal servizio fleetbuddy: il riavvio di FleetBuddy non interrompe l'aggiornamento
+# gira fuori dal servizio fleetbuddy: il riavvio di Fabbrix Farm Manager non interrompe l'aggiornamento
 ExecStart=/bin/bash __DIR__/tools/update.sh --yes
 StandardOutput=truncate:__DIR__/data/update.log
 StandardError=inherit

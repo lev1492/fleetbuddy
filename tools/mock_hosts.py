@@ -701,7 +701,7 @@ def um_material(guid: str):
 def um_history(uid: str):
     if UM.get("f4"):
         if uid == "orig-1":                       # stampa originale della ristampa "Untitled"
-            return {"uuid": uid, "name": "TestF4FleetBuddy", "result": "Finished", "material_0_amount": 2564,
+            return {"uuid": uid, "name": "TestF4Fabbrix Farm Manager", "result": "Finished", "material_0_amount": 2564,
                     "material_0_guid": F4_TPLA, "time_elapsed": 905, "time_total": 905}
         if uid != f"job-{P['jobid']}" or not P["result"]:
             return JSONResponse({"message": "Not found"}, 404)

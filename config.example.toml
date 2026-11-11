@@ -1,4 +1,4 @@
-# FleetBuddy – configurazione
+# Fabbrix Farm Manager – configurazione
 # Copia in config.toml e adatta i valori.
 
 [hub]
@@ -25,14 +25,14 @@ listen = "0.0.0.0"
 port = 8000
 poll_interval = 5              # secondi tra una lettura e l'altra delle stampanti (si può cambiare anche da Amministrazione → Generali)
 data_dir = "data"
-# Primo amministratore di FleetBuddy, creato al primo avvio se il database non ha ancora utenti.
+# Primo amministratore di Fabbrix Farm Manager, creato al primo avvio se il database non ha ancora utenti.
 # Se lasci vuota la password, il primo accesso dal browser chiederà di crearlo.
 # Dopo il primo avvio gli utenti si gestiscono da Amministrazione (queste due righe non servono più).
 ui_user = "admin"
 ui_password = ""
 # Salva un'istantanea della camera a fine stampa nello storico
 snapshot_on_finish = true
-# HTTPS per l'interfaccia di FleetBuddy (consigliato: protegge password e cookie di sessione).
+# HTTPS per l'interfaccia di Fabbrix Farm Manager (consigliato: protegge password e cookie di sessione).
 # Genera un certificato con: bash deploy/make_ui_cert.sh
 tls_cert = ""                  # es. "certs/ui.crt"
 tls_key = ""                   # es. "certs/ui.key"
@@ -49,6 +49,6 @@ on_error = true                # nuovi codici HMS / print_error
 on_queue_start = false
 
 [update]
-# Ogni notte FleetBuddy controlla se su GitHub c'è una nuova release e lo segnala agli amministratori.
+# Ogni notte Fabbrix Farm Manager controlla se su GitHub c'è una nuova release e lo segnala agli amministratori.
 # Con auto_install = true la installa anche da solo (con backup e ripristino automatico in caso di problemi).
 auto_install = false

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Aggiornamento di FleetBuddy dal repository GitHub (come "apt upgrade", ma per FleetBuddy).
+# Aggiornamento di Fabbrix Farm Manager dal repository GitHub (come "apt upgrade", ma per Fabbrix Farm Manager).
 #
 #   fleetbuddy-update            controlla e, se c'è una nuova versione, chiede conferma e la installa
 #   fleetbuddy-update --check    controlla soltanto (esce con 10 se c'è un aggiornamento)
@@ -9,7 +9,7 @@
 #
 # Le release sono i tag vX.Y.Z del repository. Configurazione, certificati, database e
 # archivio non sono nel repository, quindi l'aggiornamento non li tocca. Prima di installare
-# viene fatto un backup; se dopo il riavvio FleetBuddy non risponde, si torna alla versione precedente.
+# viene fatto un backup; se dopo il riavvio Fabbrix Farm Manager non risponde, si torna alla versione precedente.
 set -euo pipefail
 
 # Lo script si aggiorna da solo durante l'installazione: lo eseguiamo da una copia temporanea.
@@ -66,7 +66,7 @@ printf '{"current": "%s", "latest": "%s", "available": %s, "channel": "%s", "che
   "$current" "$latest" "$available" "$CHANNEL" "$(date +%s)" > "$STATUS"
 
 if [ "$available" = false ]; then
-  say "FleetBuddy è aggiornato (versione $current)."
+  say "Fabbrix Farm Manager è aggiornato (versione $current)."
   exit 0
 fi
 say "Disponibile la versione $latest (installata: $current)."
@@ -145,7 +145,7 @@ if install_rev "$target" && healthy "$latest"; then
   printf '{"current": "%s", "latest": "%s", "available": false, "channel": "%s", "checked_at": %s}\n' \
     "$latest" "$latest" "$CHANNEL" "$(date +%s)" > "$STATUS"
   rm -f "$DIR/data/update-failed"
-  say "FleetBuddy aggiornato alla versione $latest."
+  say "Fabbrix Farm Manager aggiornato alla versione $latest."
 else
   echo "La nuova versione non risponde: ripristino della versione $current…" >&2
   echo "$latest" > "$DIR/data/update-failed"

@@ -1,4 +1,4 @@
-# FleetBuddy
+# Fabbrix Farm Manager
 
 **Versione 0.1.0** (anteprima) · [Changelog](CHANGELOG.md)
 
@@ -38,7 +38,7 @@ ma passando **esclusivamente dal Bambu Fleet Hub** (HTTP API v1.0.0) invece che 
 
 ### Cosa non si può fare tramite il Hub (rispetto a Bambuddy)
 Le API v1.0.0 non espongono: **modifica di temperature (ugelli, piano, camera) e velocità**, stream camera continuo, download dei timelapse,
-luce, invio di G-code, ventole, scheda SD. FleetBuddy mostra temperature e velocità in sola lettura; per cambiarle
+luce, invio di G-code, ventole, scheda SD. Fabbrix Farm Manager mostra temperature e velocità in sola lettura; per cambiarle
 durante una stampa usa il display della stampante o Bambu Studio (che resta compatibile con il Hub). Se in futuro il Hub le aggiungerà, basta estendere `app/hub_client.py`.
 
 ## Requisiti
@@ -49,11 +49,11 @@ durante una stampa usa il display della stampante o Bambu Studio (che resta comp
 - La CA del Hub: copia `cert/root-ca.crt` della demo ufficiale Bambu in `certs/root-ca.crt`
   (non è inclusa nel repository).
 - Stampanti con firmware almeno pari al minimo supportato (A1/A1 mini 01.08.00.00; P1P/P1S/X1C 01.09.00.00;
-  X1E 01.01.03.12; H2D/H2S/P2S 01.02.00.00; H2D Pro/X2D 01.01.00.00). FleetBuddy segnala quelle da aggiornare.
+  X1E 01.01.03.12; H2D/H2S/P2S 01.02.00.00; H2D Pro/X2D 01.01.00.00). Fabbrix Farm Manager segnala quelle da aggiornare.
 
 > **Attenzione:** una stampante collegata al Fleet Hub funziona solo in LAN e non è più raggiungibile da
 > Bambu Handy né dal cloud. Resta invece utilizzabile da Bambu Studio sul PC (calibrazioni, filamenti),
-> e le stampe avviate da Studio compaiono comunque nello storico di FleetBuddy.
+> e le stampe avviate da Studio compaiono comunque nello storico di Fabbrix Farm Manager.
 
 ## Certificato client (una volta sola)
 Direttamente sul Pi, così la chiave privata non lascia mai il dispositivo:
@@ -71,18 +71,18 @@ Dal *Security White Paper v1.0* derivano alcune regole pratiche:
 
 - **Il Hub resta legato al certificato usato per l'attivazione.** Anche un altro certificato emesso
   dal Developer Center per lo stesso account verrà rifiutato. Attiva il Hub con il certificato che userà
-  FleetBuddy (meglio se creato direttamente sul Pi) e **fai subito un backup** con `bash tools/backup.sh /media/chiavetta`.
+  Fabbrix Farm Manager (meglio se creato direttamente sul Pi) e **fai subito un backup** con `bash tools/backup.sh /media/chiavetta`.
   Se perdi chiave o certificato, l'unico rimedio è il ripristino di fabbrica del Hub e una nuova attivazione.
 - **Password dell'account API persa = ripristino di fabbrica.** È salvata in `config.toml`, che l'installer
   rende leggibile solo al tuo utente (`chmod 600`), ed è inclusa nel backup.
-- **Il Hub non manda nulla all'esterno dopo l'attivazione; FleetBuddy sì, ma solo se lo chiedi.** Le notifiche
+- **Il Hub non manda nulla all'esterno dopo l'attivazione; Fabbrix Farm Manager sì, ma solo se lo chiedi.** Le notifiche
   ntfy/Telegram escono su internet (Telegram riceve anche la foto a fine stampa). Per restare tutto in LAN usa
   un server ntfy locale o il webhook verso un servizio interno.
 - **I modelli sono in chiaro**, sia nella cache del Hub (la cifratura è annunciata per una versione futura)
-  sia nell'archivio di FleetBuddy (`data/archive`). Tieni Hub e Pi in un luogo ad accesso controllato.
-- **L'interfaccia di FleetBuddy** va protetta come il resto: imposta `ui_password` e attiva l'HTTPS con
+  sia nell'archivio di Fabbrix Farm Manager (`data/archive`). Tieni Hub e Pi in un luogo ad accesso controllato.
+- **L'interfaccia di Fabbrix Farm Manager** va protetta come il resto: imposta `ui_password` e attiva l'HTTPS con
   `bash deploy/make_ui_cert.sh`, altrimenti la password viaggia in chiaro nella LAN.
-- **Istantanee della camera:** il Hub conserva solo l'ultima e la aggiorna durante la stampa. FleetBuddy
+- **Istantanee della camera:** il Hub conserva solo l'ultima e la aggiorna durante la stampa. Fabbrix Farm Manager
   salva la foto di fine stampa nello storico, così non viene sovrascritta.
 - **Account del Web Client del Hub:** facoltativo; se non lo crei la porta 443 del Hub resta chiusa.
   Si crea da Amministrazione → Fleet Hub, con password diversa da quella API (consigliati ≥ 12 caratteri).
@@ -136,7 +136,7 @@ fleetbuddy-update --check    # controlla soltanto
 ```
 L'aggiornamento installa l'ultima release (tag `vX.Y.Z`), non il codice in sviluppo. In ordine:
 backup di configurazione, certificati e database in `~/fleetbuddy-backups` (tiene gli ultimi 10);
-installazione di codice e librerie; riavvio; verifica che FleetBuddy risponda con la nuova versione.
+installazione di codice e librerie; riavvio; verifica che Fabbrix Farm Manager risponda con la nuova versione.
 Se non risponde, **torna da solo alla versione precedente**. Configurazione, certificati, database e archivio
 non sono nel repository, quindi non vengono mai toccati.
 
@@ -174,7 +174,7 @@ sudo systemctl restart fleetbuddy
 - Per accedere servono solo nome utente e password. Nome e cognome sono facoltativi e compaiono solo nella
   gestione utenti dell'amministratore; nel resto dell'interfaccia e nello storico si vede il nome utente.
 - Il pulsante **Genera password** crea una password sicura da consegnare al nuovo utente; al primo accesso
-  FleetBuddy gli propone di sceglierne una propria (facoltativo).
+  Fabbrix Farm Manager gli propone di sceglierne una propria (facoltativo).
 - Password admin dimenticata: `.venv/bin/python -m tools.users reset-password admin`.
 - Le password sono salvate con PBKDF2-SHA256; le sessioni durano 30 giorni; dopo 5 tentativi errati
   l'accesso da quell'indirizzo è sospeso per 5 minuti.
@@ -202,7 +202,7 @@ le stampanti abilitate e una priorità (bassa, normale, alta, urgente).
   finire dopo), stampe interamente in orario, oppure 24/7. Il cambio piatto richiede una persona e avviene in orario.
   Nel Gantt le ore non lavorative sono ombreggiate, con il nome di festività e chiusure.
 - **Stampanti offline:** restano nella pianificazione; una stampa in corso continua a comparire stimata dall'ultimo
-  stato noto e i pezzi restano assegnati. Al ritorno online FleetBuddy si riallinea (stampa proseguita, terminata o
+  stato noto e i pezzi restano assegnati. Al ritorno online Fabbrix Farm Manager si riallinea (stampa proseguita, terminata o
   persa: in quest'ultimo caso il pezzo viene rilanciato).
 
 ## Altre stampanti (senza Fleet Hub)
@@ -235,7 +235,7 @@ insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova co
 - UltiMaker: la stessa connessione usa l'API della stampante (`/api/v1`, valida per tutti i modelli) e, se risponde,
   UltiMaker Connect (`cluster-api`, `material-station-api`, `fault-api`) per materiali, Material Station, avvisi e
   anteprima del lavoro. Per i comandi serve un'autorizzazione approvata sul display: il modulo la richiede da solo.
-- Consumo di filamento delle stampe avviate fuori da FleetBuddy: misurato da Klipper (filamento estruso), INTAMSYS
+- Consumo di filamento delle stampe avviate fuori da Fabbrix Farm Manager: misurato da Klipper (filamento estruso), INTAMSYS
   (bilance) e UltiMaker (storico della stampante, con il materiale di ogni estrusore), letto dal G-code in stampa per Duet e OctoPrint, dai dati del file per PrusaLink; per le altre serve il
   file in archivio. Le stampe interrotte contano il consumo misurato o quello previsto in proporzione all'avanzamento.
 - Telecamere RTSP (es. Prusa Buddy3D Camera, rtsp://IP/live): l'indirizzo va nel campo della webcam; i fotogrammi
@@ -244,7 +244,7 @@ insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova co
   di OrcaSlicer (`static/catalog.json`, si può scrivere anche una marca o un modello diversi); per le Bambu sono automatici.
 - Vista delle stampanti a schede, elenco o tabella, con ricerca e ordinamento per nome, marca, modello, stato o
   avanzamento; ordinando per marca le stampanti sono raggruppate. In elenco e tabella un clic apre la scheda completa.
-- Password e chiavi API sono salvate nel database di FleetBuddy (in `data/`, leggibile solo dal tuo utente).
+- Password e chiavi API sono salvate nel database di Fabbrix Farm Manager (in `data/`, leggibile solo dal tuo utente).
 
 ### Altri metodi valutati (non ancora supportati)
 | Metodo | Valutazione |
@@ -258,7 +258,7 @@ insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova co
 | Flashforge | API locale delle Adventurer 5M / 5M Pro (porta 8898) e protocollo TCP: fattibile, da provare su hardware |
 | Obico, SimplyPrint, 3DPrinterOS | servizi cloud con account e chiave API: fattibili, ma i dati passano su internet |
 
-Senza Fleet Hub: lascia vuoto `host` nella sezione `[hub]` di `config.toml` e FleetBuddy userà solo le stampanti dirette.
+Senza Fleet Hub: lascia vuoto `host` nella sezione `[hub]` di `config.toml` e Fabbrix Farm Manager userà solo le stampanti dirette.
 
 Per sviluppare senza stampanti: `python -m tools.mock_duet` (Duet) e
 `python -m tools.mock_hosts --kind octoprint|moonraker|prusalink|repetier --port …`.
@@ -276,11 +276,11 @@ Per sviluppare senza stampanti: `python -m tools.mock_duet` (Duet) e
 
 ## Note tecniche emerse confrontando PDF e script demo
 1. **Hash della password al login.** Il PDF indica `sha256(hex(sha256(hex(sha256(pwd)) + salt)) + challenge)`,
-   mentre `base_lib/login.py` usa `sha256(hex(sha256(pwd + salt)) + challenge)`. FleetBuddy usa la versione della demo
+   mentre `base_lib/login.py` usa `sha256(hex(sha256(pwd + salt)) + challenge)`. Fabbrix Farm Manager usa la versione della demo
    e, se il Hub risponde 1023, riprova con l'altra e lo segnala nel log (`password_hash_mode`).
 2. **Porta e SNI.** Il Technical White Paper conferma la porta `8888` per le API (la `443` è solo il Web Client
    del Hub, attivo dopo aver creato un account web). La demo forza il nome TLS `fleet_v1.bambulab.com`.
-   Il token JWT ha vita breve: FleetBuddy rifà il login da solo quando riceve 401.
+   Il token JWT ha vita breve: Fabbrix Farm Manager rifà il login da solo quando riceve 401.
 3. **Stampa.** Il codice d'errore 1004 ("is not one plate gcode 3mf") suggerisce che il Hub accetti solo `.gcode.3mf`
    a piatto singolo: esporta con "Esporta G-code del piatto" dallo slicer. Il piatto multiplo è comunque gestito.
 4. **Dopo ogni stampa** il Hub richiede `bed_clean` (altrimenti 1051 "device busy"): è il pulsante

@@ -1,4 +1,4 @@
-"""Utenti, sessioni e permessi di FleetBuddy.
+"""Utenti, sessioni e permessi di Fabbrix Farm Manager.
 
 Ruoli:
   admin     tutto, compresi Hub, utenti, gruppi, progetti e permessi
@@ -98,6 +98,7 @@ class User:
     username: str
     role: str
     language: str | None = None
+    theme: str = ""                                   # tema scelto dall'utente ('' = predefinito)
     printers: set[str] = field(default_factory=set)   # seriali consentiti (non usato per admin)
     projects: set[int] = field(default_factory=set)   # progetti consentiti (non usato per admin)
     must_change_pw: bool = False                      # password assegnata dall'admin: proporre di cambiarla
@@ -133,7 +134,7 @@ class User:
 
     def public(self) -> dict:
         # nome e cognome restano nella sola gestione utenti
-        return {"id": self.id, "username": self.username, "role": self.role, "language": self.language,
+        return {"id": self.id, "username": self.username, "role": self.role, "language": self.language, "theme": self.theme,
                 "must_change_pw": self.must_change_pw, "perms": sorted(PERMISSIONS if self.is_admin else self.perms),
                 "assign": sorted(self.assign), "role_name": self.role_name}
 
@@ -168,7 +169,8 @@ class Auth:
         r = self.db.one("SELECT * FROM users WHERE id=? AND active=1", (uid,))
         if not r:
             return None
-        u = User(r["id"], r["username"], r["role"], r.get("language"), must_change_pw=bool(r.get("must_change_pw")))
+        u = User(r["id"], r["username"], r["role"], r.get("language"), must_change_pw=bool(r.get("must_change_pw")),
+                 theme=r.get("theme") or "")
         role = self.db.one("SELECT * FROM roles WHERE key=?", (r["role"],))
         if role:
             u.perms, u.assign, u.role_name = set(json.loads(role["perms"] or "[]")), set(json.loads(role["assign"] or "[]")), role["name"]

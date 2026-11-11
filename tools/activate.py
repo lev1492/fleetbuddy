@@ -65,7 +65,7 @@ def main():
         if e.code == 1043:
             sys.exit("Ticket scaduto: rilancia il comando")
         raise
-    print("Hub attivato. Ora puoi avviare FleetBuddy.")
+    print("Hub attivato. Ora puoi avviare Fabbrix Farm Manager.")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gestione utenti di FleetBuddy da riga di comando (utile se si dimentica la password admin).
+"""Gestione utenti di Fabbrix Farm Manager da riga di comando (utile se si dimentica la password admin).
 
   python -m tools.users list
   python -m tools.users reset-password <utente>        # chiede la nuova password

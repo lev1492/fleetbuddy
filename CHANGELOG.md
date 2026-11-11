@@ -3,6 +3,17 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.21.0] – 2026-11-12
+
+### Novità
+- Il progetto si chiama ora Fabbrix Farm Manager: nome nell'interfaccia (in tutte le lingue), titolo della pagina,
+  notifiche, file esportati e documentazione. Gli identificativi tecnici restano invariati per non interrompere gli
+  aggiornamenti delle installazioni esistenti: servizio "fleetbuddy", comando "fleetbuddy-update", cartella di
+  installazione, database e repository.
+- Tema per utente: ogni utente sceglie il tema del proprio account dal menu in basso a sinistra (Predefinito,
+  Automatico, Chiaro, Scuro); la scelta lo segue su qualsiasi dispositivo. Il tema di Amministrazione → Generali
+  diventa quello predefinito per chi non ne sceglie uno.
+
 ## [0.20.2] – 2026-11-12
 
 ### Novità

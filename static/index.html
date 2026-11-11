@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>FleetBuddy</title>
+<title>Fabbrix Farm Manager</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧵</text></svg>">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <nav class="nav">
-  <div class="brand"><span class="spool" aria-hidden="true"></span>FleetBuddy</div>
+  <div class="brand"><span class="spool" aria-hidden="true"></span><span class="bname"><b>Fabbrix</b><small>Farm Manager</small></span></div>
   <a href="#printers" data-view="printers"><span data-i18n="Stampanti">Stampanti</span></a>
   <a href="#queue" data-view="queue"><span data-i18n="Coda">Coda</span> <span class="badge" id="qbadge"></span></a>
   <a href="#production" data-view="production"><span data-i18n="Produzione">Produzione</span> <span class="badge" id="pbadge"></span></a>
@@ -22,7 +22,8 @@
     <div class="me"><span id="mename"></span>
       <button type="button" id="mepwd" class="linkbtn" data-i18n="Cambia password">Cambia password</button>
       <button type="button" id="logout" class="linkbtn" data-i18n="Esci">Esci</button>
-      <select id="melang" class="langsel" aria-label="Language"></select></div>
+      <select id="melang" class="langsel" aria-label="Language"></select>
+      <select id="metheme" class="themesel" aria-label="Tema"></select></div>
     <div class="appver" id="appver"></div>
   </div>
 </nav>
@@ -40,7 +41,7 @@
 </main>
 <div id="login" hidden>
   <form class="logincard" id="loginform">
-    <div class="brand"><span class="spool" aria-hidden="true"></span>FleetBuddy</div>
+    <div class="brand"><span class="spool" aria-hidden="true"></span><span class="bname"><b>Fabbrix</b><small>Farm Manager</small></span></div>
     <p id="loginintro" class="sub"></p>
     <label><span data-i18n="Nome utente">Nome utente</span><input name="username" autocomplete="username" required></label>
     <label><span data-i18n="Password">Password</span><input name="password" type="password" autocomplete="current-password" required></label>

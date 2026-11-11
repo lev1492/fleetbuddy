@@ -26,9 +26,9 @@ RENDER.general = async function renderGeneral() {
   const country = () => GEN.countries.find(c => c.code === cfg.country) || {subdivs: []};
   el.innerHTML = `<div class="head"><div><h1>${t("Amministrazione")}</h1></div></div>${adminTabs("general")}
     <div class="gen">
-      <section class="box"><h2>${t("Aspetto")}</h2>
+      <section class="box"><h2>${t("Aspetto")} · ${t("tema predefinito")}</h2>
         <div class="seg" id="gtheme">${Object.entries(THEMES).map(([k, l]) => `<button type="button" data-v="${k}" class="${k === theme ? "on" : ""}">${t(l)}</button>`).join("")}</div>
-        <p class="sub small">${t("Vale per tutti gli utenti di FleetBuddy.")}</p></section>
+        <p class="sub small">${t("Tema predefinito, per chi non ne ha scelto uno: ogni utente può scegliere il proprio tema per il suo account dal menu in basso a sinistra.")}</p></section>
 
       <section class="box"><h2>${t("Impostazioni")}</h2>
         <div class="row">
@@ -36,7 +36,7 @@ RENDER.general = async function renderGeneral() {
           <label>${t("Lettura delle stampanti")}<select id="poll">${Object.entries(POLL_LABELS).map(([v, l]) => `<option value="${v}" ${+v === (S.settings.poll_interval || GEN.poll_default || 5) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
           <label>${t("Offline dopo")}<select id="grace">${Object.entries(GRACE_LABELS).map(([v, l]) => `<option value="${v}" ${+v === (S.settings.offline_grace_s || 30) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
           <label>${t("Lingua delle notifiche")}<select id="notlang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === (S.settings.notify_lang || "it") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
-        </div><p class="sub small" style="margin:10px 0 0">${t("Lettura delle stampanti: ogni quanto FleetBuddy chiede lo stato a ciascuna stampante. Un intervallo più lungo alleggerisce la rete Wi-Fi; schede e avvio delle stampe si aggiornano un po' più lentamente.")}
+        </div><p class="sub small" style="margin:10px 0 0">${t("Lettura delle stampanti: ogni quanto Fabbrix Farm Manager chiede lo stato a ciascuna stampante. Un intervallo più lungo alleggerisce la rete Wi-Fi; schede e avvio delle stampe si aggiornano un po' più lentamente.")}
           ${t("Una stampante che non risponde resta com'era per il tempo indicato prima di risultare offline: le brevi interruzioni del Wi-Fi non interrompono più schede, coda e produzione.")}
           ${t("La lingua delle notifiche vale per ntfy, Telegram e webhook, che non sono legati a un utente.")}</p></section>
 

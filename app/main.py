@@ -1,4 +1,4 @@
-"""FleetBuddy – interfaccia web e API REST con utenti, gruppi, progetti e permessi."""
+"""Fabbrix Farm Manager – interfaccia web e API REST con utenti, gruppi, progetti e permessi."""
 from __future__ import annotations
 
 import asyncio
@@ -253,7 +253,7 @@ def update_status() -> dict | None:
 @app.post("/api/setup")
 async def setup(request: Request, body: dict):
     if auth.has_users():
-        raise HTTPException(409, _("FleetBuddy è già configurato"))
+        raise HTTPException(409, _("Fabbrix Farm Manager è già configurato"))
     auth.create_user(body.get("username", ""), body.get("password", ""), "admin",
                      language=normalize(body.get("language")) or current_lang.get())
     return await login(request, body)
@@ -288,6 +288,10 @@ async def my_profile(request: Request, body: dict):
         if not lang:
             raise HTTPException(400, _("Lingua non supportata"))
         S().db.x("UPDATE users SET language=? WHERE id=?", (lang, u.id))
+    if "theme" in body:
+        if body["theme"] not in ("", "auto", "light", "dark"):
+            raise HTTPException(400, _("Tema non valido"))
+        S().db.x("UPDATE users SET theme=? WHERE id=?", (body["theme"], u.id))
     return {"ok": True}
 
 
@@ -871,7 +875,7 @@ async def printer_name(request: Request, sn: str, body: dict):
     need_admin(u)
     printer_for(u, sn)
     name = str(body.get("name", "")).strip()[:64]
-    if sn in S().direct:   # stampante diretta: il nome è salvato in FleetBuddy
+    if sn in S().direct:   # stampante diretta: il nome è salvato in Fabbrix Farm Manager
         S().db.x("UPDATE direct_printers SET name=? WHERE id=?", (name, int(sn.split("-", 1)[1])))
         S().reload_direct()
         return {"ok": True}
@@ -1270,7 +1274,7 @@ async def stats_export(request: Request, days: int = 30, group: int | None = Non
     data = await asyncio.to_thread(build_stats_xlsx, jobs, filaments=filament_totals(where, args),
                                    days=days, scope=scope, user=u.username,
                                    lang=current_lang.get())
-    fname = f"fleetbuddy-stats-{time.strftime('%Y%m%d')}-{days}d.xlsx"
+    fname = f"fabbrix-farm-manager-stats-{time.strftime('%Y%m%d')}-{days}d.xlsx"
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"', "Cache-Control": "no-store"})
 
@@ -1391,7 +1395,7 @@ def _scope_label(u: User, group: int | None) -> str:
 
 
 def _download(data: bytes, media: str, days: int, ext: str, kind: str = "") -> Response:
-    fname = f"fleetbuddy-stats{'-' + kind if kind else ''}-{time.strftime('%Y%m%d')}-{days}d.{ext}"
+    fname = f"fabbrix-farm-manager-stats{'-' + kind if kind else ''}-{time.strftime('%Y%m%d')}-{days}d.{ext}"
     return Response(data, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="{fname}"', "Cache-Control": "no-store"})
 
@@ -1473,7 +1477,7 @@ async def admin_update_check(request: Request):
     """Controlla subito su GitHub (stesso controllo del timer notturno) e restituisce le novità."""
     _admin(request)
     if not (BASE_DIR / ".git").is_dir():
-        raise HTTPException(409, _("FleetBuddy non è installato da GitHub: segui \"Passare all'installazione da GitHub\" nel README"))
+        raise HTTPException(409, _("Fabbrix Farm Manager non è installato da GitHub: segui \"Passare all'installazione da GitHub\" nel README"))
     code, out = await _run("/bin/bash", "tools/update.sh", "--check")
     info = await _update_info()
     info["output"] = out.strip()
@@ -1496,7 +1500,7 @@ async def admin_update_check(request: Request):
 
 @app.post("/api/admin/update/install")
 async def admin_update_install(request: Request):
-    """Avvia l'aggiornamento in un servizio separato: FleetBuddy verrà riavviato da quel servizio."""
+    """Avvia l'aggiornamento in un servizio separato: Fabbrix Farm Manager verrà riavviato da quel servizio."""
     _admin(request)
     info = await _update_info()
     if not info["web_install"]:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Certificato autofirmato per servire l'interfaccia di FleetBuddy in HTTPS (rete locale).
+# Certificato autofirmato per servire l'interfaccia di Fabbrix Farm Manager in HTTPS (rete locale).
 set -e
 DIR="$(cd "$(dirname "$0")/.." && pwd)"; cd "$DIR/certs"
 HOST=$(hostname); IP=$(hostname -I | awk '{print $1}')

@@ -1,4 +1,4 @@
-"""Traduzioni di FleetBuddy.
+"""Traduzioni di Fabbrix Farm Manager.
 
 Il testo di riferimento è l'italiano: nel codice ogni frase è scritta in italiano e i file
 static/i18n/<lingua>.json contengono le traduzioni ("frase italiana": "traduzione").

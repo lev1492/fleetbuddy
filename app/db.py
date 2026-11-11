@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS job_filaments (
     grams REAL DEFAULT 0, meters REAL DEFAULT 0, ams_id INTEGER, slot_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS job_filaments_job ON job_filaments(job_id);
--- stampe appena inviate da FleetBuddy, in attesa che il Hub le segnali come avviate (sopravvive ai riavvii)
+-- stampe appena inviate da Fabbrix Farm Manager, in attesa che il Hub le segnali come avviate (sopravvive ai riavvii)
 CREATE TABLE IF NOT EXISTS pending_prints (printer_sn TEXT PRIMARY KEY, data TEXT, at REAL);
 -- permessi: kind = 'printer' (ref = seriale), 'group' (ref = id gruppo), 'project' (ref = id progetto)
 CREATE TABLE IF NOT EXISTS access (user_id INTEGER, kind TEXT, ref TEXT, PRIMARY KEY (user_id, kind, ref));
@@ -84,6 +84,7 @@ MIGRATIONS = [
     ("jobs", "planned_s", "REAL DEFAULT 0"),
     ("jobs", "confirmed_by", "TEXT DEFAULT ''"),
     ("jobs", "thumb", "TEXT DEFAULT ''"),
+    ("users", "theme", "TEXT DEFAULT ''"),
     ("job_filaments", "source", "TEXT DEFAULT 'slicer'"),
 ]
 

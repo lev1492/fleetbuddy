@@ -1,5 +1,5 @@
 [Unit]
-Description=FleetBuddy - controllo aggiornamenti ogni notte
+Description=Fabbrix Farm Manager - controllo aggiornamenti ogni notte
 
 [Timer]
 OnCalendar=*-*-* 03:30

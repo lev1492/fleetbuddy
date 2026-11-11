@@ -257,7 +257,7 @@ def ffmpeg_available() -> bool:
 def rtsp_frame(url: str, max_age: float = 5.0) -> bytes | None:
     """Un fotogramma JPEG da un flusso RTSP (H.264/H.265), estratto con ffmpeg.
 
-    I browser non riproducono RTSP: FleetBuddy legge il flusso sul Raspberry Pi e ne mostra un'immagine come per le
+    I browser non riproducono RTSP: Fabbrix Farm Manager legge il flusso sul Raspberry Pi e ne mostra un'immagine come per le
     altre webcam. Per qualche secondo il fotogramma viene riusato, così più utenti sulla stessa camera non avviano
     ffmpeg più volte. Serve il pacchetto di sistema ffmpeg (sudo apt install ffmpeg)."""
     import subprocess

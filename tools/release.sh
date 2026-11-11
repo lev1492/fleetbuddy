@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pubblica una nuova versione di FleetBuddy (da eseguire sul PC di sviluppo, non sul Pi).
+# Pubblica una nuova versione di Fabbrix Farm Manager (da eseguire sul PC di sviluppo, non sul Pi).
 #
 #   tools/release.sh 0.2.0
 #
@@ -22,7 +22,7 @@ git add app/__init__.py
 # gli script devono restare eseguibili anche se il repository viene gestito da Windows
 git update-index --chmod=+x tools/*.sh deploy/*.sh
 git commit -q -m "Versione $NEW"
-git tag -a "v$NEW" -m "FleetBuddy $NEW"
+git tag -a "v$NEW" -m "Fabbrix Farm Manager $NEW"
 git push -q origin HEAD
 git push -q origin "v$NEW"
 echo "Pubblicata la versione $NEW (tag v$NEW)."

@@ -16,7 +16,7 @@ python3 -m venv .venv
 .venv/bin/pip install -q --extra-index-url https://www.piwheels.org/simple -r requirements.txt
 [ -f config.toml ] || { cp config.example.toml config.toml; echo "==> Creato config.toml: modificalo prima di avviare"; }
 mkdir -p certs data
-# credenziali: leggibili solo dall'utente che esegue FleetBuddy
+# credenziali: leggibili solo dall'utente che esegue Fabbrix Farm Manager
 chmod 700 certs data
 chmod 600 config.toml
 find certs -type f -name "*.key" -exec chmod 600 {} +

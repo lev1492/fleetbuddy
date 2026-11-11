@@ -1,6 +1,6 @@
-"""FleetBuddy – gestione di stampanti Bambu Lab tramite il Bambu Fleet Hub."""
+"""Fabbrix Farm Manager – gestione di stampanti Bambu Lab tramite il Bambu Fleet Hub."""
 
-APP_NAME = "FleetBuddy"
-__version__ = "0.20.2"
+APP_NAME = "Fabbrix Farm Manager"
+__version__ = "0.21.0"
 # Indirizzo del repository, mostrato nell'interfaccia accanto alla versione (lascia vuoto per non mostrarlo)
 REPO_URL = ""

@@ -7,7 +7,7 @@ Comandi:    /job/currentjob/set (pausa, ripresa, stop), /printer/nozzle1|2/temp/
             /printer/feedrate/set (velocità), /printer/fanspeed/set
 Stampa:     l'API non permette di caricare file: si avviano file già presenti nella memoria della stampante
             (/fileops/list per sfogliarli, /job/newjob/set per avviarli)
-Webcam:     /printer/camera indica indirizzo e credenziali del flusso video; FleetBuddy ne estrae un fotogramma
+Webcam:     /printer/camera indica indirizzo e credenziali del flusso video; Fabbrix Farm Manager ne estrae un fotogramma
 """
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scheda Duet / RepRapFirmware 3 simulata, per provare FleetBuddy senza stampante.
+"""Scheda Duet / RepRapFirmware 3 simulata, per provare Fabbrix Farm Manager senza stampante.
 
   python -m tools.mock_duet                 # modalità autonoma (API rr_) su :8090, password "reprap"
   python -m tools.mock_duet --sbc --port 8091 --password segreta   # modalità SBC (API /machine)

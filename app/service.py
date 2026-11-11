@@ -112,7 +112,7 @@ class Service:
         self.db = DB(cfg.data_path / "fleetbuddy.db")
         try:
             self.hub = FleetHubClient(cfg) if cfg.hub.host else _NoHub("host vuoto in config.toml")
-        except Exception as e:  # noqa: BLE001 - certificati mancanti: FleetBuddy funziona con le sole stampanti dirette
+        except Exception as e:  # noqa: BLE001 - certificati mancanti: Fabbrix Farm Manager funziona con le sole stampanti dirette
             log.warning("Fleet Hub non disponibile (%s): restano attive le stampanti collegate direttamente", e)
             self.hub = _NoHub(str(e))
         self.hub_printers: dict[str, dict] = {}
@@ -759,7 +759,7 @@ class Service:
         return json.loads(r["data"]) if time.time() - r["at"] <= 1800 else None
 
     def _match_file(self, task_name: str) -> tuple[dict, dict] | None:
-        """Stampa non avviata da FleetBuddy (o avviata prima di un riavvio): cerca nell'archivio
+        """Stampa non avviata da Fabbrix Farm Manager (o avviata prima di un riavvio): cerca nell'archivio
         un file con lo stesso nome del lavoro, così si conoscono comunque i filamenti usati."""
         if not task_name:
             return None
@@ -836,7 +836,7 @@ class Service:
                 if est and est.get("task_id") == key and not self.has_pending(sn) \
                         and self._elapsed_s(p) >= (time.time() - (est.get("started_at") or 0)) - 15 * 60:
                     # tornata online e sta ancora stampando lo stesso lavoro: la chiusura stimata era prematura.
-                    # Non è una ristampa dello stesso file: nessuna stampa appena inviata da FleetBuddy e un tempo
+                    # Non è una ristampa dello stesso file: nessuna stampa appena inviata da Fabbrix Farm Manager e un tempo
                     # trascorso compatibile con l'inizio originale (una ristampa appena partita ha pochi minuti).
                     self._reopen_job(est, p)
                     return
@@ -862,7 +862,7 @@ class Service:
                         start_info = {"usage": await asyncio.to_thread(c.usage_snapshot, raw)}
                     except Exception:  # noqa: BLE001
                         start_info = {"usage": None}
-                # stampa già in corso quando FleetBuddy la vede (riavvio, stampante tornata online, avvio esterno):
+                # stampa già in corso quando Fabbrix Farm Manager la vede (riavvio, stampante tornata online, avvio esterno):
                 # l'inizio si ricostruisce a ritroso dal tempo già trascorso
                 back = 0 if pend else self._elapsed_s(p)
                 planned_s = self._planned_s(info, p)
@@ -1015,7 +1015,7 @@ class Service:
                                                     f.get("tray_info_idx", ""), g, round(f.get("meters", 0) * factor, 2),
                                                     f.get("ams_id"), f.get("slot_id")))
         if not plan and printer:
-            # stampa avviata fuori da FleetBuddy e file non in archivio: stima dal calo del residuo AMS
+            # stampa avviata fuori da Fabbrix Farm Manager e file non in archivio: stima dal calo del residuo AMS
             for f in ams_usage(job.get("start_trays"), printer):
                 total += f["grams"]
                 self.db.x("INSERT INTO job_filaments(job_id, type, brand, color, tray_info_idx, grams, meters, ams_id, "

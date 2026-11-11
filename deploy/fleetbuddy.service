@@ -1,5 +1,5 @@
 [Unit]
-Description=FleetBuddy - gestione stampanti Bambu Lab via Fleet Hub
+Description=Fabbrix Farm Manager - gestione stampanti Bambu Lab via Fleet Hub
 After=network-online.target
 Wants=network-online.target
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fleet Hub simulato per sviluppare FleetBuddy senza hardware.
+"""Fleet Hub simulato per sviluppare Fabbrix Farm Manager senza hardware.
 
 Espone le principali API in HTTPS con mTLS obbligatorio, usando certificati auto-generati:
   bash tools/make_mock_certs.sh          # crea certs/mock/*
@@ -187,7 +187,7 @@ def mock_offline(sn: str, off: bool = True):
 
 @app.post("/mock/start/{sn}")
 def mock_external_print(sn: str, dur: int = 20):
-    """Solo per i test: simula una stampa avviata da Bambu Studio (fuori da FleetBuddy)."""
+    """Solo per i test: simula una stampa avviata da Bambu Studio (fuori da Fabbrix Farm Manager)."""
     PRINTERS[sn].update(state="PREPARE", pct=0, t0=time.time(), dur=dur, task="Da Bambu Studio",
                         task_id=random.randint(1, 10**6))
     return ok()
@@ -255,7 +255,7 @@ async def do_print(req: Request):
 
 @app.post("/debug/start")
 def debug_start(sn: str, task: str):
-    """Simula una stampa avviata da Bambu Studio (non da FleetBuddy)."""
+    """Simula una stampa avviata da Bambu Studio (non da Fabbrix Farm Manager)."""
     PRINTERS[sn].update(state="PREPARE", pct=0, t0=time.time(), task=task, task_id=random.randint(1, 10**6))
     return ok()
 

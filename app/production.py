@@ -197,7 +197,7 @@ def on_not_started(db, unit_id: int, reason: str):
 
 def reconcile(svc):
     """All'avvio: pezzi rimasti "in invio" senza stampa in arrivo tornano in attesa; pezzi "in stampa" la cui stampa
-    si è chiusa mentre FleetBuddy era spento vengono aggiornati."""
+    si è chiusa mentre Fabbrix Farm Manager era spento vengono aggiornati."""
     db = svc.db
     for u in db.q("SELECT * FROM production_units WHERE status='starting'"):
         if not (u["printer_sn"] and svc.has_pending(u["printer_sn"])):
@@ -241,7 +241,7 @@ def operator_ok(svc, sn: str):
 
 
 def clear_printer(db, sn: str):
-    """Una stampa è partita sulla stampante (da FleetBuddy o da qualcuno alla stampante): attesa e OK esauriti."""
+    """Una stampa è partita sulla stampante (da Fabbrix Farm Manager o da qualcuno alla stampante): attesa e OK esauriti."""
     h, g = holds(db), oks(db)
     if sn in h or sn in g:
         h.pop(sn, None)

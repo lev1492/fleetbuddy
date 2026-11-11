@@ -1,5 +1,5 @@
 [Unit]
-Description=FleetBuddy - controllo aggiornamenti
+Description=Fabbrix Farm Manager - controllo aggiornamenti
 After=network-online.target
 Wants=network-online.target
 

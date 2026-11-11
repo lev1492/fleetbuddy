@@ -4,7 +4,7 @@ Ricerca:    UDP "M99999" alla porta 3000 → nome, modello, firmware e Mainboard
 Stato:      WebSocket ws://IP:3030/websocket, richiesta Cmd 0 → messaggio sul topic sdcp/status/<MainboardID>
 Comandi:    Cmd 128 avvio (con livellamento e timelapse), 129 pausa, 130 stop, 131 ripresa, 386 attivazione del video
 Stampa:     caricamento a blocchi su http://IP:3030/uploadFile/upload, poi Cmd 128 con il file in /local/
-Webcam:     flusso MJPEG indicato dalla stampante (Cmd 386); FleetBuddy ne estrae un fotogramma
+Webcam:     flusso MJPEG indicato dalla stampante (Cmd 386); Fabbrix Farm Manager ne estrae un fotogramma
 Limiti:     SDCP non ha comandi documentati per temperature e velocità: si leggono ma non si modificano.
 """
 from __future__ import annotations

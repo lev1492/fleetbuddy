@@ -155,7 +155,7 @@ body.locked .nav,body.locked main{visibility:hidden}
 .appver a{color:inherit}
 .logincard .appver{padding:0}
 .loginfoot{display:flex;justify-content:space-between;align-items:center;gap:10px}
-.langsel{font-size:13px;padding:3px 6px;margin-top:4px}
+.langsel,.themesel{font-size:13px;padding:3px 6px;margin-top:4px}
 /* menu a tre puntini nella scheda stampante */
 .pc{position:relative}
 .pc.has-menu .pc-top{padding-right:48px}
@@ -545,6 +545,10 @@ table.roles th small{display:block;font-weight:400}
 a.iplink{color:inherit;text-decoration:underline;text-decoration-color:color-mix(in srgb,currentColor 55%,transparent);text-underline-offset:2px;white-space:nowrap}
 a.iplink:hover{color:var(--done);text-decoration-color:currentColor}
 .exticon{margin-left:3px;vertical-align:-1px;opacity:.75}
+
+.brand .bname{display:flex;flex-direction:column;line-height:1.05}
+.brand .bname b{font-size:20px;letter-spacing:-.01em}
+.brand .bname small{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
 
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */

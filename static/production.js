@@ -111,7 +111,7 @@ function renderOrders() {
   const list = PDATA.productions.filter(p => ["active", "paused"].includes(p.status));
   const closed = PDATA.productions.filter(p => !["active", "paused"].includes(p.status));
   box.innerHTML = (list.length ? `<div class="porders">${list.map(orderCard).join("")}</div>`
-    : `<div class="empty pempty"><div class="big">🏭</div><p>${t("Crea un ordine di produzione: scegli i modelli, il numero di copie e le stampanti. FleetBuddy distribuisce i pezzi e ti mostra quando finirà.")}</p>
+    : `<div class="empty pempty"><div class="big">🏭</div><p>${t("Crea un ordine di produzione: scegli i modelli, il numero di copie e le stampanti. Fabbrix Farm Manager distribuisce i pezzi e ti mostra quando finirà.")}</p>
        ${can("production") ? `<button class="primary" id="pnew2">＋ ${t("Nuovo ordine")}</button>` : ""}</div>`)
     + (closed.length ? `<details class="pclosed"><summary>${t("Concluse")} (${closed.length})</summary><div class="porders">${closed.map(orderCard).join("")}</div></details>` : "");
   if ($("#pnew2")) $("#pnew2").onclick = () => newOrderDialog();
