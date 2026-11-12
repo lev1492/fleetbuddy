@@ -774,6 +774,12 @@ RENDER.archive = async function renderArchive() {
   const el = $("#v-archive");
   await loadMeta();
   if (projFilter && projFilter !== "none" && !PROJECTS.some(p => String(p.id) === projFilter)) projFilter = "";
+  // "Tutti" si mostra solo se l'amministratore lo consente (Generali → Impostazioni): altrimenti si apre il primo progetto
+  const showAll = !!(S.settings && S.settings.files_show_all);
+  if (!showAll && (projFilter === "" || (projFilter === "none" && !PROJECTS.some(p => p.id === null)))) {
+    const first = PROJECTS.find(p => p.parent_id == null && p.id !== null) || PROJECTS.find(p => p.id === null);
+    projFilter = first ? (first.id === null ? "none" : String(first.id)) : "";
+  }
   const sel = projFilter === "none" ? PROJECTS.find(p => p.id === null) : PROJECTS.find(p => String(p.id) === projFilter);
   const uploadPid = sel ? sel.id : (!seesAll() && PROJECTS.length === 1 ? PROJECTS[0].id : (seesAll() ? null : undefined));
   const dropText = uploadPid === undefined ? t("Seleziona un progetto per caricare file")
@@ -783,7 +789,7 @@ RENDER.archive = async function renderArchive() {
   el.innerHTML = `<div class="head"><div><h1>${t("Files")}</h1><p class="sub">${t("I file sono organizzati in progetti. Ogni utente vede solo i progetti che l'amministratore gli ha assegnato.")}</p></div>
       <button class="admin-only primary" id="newproj">${t("Nuovo progetto")}</button></div>
     <div class="chips" id="pchips">
-      <button class="chip ${projFilter ? "" : "on"}" data-p="">${t("Tutti")} <small>${PROJECTS.reduce((n, p) => n + (p.files || 0), 0)}</small></button>
+      ${showAll ? `<button class="chip ${projFilter ? "" : "on"}" data-p="">${t("Tutti")} <small>${PROJECTS.reduce((n, p) => n + (p.files || 0), 0)}</small></button>` : ""}
       ${PROJECTS.filter(p => p.parent_id == null).map(p => { const key = p.id === null ? "none" : String(p.id);
         const on = projFilter === key || (sel && sel.id !== null && sel.root_id === p.id);
         return `<button class="chip ${on ? "on" : ""}" data-p="${key}" style="--c:${esc(p.color)}"><i></i>${esc(projName(p))} <small>${p.files_total ?? p.files}</small></button>`; }).join("")}

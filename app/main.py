@@ -393,6 +393,8 @@ async def put_settings(request: Request, body: dict):
         cur["notify_lang"] = normalize(body["notify_lang"])
     if body.get("theme") in ("auto", "light", "dark"):
         cur["theme"] = body["theme"]
+    if "files_show_all" in body:
+        cur["files_show_all"] = bool(body["files_show_all"])
     if body.get("poll_interval") in (5, 10, 15):
         cur["poll_interval"] = int(body["poll_interval"])
     if body.get("offline_grace_s") in (10, 20, 30, 60, 120, 300):

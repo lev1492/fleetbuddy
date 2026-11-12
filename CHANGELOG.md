@@ -3,6 +3,13 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.24.1] – 2026-11-12
+
+### Modifiche
+- Files: tolta la voce "Tutti" (che caricava i file di tutti i progetti insieme); all'apertura si apre il primo
+  progetto. Restano i progetti e "Senza progetto". L'amministratore può riattivarla in Amministrazione → Generali →
+  Impostazioni ("Mostra «Tutti» nella pagina Files").
+
 ## [0.24.0] – 2026-11-12
 
 ### Novità

@@ -28,6 +28,7 @@ RENDER.general = async function renderGeneral() {
         <div class="row">
           <label>${t("Aggiornamento della camera aperta")}<select id="camref">${REFRESH_OPTS.map(([v, l]) => `<option value="${v}" ${v === Math.min(30, Math.max(5, S.settings.camera_refresh_s || 10)) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
           <label>${t("Lettura delle stampanti")}<select id="poll">${Object.entries(POLL_LABELS).map(([v, l]) => `<option value="${v}" ${+v === (S.settings.poll_interval || GEN.poll_default || 5) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
+          <label class="inline gfull"><input type="checkbox" id="fshowall" ${S.settings.files_show_all ? "checked" : ""}> ${t("Mostra «Tutti» nella pagina Files (tutti i file di tutti i progetti insieme)")}</label>
           <label>${t("Offline dopo")}<select id="grace">${Object.entries(GRACE_LABELS).map(([v, l]) => `<option value="${v}" ${+v === (S.settings.offline_grace_s || 30) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
           <label>${t("Lingua delle notifiche")}<select id="notlang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === (S.settings.notify_lang || "it") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
         </div><p class="sub small" style="margin:10px 0 0">${t("Lettura delle stampanti: ogni quanto Fabbrix Farm Manager chiede lo stato a ciascuna stampante. Un intervallo più lungo alleggerisce la rete Wi-Fi; schede e avvio delle stampe si aggiornano un po' più lentamente.")}
@@ -120,6 +121,7 @@ RENDER.general = async function renderGeneral() {
   $("#notlang").onchange = e => saveSetting({notify_lang: e.target.value});
   $("#grace").onchange = e => saveSetting({offline_grace_s: +e.target.value});
   $("#poll").onchange = e => saveSetting({poll_interval: +e.target.value});
+  $("#fshowall").onchange = e => saveSetting({files_show_all: e.target.checked});
   wireUpdateBox();
   $("#gmode").onchange = e => { cfg.mode = e.target.value; };
   $("#gcountry").onchange = e => {
