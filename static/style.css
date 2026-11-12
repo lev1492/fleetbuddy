@@ -608,6 +608,15 @@ a.iplink:hover{color:var(--done);text-decoration-color:currentColor}
 
 .gfull{grid-column:1/-1}
 
+/* cartelle a elenco: una per riga, nome intero */
+.fhead{display:flex;align-items:center;gap:10px;margin:2px 0 8px}
+.fhead .seg button{padding:4px 12px;font-size:13px}
+.folders.flist-rows{display:flex;flex-direction:column;gap:4px}
+.folders.flist-rows .folder{grid-template-columns:auto 1fr auto;grid-template-rows:auto;padding:8px 12px}
+.folders.flist-rows .folder .fic{grid-row:auto;font-size:18px}
+.folders.flist-rows .folder b{white-space:normal;overflow:visible}
+.folders.flist-rows .folder small{white-space:nowrap}
+
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
 .gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}

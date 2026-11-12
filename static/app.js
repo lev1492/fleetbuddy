@@ -769,7 +769,8 @@ async function editTray(p, ams, slot) {
 }
 
 // ------------------------------------------------------------------ archivio e progetti
-let projFilter = localStorage.getItem("fb_proj") || "";   // "" = tutti, "none" = senza progetto, oppure id
+let projFilter = localStorage.getItem("fb_proj") || "";
+let FVIEW = localStorage.getItem("fb_fview") === "list" ? "list" : "tiles";   // cartelle: riquadri o elenco   // "" = tutti, "none" = senza progetto, oppure id
 RENDER.archive = async function renderArchive() {
   const el = $("#v-archive");
   await loadMeta();
@@ -792,7 +793,7 @@ RENDER.archive = async function renderArchive() {
       ${showAll ? `<button class="chip ${projFilter ? "" : "on"}" data-p="">${t("Tutti")} <small>${PROJECTS.reduce((n, p) => n + (p.files || 0), 0)}</small></button>` : ""}
       ${PROJECTS.filter(p => p.parent_id == null).map(p => { const key = p.id === null ? "none" : String(p.id);
         const on = projFilter === key || (sel && sel.id !== null && sel.root_id === p.id);
-        return `<button class="chip ${on ? "on" : ""}" data-p="${key}" style="--c:${esc(p.color)}"><i></i>${esc(projName(p))} <small>${p.files_total ?? p.files}</small></button>`; }).join("")}
+        return `<button class="chip ${on ? "on" : ""}" data-p="${key}" style="--c:${esc(p.color)}" title="${esc(projName(p))}"><i></i>${esc(projName(p))} <small>${p.files_total ?? p.files}</small></button>`; }).join("")}
     </div>
     ${sel ? `<div class="projhead"><div>
         ${sel.id !== null && sel.depth > 0 ? `<nav class="crumbs">${PROJECTS.filter(x => x.id !== null && sel.path.slice(0, -1).length && isAncestor(x, sel)).map(x => `<a href="#" data-p="${x.id}">${esc(x.name)}</a>`).join(" › ")} ›</nav>` : ""}
@@ -800,13 +801,19 @@ RENDER.archive = async function renderArchive() {
       ${sel.id !== null && can("files") ? `<div class="row">${canManage(sel.id) ? `<button id="newsub">＋ ${t("Nuova cartella")}</button>` : ""}
         ${canManage(sel.parent_id) ? `<button id="editproj">${t("Modifica")}</button><button id="moveproj">${t("Sposta")}</button><button class="danger" id="delproj">${sel.depth > 0 ? t("Elimina cartella") : t("Elimina progetto")}</button>` : ""}</div>` : ""}</div>
       ${sel.id !== null ? (() => { const subs = PROJECTS.filter(x => x.parent_id === sel.id);
-        return subs.length ? `<div class="folders">${subs.map(x => `<button type="button" class="folder" data-p="${x.id}" style="--c:${esc(x.color)}"><span class="fic">📁</span><b>${esc(x.name)}</b>
-          <small class="muted">${t("{n} file", {n: x.files_total})}${x.children ? " · " + t("{n} cartelle", {n: x.children}) : ""}</small></button>`).join("")}</div>` : ""; })() : ""}` : ""}
+        if (!subs.length) return "";
+        const fv = FVIEW;
+        return `<div class="fhead"><span class="muted small">${t("{n} cartelle", {n: subs.length})}</span><span class="grow"></span>
+          <div class="seg" id="fview" role="group">${[["tiles", t("Riquadri")], ["list", t("Elenco")]].map(([k, l]) => `<button type="button" data-fv="${k}" class="${fv === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
+          <div class="folders ${fv === "list" ? "flist-rows" : ""}">${subs.map(x => `<button type="button" class="folder" data-p="${x.id}" style="--c:${esc(x.color)}" title="${esc(x.name)}"><span class="fic">📁</span><b>${esc(x.name)}</b>
+          <small class="muted">${t("{n} file", {n: x.files_total})}${x.children ? " · " + t("{n} cartelle", {n: x.children}) : ""}</small></button>`).join("")}</div>`; })() : ""}` : ""}
     ${can("files") ? `<div class="drop" id="drop">${dropText}<input type="file" id="fpick" accept=".3mf,.gcode,.gco,.g,.bgcode,.ufp" multiple hidden></div>` : ""}
     <div class="list" id="flist"><div class="empty">${t("Caricamento…")}</div></div>`;
   $("#pchips").onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; projFilter = c.dataset.p; localStorage.setItem("fb_proj", projFilter); RENDER.archive(); };
   $$("#v-archive .folders, #v-archive .crumbs").forEach(box => box.onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; e.preventDefault();
     projFilter = c.dataset.p; localStorage.setItem("fb_proj", projFilter); RENDER.archive(); });
+  if ($("#fview")) $("#fview").onclick = e => { const b = e.target.closest("[data-fv]"); if (!b) return;
+    FVIEW = b.dataset.fv; localStorage.setItem("fb_fview", FVIEW); RENDER.archive(); };
   if ($("#newsub")) $("#newsub").onclick = () => projectDialog(null, sel);
   if ($("#newproj")) $("#newproj").onclick = () => projectDialog();
   if ($("#editproj")) $("#editproj").onclick = () => projectDialog(sel);
