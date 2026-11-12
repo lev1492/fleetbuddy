@@ -345,3 +345,10 @@ python -m app            # oppure: uvicorn app.main:app --reload
 ## Possibili sviluppi
 Inventario bobine (stile Spoolman) con scalo automatico dei grammi, gestione permessi multiutente,
 stampa da URL esterno (`external_url_print`, già nel client), backup automatico del database, esportazione CSV dello storico.
+
+## Marchio e caratteri
+
+Logo e icona Fabbrix® sono in `static/brand/` (il logo è una sagoma: il colore lo decide il tema, bianco sui temi
+scuri e scuro su quelli chiari). Il carattere Poppins è incluso in `static/fonts/` con la sua licenza
+(SIL Open Font License 1.1, `static/fonts/Poppins-OFL.txt`).
+

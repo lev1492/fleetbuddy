@@ -4,12 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Fabbrix Farm Manager</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧵</text></svg>">
+<link rel="icon" type="image/svg+xml" href="/static/brand/favicon.svg">
+<meta name="theme-color" content="#F4F4F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E0E0F" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <nav class="nav">
-  <div class="brand"><span class="spool" aria-hidden="true"></span><span class="bname"><b>Fabbrix</b><small>Farm Manager</small></span></div>
+  <div class="brand"><span class="logo" role="img" aria-label="Fabbrix"></span><small class="bsub">Farm Manager</small></div>
   <a href="#printers" data-view="printers"><span data-i18n="Stampanti">Stampanti</span></a>
   <a href="#queue" data-view="queue"><span data-i18n="Coda">Coda</span> <span class="badge" id="qbadge"></span></a>
   <a href="#production" data-view="production"><span data-i18n="Produzione">Produzione</span> <span class="badge" id="pbadge"></span></a>
@@ -41,7 +43,7 @@
 </main>
 <div id="login" hidden>
   <form class="logincard" id="loginform">
-    <div class="brand"><span class="spool" aria-hidden="true"></span><span class="bname"><b>Fabbrix</b><small>Farm Manager</small></span></div>
+    <div class="brand"><span class="logo" role="img" aria-label="Fabbrix"></span><small class="bsub">Farm Manager</small></div>
     <p id="loginintro" class="sub"></p>
     <label><span data-i18n="Nome utente">Nome utente</span><input name="username" autocomplete="username" required></label>
     <label><span data-i18n="Password">Password</span><input name="password" type="password" autocomplete="current-password" required></label>

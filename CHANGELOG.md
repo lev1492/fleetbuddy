@@ -3,6 +3,17 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.22.0] – 2026-11-12
+
+### Novità
+- Tema Fabbrix: logo Fabbrix con "Farm Manager" nella barra laterale e nella pagina di accesso; il logo è bianco
+  sui temi scuri e scuro su quelli chiari, in automatico. Colori del marchio: nero grafite e arancione Fabbrix
+  (#F9A420) nel tema scuro, bianco con arancione più profondo nel tema chiaro; verde per gli stati positivi
+  (connessa, nessun errore, completata), arancione per stampa in corso, navigazione e pulsanti principali.
+  Restano le scelte Automatico, Chiaro e Scuro, per ogni utente.
+- Carattere Poppins incluso nell'applicazione (funziona anche senza internet), icona della scheda del browser con la
+  "x" Fabbrix e colore della barra del browser sui telefoni.
+
 ## [0.21.1] – 2026-11-12
 
 ### Novità
