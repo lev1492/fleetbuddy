@@ -104,6 +104,15 @@ def need_admin(u: User):
         raise HTTPException(403, _("Operazione riservata agli amministratori"))
 
 
+def page_of(rows: list, paged: bool, limit: int, offset: int, **extra):
+    """Paginazione: con paged=1 restituisce solo la pagina richiesta e il totale; senza, l'elenco completo
+    (le altre parti dell'applicazione continuano a riceverlo come prima)."""
+    if not paged:
+        return rows
+    limit, offset = max(1, min(500, limit)), max(0, offset)
+    return {"items": rows[offset:offset + limit], "total": len(rows), "offset": offset, "limit": limit, **extra}
+
+
 def need(u: User, perm: str):
     """Il ruolo dell'utente deve avere questo permesso (l'amministratore li ha tutti)."""
     if not u.can(perm):
@@ -860,6 +869,8 @@ async def projects_edit(request: Request, pid: int, body: dict):
         if parent is not None and (parent == pid or parent in _descendants(_project_tree(), pid)):
             raise HTTPException(400, _("Una cartella non può essere spostata dentro sé stessa"))
         _can_manage_folder(u, parent)
+        if "name" not in body:
+            _check_name(row["name"], parent, exclude=pid)          # nessuna cartella con lo stesso nome nella destinazione
         S().db.x("UPDATE projects SET parent_id=? WHERE id=?", (parent, pid))
     if "name" in body:
         name = str(body["name"]).strip()[:60]
@@ -1035,14 +1046,20 @@ async def hms(model: str, code: str, kind: str = "hms"):
 
 # ====================================================================== archivio file
 @app.get("/api/files")
-async def files(request: Request, project: str | None = None):
+async def files(request: Request, project: str | None = None, paged: bool = False, limit: int = 50, offset: int = 0):
     u = U(request)
     rows = [f for f in S().db.files() if u.sees_project(f.get("project_id"))]
     if project == "none":
         rows = [f for f in rows if f.get("project_id") is None]
     elif project:
         rows = [f for f in rows if str(f.get("project_id")) == project]
-    return rows
+    return page_of(rows, paged, limit, offset)
+
+
+@app.get("/api/files/{fid}")
+async def file_one(request: Request, fid: int):
+    """Un solo file (es. per ristampare dallo storico, senza scaricare l'elenco completo)."""
+    return file_for(U(request), fid)
 
 
 @app.post("/api/files")
@@ -1154,7 +1171,7 @@ async def print_now(request: Request, body: dict):
 
 # ====================================================================== coda
 @app.get("/api/queue")
-async def queue_list(request: Request):
+async def queue_list(request: Request, paged: bool = False, limit: int = 50, offset: int = 0):
     u = U(request)
     rows = S().db.q("""SELECT q.*, f.filename, f.meta, f.project_id, g.name AS group_name, us.username AS created_by_name
                        FROM queue q LEFT JOIN files f ON f.id=q.file_id
@@ -1172,7 +1189,7 @@ async def queue_list(request: Request):
         r["weight_g"] = pl.get("weight_g", 0)
         r["filaments"] = pl.get("filaments", [])
         out.append(r)
-    return out
+    return page_of(out, paged, limit, offset)
 
 
 @app.post("/api/queue")
@@ -1246,13 +1263,24 @@ async def queue_pause(request: Request, body: dict):
 
 # ====================================================================== storico e statistiche
 @app.get("/api/jobs")
-async def jobs(request: Request, limit: int = 200, printer: str | None = None):
+async def jobs(request: Request, limit: int = 200, printer: str | None = None, paged: bool = False, offset: int = 0):
     u = U(request)
-    rows = S().db.q("""SELECT j.*, us.username AS started_by_name FROM jobs j LEFT JOIN users us ON us.id=j.started_by
-                       ORDER BY j.started_at DESC LIMIT ?""", (limit * 3 if not u.sees_all else limit,))
-    rows = [r for r in rows if u.sees_printer(r["printer_sn"]) and (not printer or r["printer_sn"] == printer)][:limit]
+    where, args = [], []
+    if not u.sees_all:                                    # solo le stampanti visibili all'utente
+        sns = sorted(u.printers) or ["-"]
+        where.append(f"j.printer_sn IN ({','.join('?' * len(sns))})"); args += sns
+    if printer:
+        where.append("j.printer_sn=?"); args.append(printer)
+    w = ("WHERE " + " AND ".join(where)) if where else ""
+    limit = max(1, min(500 if paged else 2000, limit)); offset = max(0, offset)
+    total = S().db.one(f"SELECT COUNT(*) AS n FROM jobs j {w}", tuple(args))["n"] if paged else 0
+    to_confirm = S().db.one(f"SELECT COUNT(*) AS n FROM jobs j {w} {'AND' if w else 'WHERE'} j.status='to_confirm'", tuple(args))["n"] if paged else 0
+    rows = S().db.q(f"""SELECT j.*, us.username AS started_by_name FROM jobs j LEFT JOIN users us ON us.id=j.started_by {w}
+                        ORDER BY j.started_at DESC LIMIT ? OFFSET ?""", (*args, limit, offset))
     fil = job_filaments([r["id"] for r in rows])
-    with_thumb = {f["id"] for f in S().db.q("SELECT id, meta FROM files") if '"has_thumb": true' in (f["meta"] or "")}
+    fids = sorted({r["file_id"] for r in rows if r.get("file_id")})
+    with_thumb = {f["id"] for f in (S().db.q(f"SELECT id, meta FROM files WHERE id IN ({','.join('?' * len(fids))})", tuple(fids)) if fids else [])
+                  if '"has_thumb": true' in (f["meta"] or "")}
     for r in rows:
         r["has_thumb"] = bool(r.get("thumb")) or (r.get("file_id") in with_thumb)
         plan = r.pop("filaments", None)
@@ -1269,6 +1297,8 @@ async def jobs(request: Request, limit: int = 200, printer: str | None = None):
                 mats = [{"type": m["type"], "color": m["color"], "brand": ""} for m in job_materials(S().printers[r["printer_sn"]])]
             seen = set()
             r["materials"] = [m for m in mats if not ((m["type"], m["color"]) in seen or seen.add((m["type"], m["color"])))]
+    if paged:
+        return {"items": rows, "total": total, "offset": offset, "limit": limit, "to_confirm": to_confirm}
     return rows
 
 

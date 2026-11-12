@@ -78,6 +78,36 @@ const fmtDate = ts => ts ? new Date(ts * 1000).toLocaleString(LOCALES[LANG], {da
 const dots = fils => `<span class="fdots">${(fils || []).map(f => `<i style="--c:${esc(f.color)}" title="${esc(f.type)}"></i>`).join("")}</span>`;
 const printerName = sn => (S.printers.find(p => p.sn === sn) || {}).name || sn || t("Qualsiasi");
 const projectOf = id => PROJECTS.find(p => p.id === id) || {name: t("Senza progetto"), color: "#8A949C"};
+// Paginazione (Storico, Files, Coda): il server invia solo la pagina richiesta; "per pagina" è ricordato per vista
+const PER_OPTS = [25, 50, 100, 200];
+const PAGES = {};
+const perPage = key => { const v = +localStorage.getItem("fb_pp_" + key); return PER_OPTS.includes(v) ? v : 50; };
+const pageQuery = key => `paged=1&limit=${perPage(key)}&offset=${((PAGES[key] || 1) - 1) * perPage(key)}`;
+// risposta del server → elementi della pagina; se la pagina non esiste più (es. dopo un'eliminazione) torna all'ultima
+async function fetchPage(key, url) {
+  let r = await api(url + (url.includes("?") ? "&" : "?") + pageQuery(key));
+  const last = Math.max(1, Math.ceil(r.total / perPage(key)));
+  if ((PAGES[key] || 1) > last) { PAGES[key] = last; r = await api(url + (url.includes("?") ? "&" : "?") + pageQuery(key)); }
+  return r;
+}
+function pagerHtml(key, total) {
+  const per = perPage(key), pages = Math.max(1, Math.ceil(total / per)), pg = Math.min(PAGES[key] || 1, pages);
+  if (total <= PER_OPTS[0] && per === 50) return "";
+  const a = total ? (pg - 1) * per + 1 : 0, b = Math.min(total, pg * per);
+  return `<div class="pager" data-pager="${key}"><span class="muted">${t("{a}–{b} di {n}", {a, b, n: total})}</span>
+    <label class="inline">${t("Per pagina")} <select data-pp>${PER_OPTS.map(v => `<option ${v === per ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+    <span class="grow"></span>${pages > 1 ? `<button type="button" data-pg="1" ${pg === 1 ? "disabled" : ""} title="${esc(t("Prima pagina"))}">«</button>
+    <button type="button" data-pg="${pg - 1}" ${pg === 1 ? "disabled" : ""} title="${esc(t("Pagina precedente"))}">‹</button>
+    <span class="pgn">${t("Pagina {p} di {n}", {p: pg, n: pages})}</span>
+    <button type="button" data-pg="${pg + 1}" ${pg === pages ? "disabled" : ""} title="${esc(t("Pagina successiva"))}">›</button>
+    <button type="button" data-pg="${pages}" ${pg === pages ? "disabled" : ""} title="${esc(t("Ultima pagina"))}">»</button>` : ""}</div>`;
+}
+function wirePager(root, key, rerender) {
+  root.querySelectorAll(`[data-pager="${key}"]`).forEach(box => {
+    box.onclick = e => { const b = e.target.closest("[data-pg]"); if (!b || b.disabled) return; PAGES[key] = +b.dataset.pg; rerender(); };
+    box.querySelector("[data-pp]").onchange = e => { localStorage.setItem("fb_pp_" + key, e.target.value); PAGES[key] = 1; rerender(); };
+  });
+}
 // Finestre di conferma e di richiesta testo dell'interfaccia, al posto delle finestre di avviso del browser.
 // Restituiscono una promessa: uiConfirm → true/false, uiPrompt → testo oppure null se annullato.
 function uiAsk({message, input = null, okLabel = "", danger = false}) {
@@ -762,7 +792,7 @@ RENDER.archive = async function renderArchive() {
         ${sel.id !== null && sel.depth > 0 ? `<nav class="crumbs">${PROJECTS.filter(x => x.id !== null && sel.path.slice(0, -1).length && isAncestor(x, sel)).map(x => `<a href="#" data-p="${x.id}">${esc(x.name)}</a>`).join(" › ")} ›</nav>` : ""}
         <h2 style="margin:0">${sel.id !== null && sel.depth > 0 ? "📁 " : ""}${esc(projName(sel))}</h2>${sel.id === null ? `<p>${t("Visibili solo agli amministratori")}</p>` : sel.description ? `<p>${esc(sel.description)}</p>` : ""}</div>
       ${sel.id !== null && can("files") ? `<div class="row">${canManage(sel.id) ? `<button id="newsub">＋ ${t("Nuova cartella")}</button>` : ""}
-        ${canManage(sel.parent_id) ? `<button id="editproj">${t("Modifica")}</button><button class="danger" id="delproj">${sel.depth > 0 ? t("Elimina cartella") : t("Elimina progetto")}</button>` : ""}</div>` : ""}</div>
+        ${canManage(sel.parent_id) ? `<button id="editproj">${t("Modifica")}</button><button id="moveproj">${t("Sposta")}</button><button class="danger" id="delproj">${sel.depth > 0 ? t("Elimina cartella") : t("Elimina progetto")}</button>` : ""}</div>` : ""}</div>
       ${sel.id !== null ? (() => { const subs = PROJECTS.filter(x => x.parent_id === sel.id);
         return subs.length ? `<div class="folders">${subs.map(x => `<button type="button" class="folder" data-p="${x.id}" style="--c:${esc(x.color)}"><span class="fic">📁</span><b>${esc(x.name)}</b>
           <small class="muted">${t("{n} file", {n: x.files_total})}${x.children ? " · " + t("{n} cartelle", {n: x.children}) : ""}</small></button>`).join("")}</div>` : ""; })() : ""}` : ""}
@@ -774,6 +804,7 @@ RENDER.archive = async function renderArchive() {
   if ($("#newsub")) $("#newsub").onclick = () => projectDialog(null, sel);
   if ($("#newproj")) $("#newproj").onclick = () => projectDialog();
   if ($("#editproj")) $("#editproj").onclick = () => projectDialog(sel);
+  if ($("#moveproj")) $("#moveproj").onclick = () => moveFolderDialog(sel);
   if ($("#delproj")) $("#delproj").onclick = async () => {
     const msg = sel.depth > 0 ? t("Eliminare la cartella \"{p}\"? I suoi file e le sue sottocartelle passano nella cartella superiore.", {p: sel.name})
       : t("Eliminare il progetto \"{p}\"? I suoi {n} file non vengono cancellati: diventano \"senza progetto\".", {p: sel.name, n: sel.files});
@@ -790,7 +821,9 @@ RENDER.archive = async function renderArchive() {
     drop.ondragleave = () => drop.classList.remove("over");
     drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); uploadFiles(e.dataTransfer.files, uploadPid); };
   }
-  const files = await api(`/api/files${projFilter ? "?project=" + projFilter : ""}`).catch(e => (toast(e.message, "error"), []));
+  if (PAGES._fproj !== projFilter) { PAGES._fproj = projFilter; PAGES.files = 1; }     // altra cartella: dalla prima pagina
+  const fp = await fetchPage("files", `/api/files${projFilter ? "?project=" + projFilter : ""}`).catch(e => (toast(e.message, "error"), {items: [], total: 0}));
+  const files = fp.items;
   $("#flist").innerHTML = files.length ? files.map(f => {
     const pl = f.meta.plates || [], p0 = pl[0] || {}, pr = projectOf(f.project_id);
     const canDel = isAdmin() || (can("files") && (seesAll() || f.uploaded_by === ME.id));
@@ -802,6 +835,13 @@ RENDER.archive = async function renderArchive() {
       <div class="a">${can("print") ? `<button class="primary" data-print>${t("Stampa")}</button>` : ""}${can("files") ? `<button data-move>${t("Sposta")}</button>` : ""}
         <a class="btn" href="/api/files/${f.id}/download">${t("Scarica")}</a>${canDel ? `<button class="danger" data-del>${t("Elimina")}</button>` : ""}</div></div>`;
   }).join("") : `<div class="empty">${PROJECTS.length || seesAll() ? t("Nessun file qui. Esporta dallo slicer con \"Esporta G-code del piatto\" e trascinalo nell'area qui sopra.") : t("Nessun progetto assegnato al tuo utente. Chiedi all'amministratore.")}</div>`;
+  $$("#v-archive .pager").forEach(x => x.remove());
+  if (fp.total) {
+    const ph = pagerHtml("files", fp.total);
+    $("#flist").insertAdjacentHTML("beforebegin", ph);
+    $("#flist").insertAdjacentHTML("afterend", ph);
+    wirePager($("#v-archive"), "files", () => RENDER.archive());
+  }
   $("#flist").onclick = async e => {
     const it = e.target.closest(".item"); if (!it) return;
     const f = files.find(x => x.id === +it.dataset.id);
@@ -841,6 +881,27 @@ function isAncestor(a, b) {
 }
 // si possono creare, modificare ed eliminare cartelle dentro questa? (i progetti principali solo dagli amministratori)
 const canManage = parentId => parentId == null ? isAdmin() : can("files");
+// Sposta una cartella (con le sue sottocartelle e i suoi file) dentro un'altra cartella o al primo livello
+function moveFolderDialog(p) {
+  const dests = PROJECTS.filter(x => x.id !== null && x.id !== p.id && !isAncestor(p, x) && canManage(x.id))
+    .sort((a, b) => projPath(a).localeCompare(projPath(b)));
+  const top = isAdmin() && p.parent_id != null;
+  openDialog(`<h3>${t("Sposta la cartella {p}", {p: esc(p.name)})}</h3>
+    <p class="sub" style="margin:0">${t("Le sottocartelle e i file vengono spostati insieme alla cartella.")}</p>
+    <label>${t("Destinazione")}<select name="dest">
+      ${top ? `<option value="">${t("Primo livello (diventa un progetto)")}</option>` : ""}
+      ${dests.map(x => `<option value="${x.id}" ${x.id === p.parent_id ? "selected" : ""}>${esc(projPath(x))}</option>`).join("")}</select></label>
+    <div class="dlgfoot"><button value="cancel">${t("Annulla")}</button><button class="primary" id="mvf">${t("Sposta")}</button></div>`);
+  if (!dests.length && !top) { $("#mvf").disabled = true; }
+  $("#mvf").onclick = async e => {
+    e.preventDefault();
+    const v = $("#dlgbody").dest.value, parent = v === "" ? null : +v;
+    if (parent === p.parent_id) { $("#dlg").close(); return; }
+    if (await act(() => api(`/api/projects/${p.id}`, {method: "PATCH", body: {parent_id: parent}}), t("Cartella spostata"))) {
+      $("#dlg").close(); RENDER.archive();               // ricarica anche l'elenco delle cartelle
+    }
+  };
+}
 function moveDialog(f) {
   const opts = PROJECTS.filter(p => p.id !== null || seesAll());
   openDialog(`<h3>${t("Sposta {f}", {f: esc(f.filename)})}</h3>
@@ -1003,7 +1064,8 @@ function needHtml(q) {
 }
 RENDER.queue = async function renderQueue() {
   const el = $("#v-queue");
-  const items = await api("/api/queue").catch(e => (toast(e.message, "error"), []));
+  const qp = await fetchPage("queue", "/api/queue").catch(e => (toast(e.message, "error"), {items: [], total: 0}));
+  const items = qp.items;
   const dest = q => q.printer_sn ? esc(printerName(q.printer_sn)) : q.group_name ? t("gruppo {g}", {g: esc(q.group_name)}) : t("qualsiasi stampante");
   el.innerHTML = `<div class="head"><div><h1>${t("Coda di stampa")}</h1><p class="sub">${t("Le stampe partono da sole quando la stampante è inattiva ed escono dalla coda appena iniziano (restano nello storico). Dopo ogni stampa conferma \"Segna il piatto come liberato\" sulla scheda della stampante.")}</p></div>
     <button id="qpause" class="admin-only ${S.queue_paused ? "primary" : ""}">${S.queue_paused ? t("Riprendi la coda") : t("Metti in pausa la coda")}</button></div>
@@ -1016,6 +1078,12 @@ RENDER.queue = async function renderQueue() {
       <div class="a operator-only">${q.status === "queued" ? `<button data-mv="up" aria-label="${esc(t("Sposta su"))}">↑</button><button data-mv="down" aria-label="${esc(t("Sposta giù"))}">↓</button>` : ""}
         ${q.status === "error" ? `<button data-retry>${t("Riprova")}</button>` : ""}<button class="danger" data-del>${t("Rimuovi")}</button></div></div>`).join("")
       : `<div class="empty">${t("La coda è vuota. Dall'Archivio scegli \"Stampa\" e poi \"Aggiungi in coda\".")}</div>`}</div>`;
+  if (qp.total) {
+    const ph = pagerHtml("queue", qp.total);
+    el.querySelector(".list").insertAdjacentHTML("beforebegin", ph);
+    el.insertAdjacentHTML("beforeend", ph);
+    wirePager(el, "queue", () => RENDER.queue());
+  }
   $("#qpause").onclick = async () => { await act(() => api("/api/queue/pause", {method: "POST", body: {paused: !S.queue_paused}})); S.queue_paused = !S.queue_paused; RENDER.queue(); };
   el.querySelector(".list").onclick = async e => {
     const it = e.target.closest(".item"); if (!it) return; const id = it.dataset.id; const b = e.target.closest("button"); if (!b) return;
@@ -1029,8 +1097,8 @@ RENDER.queue = async function renderQueue() {
 // ------------------------------------------------------------------ storico
 RENDER.history = async function renderHistory() {
   const el = $("#v-history");
-  const jobs = await api("/api/jobs?limit=300").catch(e => (toast(e.message, "error"), []));
-  const toConfirm = jobs.filter(j => j.status === "to_confirm").length;
+  const pg = await fetchPage("history", "/api/jobs").catch(e => (toast(e.message, "error"), {items: [], total: 0, to_confirm: 0}));
+  const jobs = pg.items, toConfirm = pg.to_confirm;
   el.innerHTML = `<div class="head"><div><h1>${t("Storico")}</h1><p class="sub">${t("Ogni stampa vista dal Hub, anche quelle avviate da Bambu Studio o dalla stampante.")}</p></div></div>` +
     (toConfirm ? `<div class="pwait"><b>${t("{n} stampe da confermare", {n: toConfirm})}</b><span class="small">${t("La stampante era offline quando il tempo di stampa è scaduto: indica se la stampa è riuscita (il consumo previsto va nelle statistiche) o fallita (conta solo il fallimento).")}</span></div>` : "") +
     (jobs.length ? `<div class="tablewrap"><table><thead><tr><th></th><th>${t("Avvio")}</th><th>${t("Stampante")}</th><th>${t("Lavoro")}</th><th>${t("Utente")}</th><th>${t("Durata")}</th><th>${t("Filamento")}</th><th>${t("Esito")}</th><th></th></tr></thead><tbody>
@@ -1044,13 +1112,19 @@ RENDER.history = async function renderHistory() {
       <td style="white-space:nowrap">${j.status === "to_confirm" && can("confirm") ? `<button class="ok" data-outcome="finished" title="${esc(t("Il consumo previsto va nelle statistiche"))}">✓ ${t("Riuscita")}</button>
         <button class="danger" data-outcome="failed" title="${esc(t("Conta come fallimento, senza consumo"))}">✗ ${t("Fallita")}</button> ` : ""}${j.file_id && can("print") ? `<button data-reprint>${t("Ristampa")}</button>` : ""} ${can("history") ? `<button class="danger" data-del aria-label="${esc(t("Elimina"))}">✕</button>` : ""}</td></tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">${t("Ancora nessuna stampa registrata.")}</div>`);
+  if (pg.total) {            // paginazione sopra e sotto la tabella
+    const ph = pagerHtml("history", pg.total);
+    (el.querySelector(".tablewrap") || el.lastElementChild).insertAdjacentHTML("beforebegin", ph);
+    el.insertAdjacentHTML("beforeend", ph);
+    wirePager(el, "history", () => RENDER.history());
+  }
   el.onclick = async e => {
     const tr = e.target.closest("tr"); if (!tr) return;
     if (e.target.classList.contains("snap")) { openDialog(`<img src="${e.target.src}" alt="" style="width:100%;border-radius:8px"><div class="dlgfoot"><button value="ok">${t("Chiudi")}</button></div>`); return; }
     const oc = e.target.closest("[data-outcome]");
     if (oc) { if (await act(() => api(`/api/jobs/${tr.dataset.id}/outcome`, {method: "POST", body: {outcome: oc.dataset.outcome}}), t("Esito registrato"))) RENDER.history(); return; }
     if (e.target.closest("[data-del]") && await uiConfirm(t("Eliminare questa voce dallo storico?"), {danger: true})) { await act(() => api(`/api/jobs/${tr.dataset.id}`, {method: "DELETE"})); RENDER.history(); }
-    if (e.target.closest("[data-reprint]")) { const f = (await api("/api/files")).find(x => x.id === +tr.dataset.file); f ? printDialog(f) : toast(t("Il file non è più in archivio o non hai accesso al suo progetto"), "error"); }
+    if (e.target.closest("[data-reprint]")) { const f = await api(`/api/files/${+tr.dataset.file}`).catch(() => null); f ? printDialog(f) : toast(t("Il file non è più in archivio o non hai accesso al suo progetto"), "error"); }
   };
 };
 

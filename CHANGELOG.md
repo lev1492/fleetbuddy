@@ -3,6 +3,20 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.24.0] – 2026-11-12
+
+### Novità
+- Files: le cartelle e le sottocartelle si possono spostare (pulsante "Sposta" nella cartella aperta), con le loro
+  sottocartelle e i loro file, dentro un'altra cartella o al primo livello (solo amministratori). Non è possibile
+  spostare una cartella dentro una sua sottocartella né dove esiste già una cartella con lo stesso nome.
+- Paginazione in Storico, Files e Coda: il server invia solo la pagina richiesta; "Per pagina" (25, 50, 100, 200)
+  è ricordato per ogni pagina, con i pulsanti per prima, precedente, successiva e ultima pagina. Nello Storico le
+  stampe da confermare sono contate su tutto lo storico.
+
+### Prestazioni
+- Lo Storico non legge più i dati di tutti i file dell'archivio a ogni apertura, ma solo quelli delle stampe della
+  pagina; "Ristampa" carica solo il file interessato invece dell'elenco completo.
+
 ## [0.23.1] – 2026-11-12
 
 ### Modifiche
