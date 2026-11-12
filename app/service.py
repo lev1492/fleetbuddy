@@ -1271,12 +1271,13 @@ class Service:
                 if not p or sn in busy or not is_ready(p) or self._cooldown.get(sn, 0) > time.time() \
                         or self.has_pending(sn):
                     continue
-                if (f["meta"].get("kind") == "gcode") != (sn in self.direct):
-                    continue   # .gcode.3mf solo alle Bambu, .gcode solo alle stampanti dirette
-                if sn in self.direct and not self.direct[sn].caps.get("upload", True):
-                    continue   # stampante che non accetta file dalla rete (es. Raise3D)
-                if f["meta"].get("format") == "ufp" and not (sn in self.direct and self.direct[sn].caps.get("ufp")):
-                    continue   # i .ufp solo alle UltiMaker
+                ok, why = production.check(self, f, sn)
+                if not ok:
+                    # tipo di file, modello per cui è stato preparato, ugello: stesso controllo di Produzione e finestra di stampa
+                    if it["printer_sn"]:
+                        self.db.x("UPDATE queue SET status='error', message=? WHERE id=?",
+                                  (qmsg("non compatibile con {printer}: {reason}", printer=p["name"], reason=production.reason_text(why)), it["id"]))
+                    continue
                 raw = json.loads(it["mapping"]) if it["mapping"] else None
                 slots, _w = ([], []) if sn in self.direct else resolve_slots(raw, pl["filaments"] if pl else [], p)
                 if slots is None:

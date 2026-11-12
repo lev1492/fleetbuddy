@@ -1058,6 +1058,23 @@ async def files(request: Request, project: str | None = None, paged: bool = Fals
     return page_of(rows, paged, limit, offset)
 
 
+@app.get("/api/files/{fid}/targets")
+async def file_targets(request: Request, fid: int):
+    """Stampanti visibili all'utente con la compatibilità del file (modello, ugello, tipo di file) e lo stato."""
+    u = U(request)
+    f = file_for(u, fid)
+    out = []
+    for p in S().printers.values():
+        if not u.sees_printer(p["sn"]):
+            continue
+        ok, why = production.check(S(), f, p["sn"])
+        out.append({"sn": p["sn"], "name": p["name"], "state": p["state"], "online": p["online"], "model": p.get("model"),
+                    "ready": bool(p["online"] and production.is_ready(p) and not S().has_pending(p["sn"])),
+                    "compatible": ok, "reason": why})
+    model, _ = production.file_printer(S(), f)
+    return {"printers": sorted(out, key=lambda x: x["name"].lower()), "file_model": model.replace("Bambu Lab ", "")}
+
+
 @app.get("/api/files/{fid}")
 async def file_one(request: Request, fid: int):
     """Un solo file (es. per ristampare dallo storico, senza scaricare l'elenco completo)."""

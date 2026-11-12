@@ -12,6 +12,8 @@ ordine: il piano slitta di conseguenza.
 from __future__ import annotations
 
 import json
+import re
+import zipfile
 import logging
 import time
 
@@ -55,16 +57,73 @@ def _msg(key: str, **params) -> str:
 
 
 # ---------------------------------------------------------------------- compatibilità e durate
-def compatible(svc, f: dict, sn: str) -> bool:
-    """Il file può andare su questa stampante? .gcode.3mf → Bambu; .gcode/.bgcode → dirette che accettano file;
-    .ufp → solo UltiMaker."""
+def _norm_model(name: str) -> str:
+    """Nome di modello confrontabile: "Bambu Lab H2D Pro" → "H2DPRO", "X1 Carbon" → "X1C"."""
+    n = re.sub(r"[^A-Z0-9]", "", (name or "").upper().replace("BAMBU LAB", ""))
+    return {"X1CARBON": "X1C", "BAMBULABX1CARBON": "X1C"}.get(n, n)
+
+
+def file_printer(svc, f: dict) -> tuple[str, list[float]]:
+    """Modello di stampante e diametri degli ugelli per cui il file è stato preparato (dalle impostazioni del
+    progetto Bambu Studio / OrcaSlicer nel 3mf). Letti una volta dal file e memorizzati nei suoi dati."""
+    meta = f.get("meta") or {}
+    if "printer_model" not in meta and meta.get("kind") != "gcode":
+        model, noz = "", []
+        try:
+            with zipfile.ZipFile(svc.cfg.path(f["path"])) as z:
+                if "Metadata/project_settings.config" in z.namelist():
+                    ps = json.loads(z.read("Metadata/project_settings.config"))
+                    model = str(ps.get("printer_model") or "")
+                    nd = ps.get("nozzle_diameter") or []
+                    noz = [float(x) for x in (nd if isinstance(nd, list) else [nd]) if str(x).strip()]
+        except Exception:  # noqa: BLE001 - file illeggibile o senza impostazioni: compatibilità non verificabile
+            pass
+        meta["printer_model"], meta["nozzle_diameters_list"] = model, noz
+        f["meta"] = meta
+        if f.get("id"):
+            svc.db.x("UPDATE files SET meta=? WHERE id=?", (json.dumps(meta), f["id"]))
+    return meta.get("printer_model") or "", meta.get("nozzle_diameters_list") or []
+
+
+def check(svc, f: dict, sn: str) -> tuple[bool, str]:
+    """Il file può andare su questa stampante? (sì/no, motivo). Tipo di file (.gcode.3mf → Bambu; .gcode/.bgcode →
+    stampanti dirette che accettano file; .ufp → UltiMaker), modello per cui è stato preparato, diametro dell'ugello."""
     kind, fmt = f["meta"].get("kind"), f["meta"].get("format")
     c = svc.direct.get(sn)
     if kind != "gcode":
-        return c is None
-    if c is None or not c.caps.get("upload", True):
-        return False
-    return fmt != "ufp" or bool(c.caps.get("ufp"))
+        if c is not None:
+            return False, N_("file per stampanti Bambu Lab")
+        p = svc.printers.get(sn) or {}
+        model, noz = file_printer(svc, f)
+        pm = p.get("model") or ""
+        if model and pm and _norm_model(model) != _norm_model(pm):
+            return False, _msg("preparato per {model}", model=model.replace("Bambu Lab ", ""))
+        have = {round(float(n["diameter"]), 2) for n in p.get("nozzles") or [] if n.get("diameter")}
+        need = {round(x, 2) for x in noz}
+        if need and have and not (need & have):
+            return False, _msg("ugello {have} mm, il file richiede {need} mm",
+                               have=" / ".join(f"{x:g}" for x in sorted(have)), need=" / ".join(f"{x:g}" for x in sorted(need)))
+        return True, ""
+    if c is None:
+        return False, N_("file per stampanti Klipper, Duet, PrusaLink…")
+    if not c.caps.get("upload", True):
+        return False, N_("la stampante non accetta file dalla rete")
+    if fmt == "ufp" and not c.caps.get("ufp"):
+        return False, N_("file .ufp: solo UltiMaker")
+    return True, ""
+
+
+def reason_text(why: str) -> str:
+    """Motivo di incompatibilità come testo (per i messaggi della coda)."""
+    try:
+        d = json.loads(why)
+        return d["msg"].format(**d.get("params", {}))
+    except (ValueError, TypeError, KeyError):
+        return why
+
+
+def compatible(svc, f: dict, sn: str) -> bool:
+    return check(svc, f, sn)[0]
 
 
 def plate_of(f: dict, plate: int) -> dict:

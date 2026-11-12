@@ -3,6 +3,23 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.25.0] – 2026-11-12
+
+### Novità
+- Stampa dai Files: la destinazione mostra solo le stampanti compatibili con il file, divise in "Pronte" e
+  "Compatibili, occupate (solo coda)"; le stampanti non compatibili non compaiono, e una riga ne indica il numero e
+  il motivo per ciascuna (es. "preparato per H2D", "ugello 0.4 mm, il file richiede 0.6 mm"). I gruppi compaiono
+  solo se contengono stampanti compatibili. Se nessuna stampante della flotta è compatibile, la stampa e la coda
+  sono disattivate.
+- Compatibilità: oltre al tipo di file si controllano il modello per cui il 3mf è stato preparato (impostazioni del
+  progetto di Bambu Studio / OrcaSlicer) e il diametro dell'ugello. Il dato viene letto dal file la prima volta e
+  memorizzato.
+
+### Correzioni
+- Coda: le stampe per "qualsiasi stampante libera" o per un gruppo potevano essere inviate a una stampante di un
+  altro modello (es. un file per H2D a una X1E). Ora coda, Produzione e finestra di stampa usano lo stesso controllo;
+  una stampa in coda per una stampante incompatibile viene fermata con il motivo invece di essere inviata.
+
 ## [0.24.2] – 2026-11-12
 
 ### Modifiche

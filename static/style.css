@@ -617,6 +617,8 @@ a.iplink:hover{color:var(--done);text-decoration-color:currentColor}
 .folders.flist-rows .folder b{white-space:normal;overflow:visible}
 .folders.flist-rows .folder small{white-space:nowrap}
 
+.incomp{margin-top:6px}.incomp summary{cursor:pointer}.incomp ul{margin:6px 0 0;padding-left:18px;max-height:160px;overflow:auto}
+
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
 .gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}

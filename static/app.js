@@ -935,22 +935,38 @@ async function uploadFiles(list, pid) {
   RENDER.archive();
 }
 
+// motivo di incompatibilità dal server: frase semplice oppure {"msg", "params"}
+const reasonText = r => { try { const d = JSON.parse(r); return t(d.msg, d.params || {}); } catch { return t(r || ""); } };
 async function printDialog(f, presetPrinter) {
   const plates = f.meta.plates;
   const isG = f.meta.kind === "gcode";   // .gcode → stampanti dirette (Duet); .gcode.3mf → Bambu
-  const online = S.printers.filter(p => p.online && !!p.direct === isG && (p.caps || {}).upload !== false
-    && (f.meta.format !== "ufp" || (p.caps || {}).ufp));
-  const myGroups = GROUPS.filter(g => seesAll() || (g.printers.length && g.printers.every(sn => S.printers.some(p => p.sn === sn))));
+  // compatibilità decisa dal server (tipo di file, modello per cui è stato preparato, ugello): la stessa di coda e Produzione
+  const tg = await api(`/api/files/${f.id}/targets`).catch(() => null);
+  const info = sn => (tg ? tg.printers.find(x => x.sn === sn) : null);
+  const comp = tg ? tg.printers.filter(x => x.compatible && x.online) : S.printers.filter(p => p.online && !!p.direct === isG);
+  const ready = comp.filter(x => x.ready), busy = comp.filter(x => !x.ready);
+  const incompatible = tg ? tg.printers.filter(x => !x.compatible) : [];
+  const compSet = new Set((tg ? tg.printers.filter(x => x.compatible) : comp).map(x => x.sn));
+  const myGroups = GROUPS.filter(g => (seesAll() || (g.printers.length && g.printers.every(sn => S.printers.some(p => p.sn === sn))))
+    && g.printers.some(sn => compSet.has(sn)));
+  const pname = sn => (S.printers.find(p => p.sn === sn) || {}).name || sn;
   openDialog(`<h3>${t("Stampa {f}", {f: esc(f.filename)})}</h3>
     <div class="printhead"><img class="platethumb" id="platethumb" alt="${esc(t("Anteprima del piatto"))}" src="/api/files/${f.id}/thumb/${plates[0].index}">
     <div class="printinfo"><div class="row">
       ${plates.length > 1 ? `<label>${t("Piatto")}<select name="plate">${plates.map(p => `<option value="${p.index}">${t("Piatto {n}", {n: p.index})} · ${fmtDur(p.prediction_s)}</option>`).join("")}</select></label>` : `<input type="hidden" name="plate" value="${plates[0].index}">`}
       <label>${t("Destinazione")}<select name="dest">
         ${seesAll() ? `<option value="">${t("Qualsiasi stampante libera (solo coda)")}</option>` : ""}
-        ${myGroups.length ? `<optgroup label="${esc(t("Gruppi (solo coda)"))}">${myGroups.map(g => `<option value="g:${g.id}">${t("Gruppo {g}", {g: esc(g.name)})}</option>`).join("")}</optgroup>` : ""}
-        <optgroup label="${esc(t("Stampanti"))}">${online.map(p => `<option value="p:${p.sn}" ${p.sn === presetPrinter ? "selected" : ""}>${esc(p.name)} – ${stateName(p.state)}</option>`).join("")}</optgroup>
+        ${myGroups.length ? `<optgroup label="${esc(t("Gruppi (solo coda)"))}">${myGroups.map(g => `<option value="g:${g.id}">${t("Gruppo {g}", {g: esc(g.name)})} · ${t("{n} compatibili", {n: g.printers.filter(sn => compSet.has(sn)).length})}</option>`).join("")}</optgroup>` : ""}
+        ${ready.length ? `<optgroup label="${esc(t("Pronte"))}">${ready.map(p => `<option value="p:${p.sn}" ${p.sn === presetPrinter ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</optgroup>` : ""}
+        ${busy.length ? `<optgroup label="${esc(t("Compatibili, occupate (solo coda)"))}">${busy.map(p => `<option value="p:${p.sn}" ${p.sn === presetPrinter ? "selected" : ""}>${esc(p.name)} – ${stateName(p.state)}</option>`).join("")}</optgroup>` : ""}
       </select></label>
-    </div><div class="muted small" id="plateinfo"></div></div></div>
+    </div><div class="muted small" id="plateinfo"></div>
+    ${incompatible.length ? `<details class="incomp"><summary class="muted small">${t("{n} stampanti non compatibili non sono mostrate", {n: incompatible.length})}${tg.file_model ? " · " + t("file preparato per {m}", {m: esc(tg.file_model)}) : ""}</summary>
+      <ul class="small muted">${incompatible.map(x => `<li><b>${esc(x.name)}</b> – ${esc(reasonText(x.reason))}</li>`).join("")}</ul></details>` : ""}
+    ${!compSet.size ? `<p class="warn small" style="margin:6px 0 0">${t("Nessuna stampante della flotta è compatibile con questo file.")}</p>`
+      : !comp.length ? `<p class="warn small" style="margin:6px 0 0">${t("Nessuna stampante compatibile è online in questo momento: puoi solo mettere il file in coda.")}</p>` : ""}
+    ${presetPrinter && info(presetPrinter) && !info(presetPrinter).compatible ? `<p class="warn small" style="margin:6px 0 0">${t("{p} non è compatibile con questo file: {r}", {p: esc(pname(presetPrinter)), r: esc(reasonText(info(presetPrinter).reason))})}</p>` : ""}
+    </div></div>
     <div id="mapping"></div>
     <div class="warn" id="busynote"></div>
     <div class="row">
@@ -962,6 +978,7 @@ async function printDialog(f, presetPrinter) {
     </div>`);
   const fm = $("#dlgbody");
   let slots = null;
+  if (tg && !compSet.size) { $("#toqueue").disabled = true; $("#printnow").disabled = true; }   // nessuna stampante adatta
   const plateOf = () => plates.find(p => p.index === +fm.plate.value);
   const target = () => { const v = fm.dest.value; return {sn: v.startsWith("p:") ? v.slice(2) : null, gid: v.startsWith("g:") ? +v.slice(2) : null}; };
   async function remap() {
@@ -974,7 +991,7 @@ async function printDialog(f, presetPrinter) {
       : pr0.state === "FINISH" || pr0.state === "FAILED" ? t("{p} ha il piatto da liberare: la stampa partirà dalla coda dopo la conferma.", {p: esc(pr0.name)})
       : pr0.pending ? t("{p} sta già ricevendo una stampa: puoi solo aggiungerla alla sua coda.", {p: esc(pr0.name)})
       : t("{p} è occupata ({s}): puoi solo aggiungere la stampa alla sua coda.", {p: esc(pr0.name), s: stateName(pr0.state)});
-    if (!sn) { slots = null; $("#mapping").innerHTML = `<p class="sub" style="margin:0">${t("Filamenti richiesti: {list}.", {list: pl.filaments.map(x => esc(x.type)).join(", ")})} ${dots(pl.filaments)} ${gid ? t("La coda sceglierà la prima stampante libera del gruppo che li ha caricati.") : t("La coda sceglierà la prima stampante libera che li ha caricati.")}</p>`; return; }
+    if (!sn) { slots = null; $("#mapping").innerHTML = `<p class="sub" style="margin:0">${t("Filamenti richiesti: {list}.", {list: pl.filaments.map(x => esc(x.type)).join(", ")})} ${dots(pl.filaments)} ${gid ? t("La coda sceglierà la prima stampante libera del gruppo che li ha caricati.") : t("La coda sceglierà la prima stampante compatibile e libera che li ha caricati.")}</p>`; return; }
     if (isG) {   // G-code già preparato per la stampante: nessuno slot da scegliere
       slots = null;
       $("#mapping").innerHTML = `<p class="sub" style="margin:0">${t("Filamenti richiesti: {list}.", {list: pl.filaments.map(x => esc(x.type)).join(", ")})} ${dots(pl.filaments)}</p>`;
