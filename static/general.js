@@ -12,7 +12,6 @@ const POLL_LABELS = {5: "ogni 5 secondi (consigliato)", 10: "ogni 10 secondi", 1
 const GRACE_LABELS = {10: "10 secondi", 20: "20 secondi", 30: "30 secondi (consigliato)", 60: "1 minuto", 120: "2 minuti", 300: "5 minuti"};
 const REFRESH_LABELS = {5: "ogni 5 secondi", 10: "ogni 10 secondi", 15: "ogni 15 secondi", 30: "ogni 30 secondi"};
 const REFRESH_OPTS = Object.entries(REFRESH_LABELS).map(([v, l]) => [+v, l]);
-const THEMES = {auto: "Automatico (come il sistema)", light: "Chiaro", dark: "Scuro"};
 const weekdayName = d => new Date(2024, 0, 1 + d).toLocaleDateString(LOCALES[LANG], {weekday: "long"});   // 1/1/2024 = lunedì
 const regionName = code => { try { return new Intl.DisplayNames([LOCALES[LANG]], {type: "region"}).of(code) || code; } catch { return code; } };
 let GEN = null;
@@ -22,14 +21,9 @@ RENDER.general = async function renderGeneral() {
   try { GEN = await api("/api/settings/general"); GEN.users = (await api("/api/users").catch(() => [])).length; }
   catch (e) { el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const cfg = JSON.parse(JSON.stringify(GEN.calendar));
-  let theme = GEN.theme || "auto";
   const country = () => GEN.countries.find(c => c.code === cfg.country) || {subdivs: []};
   el.innerHTML = `<div class="head"><div><h1>${t("Amministrazione")}</h1></div></div>${adminTabs("general")}
     <div class="gen">
-      <section class="box"><h2>${t("Aspetto")} · ${t("tema predefinito")}</h2>
-        <div class="seg" id="gtheme">${Object.entries(THEMES).map(([k, l]) => `<button type="button" data-v="${k}" class="${k === theme ? "on" : ""}">${t(l)}</button>`).join("")}</div>
-        <p class="sub small">${t("Tema predefinito, per chi non ne ha scelto uno: ogni utente può scegliere il proprio tema per il suo account dal menu in basso a sinistra.")}</p></section>
-
       <section class="box"><h2>${t("Impostazioni")}</h2>
         <div class="row">
           <label>${t("Aggiornamento della camera aperta")}<select id="camref">${REFRESH_OPTS.map(([v, l]) => `<option value="${v}" ${v === Math.min(30, Math.max(5, S.settings.camera_refresh_s || 10)) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
@@ -127,8 +121,6 @@ RENDER.general = async function renderGeneral() {
   $("#grace").onchange = e => saveSetting({offline_grace_s: +e.target.value});
   $("#poll").onchange = e => saveSetting({poll_interval: +e.target.value});
   wireUpdateBox();
-  $("#gtheme").onclick = e => { const b = e.target.closest("[data-v]"); if (!b) return; theme = b.dataset.v;
-    $$("#gtheme button").forEach(x => x.classList.toggle("on", x === b)); applyTheme(theme); };
   $("#gmode").onchange = e => { cfg.mode = e.target.value; };
   $("#gcountry").onchange = e => {
     cfg.country = e.target.value; cfg.subdiv = "";
@@ -164,7 +156,7 @@ RENDER.general = async function renderGeneral() {
   };
   $("#gclos").onclick = e => { if (e.target.dataset.k !== "del") return; cfg.closures.splice(+e.target.closest("[data-i]").dataset.i, 1); drawClosures(); preview(); };
   $("#gsavebtn").onclick = async () => {
-    const r = await act(() => api("/api/settings/general", {method: "PUT", body: {calendar: cfg, theme}}), t("Impostazioni salvate"));
-    if (r) { GEN.calendar = r.calendar; S.settings = {...(S.settings || {}), theme}; }
+    const r = await act(() => api("/api/settings/general", {method: "PUT", body: {calendar: cfg}}), t("Impostazioni salvate"));
+    if (r) GEN.calendar = r.calendar;
   };
 };

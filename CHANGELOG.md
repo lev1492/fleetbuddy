@@ -3,6 +3,23 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.22.2] – 2026-11-12
+
+### Modifiche
+- Tema: ogni utente sceglie per il proprio account tra Automatico (segue il sistema operativo), Chiaro e Scuro;
+  chi non ha mai scelto usa Automatico. Tolti la voce "Predefinito" e il tema predefinito in Amministrazione →
+  Generali.
+
+## [0.22.1] – 2026-11-12
+
+### Modifiche
+- Scheda compatta: oltre allo stato sono sempre visibili i comandi (pausa, interrompi, velocità, file sulla
+  stampante, piatto liberato) e gli avvisi; la freccina mostra temperature, ventole, utensili, filamenti e gruppi.
+- Numero di serie, firmware, metodo di connessione e segnale Wi-Fi sono visibili solo agli amministratori; gli altri
+  utenti vedono "Connessa"/"Offline" e il numero di avvisi solo se ce ne sono.
+- Stampante offline: la scheda non mostra più l'errore tecnico di connessione (era indicato come "Ultimo invio
+  fallito"), già visibile in Amministrazione; le stampanti dirette risultano "Non raggiungibile" (non "dal Hub").
+
 ## [0.22.0] – 2026-11-12
 
 ### Novità

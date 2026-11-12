@@ -75,7 +75,8 @@ td .sw{display:inline-block;width:14px;height:14px;border-radius:50%;background:
 pre.raw{max-height:60vh;overflow:auto;background:var(--sunk);padding:12px;border-radius:var(--radius-sm);font-size:12px;margin:0}
 .camage{font-size:12px;color:var(--muted);padding:4px 16px 0}
 .cam img{width:100%;height:100%;object-fit:cover;display:block}
-.pc-body{padding:12px 16px 16px;display:flex;flex-direction:column;gap:12px;flex:1}
+.pc-body{padding:4px 16px 16px;display:flex;flex-direction:column;gap:12px;flex:1}
+.pc-ctrls{padding:12px 16px 0;display:flex;flex-direction:column;gap:12px}
 .task{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* barra di avanzamento a forma di filamento estruso */
 .strand{height:12px;border-radius:6px;background:repeating-linear-gradient(90deg,var(--line) 0 6px,transparent 6px 10px);position:relative}
@@ -249,7 +250,7 @@ legend{font-size:13px;font-weight:700;color:var(--muted);padding:0 4px}
 .bdg.off{color:var(--off)}
 .sec{display:flex;align-items:center;gap:10px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:0 16px}
 .sec::after{content:"";flex:1;height:1px;background:var(--line)}
-.pc-body .sec{padding:0}
+.pc-body .sec,.pc-ctrls .sec{padding:0}
 .statusbox{margin:8px 16px 0;display:flex;gap:12px;background:var(--sunk);border-radius:var(--radius-sm);padding:10px}
 .statusbox .cam{flex:0 0 132px;aspect-ratio:4/3;border:0;padding:0;border-radius:6px;overflow:hidden;background:var(--bg)}
 .st-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}

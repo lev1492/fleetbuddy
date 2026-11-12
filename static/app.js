@@ -133,7 +133,7 @@ async function boot() {
   if (s.app) { APP = s.app; UPDATE = s.update || null; showVersion(); }
   if (!s.user) { await setLang(detectLang(), false); return showLogin(s.setup_needed); }
   ME = s.user;
-  applyTheme();                                       // il tema dell'account vale da subito
+  applyTheme(); drawThemeSel();                       // il tema dell'account vale da subito
   await setLang(ME.language || detectLang(), !ME.language);
   document.body.classList.remove("locked");
   document.body.classList.toggle("is-admin", isAdmin());
@@ -197,16 +197,15 @@ $("#loginform").onsubmit = async e => {
   } catch (err) { $("#loginerr").textContent = err.message; }
 };
 $("#loginlang").onchange = async e => { await setLang(e.target.value, false); renderLoginTexts(); };
-// tema dell'utente: Predefinito (dell'amministratore), Automatico, Chiaro, Scuro
+// tema dell'utente, per il suo account: Automatico (segue il sistema operativo), Chiaro, Scuro
 function drawThemeSel() {
-  const def = {auto: t("Automatico"), light: t("Chiaro"), dark: t("Scuro")}[(S.settings && S.settings.theme) || "auto"];
   $("#metheme").title = t("Tema dell'interfaccia per il tuo account");
-  $("#metheme").innerHTML = [["", t("Predefinito ({t})", {t: def})], ["auto", t("Automatico")], ["light", t("Chiaro")], ["dark", t("Scuro")]]
-    .map(([v, l]) => `<option value="${v}" ${v === ((ME && ME.theme) || "") ? "selected" : ""}>${esc(l)}</option>`).join("");
+  $("#metheme").innerHTML = [["auto", t("Automatico")], ["light", t("Chiaro")], ["dark", t("Scuro")]]
+    .map(([v, l]) => `<option value="${v}" ${v === ((ME && ME.theme) || "auto") ? "selected" : ""}>${esc(l)}</option>`).join("");
 }
 $("#metheme").onchange = async e => {
   const th = e.target.value;
-  if (await act(() => api("/api/me", {method: "PATCH", body: {theme: th}}))) { ME.theme = th; applyTheme(S.settings && S.settings.theme); drawThemeSel(); }
+  if (await act(() => api("/api/me", {method: "PATCH", body: {theme: th}}))) { ME.theme = th; applyTheme(); drawThemeSel(); }
 };
 $("#melang").onchange = async e => { await setLang(e.target.value); $("#mename").textContent = `${ME.username} · ${roleName(ME.role)}`; drawThemeSel(); reRender(); };
 $("#logout").onclick = async () => { await api("/api/logout", {method: "POST"}).catch(() => {}); location.hash = ""; location.reload(); };
@@ -238,8 +237,9 @@ const adminTabs = active => !isAdmin() ? `<div class="tabs" role="tablist"><a hr
   <a href="#direct" role="tab" aria-selected="${active === "direct"}" class="${active === "direct" ? "on" : ""}">${t("Altre stampanti")}</a></div>`;
 // tema: automatico (sistema operativo), chiaro o scuro; ricordato anche per la pagina di accesso.
 // Vale quello scelto dall'utente per il suo account, altrimenti quello predefinito dall'amministratore.
-function applyTheme(th) {
-  th = (ME && ME.theme) || th || localStorage.getItem("fb_theme") || "auto";
+function applyTheme() {
+  // tema scelto dall'utente per il suo account (Automatico, Chiaro, Scuro); prima dell'accesso, l'ultimo usato qui
+  const th = ME ? (ME.theme || "auto") : (localStorage.getItem("fb_theme") || "auto");
   if (th === "auto") document.documentElement.removeAttribute("data-theme");
   else document.documentElement.dataset.theme = th;
   localStorage.setItem("fb_theme", th);
@@ -258,8 +258,8 @@ function connect() {
     if (m.kind === "state") {
       const oldRefresh = S.settings && S.settings.camera_refresh_s;
       S = m.data;
-      applyTheme(S.settings && S.settings.theme);
-      if ($("#metheme") && !$("#metheme").options.length) drawThemeSel();
+      applyTheme();
+
       const hs = $("#hubstate");
       const online = S.printers.filter(p => p.online).length, hubUsed = S.printers.some(p => !p.direct) || S.hub_ok || S.hub_error;
       hs.className = "hubstate " + (online === S.printers.length && (S.hub_ok || !hubUsed) ? "ok" : online ? "warn" : "ko");
@@ -309,16 +309,19 @@ function cardTop(p) {
   const diam = p.nozzles.length > 1 ? p.nozzles.map(n => n.diameter ? `${sideLetter(n.side)} ${n.diameter}` : "").filter(Boolean).join(" · ")
     : (n0.diameter ? `${n0.diameter} mm` : "");
   const alerts = (p.print_error ? 1 : 0) + p.hms.length;
+  const adm = isAdmin();             // numero di serie, firmware, collegamento e segnale: solo amministratori
   const badges = [
     `<span class="bdg ${p.online ? "ok" : "off"}">${p.online ? t("Connessa") : t("Offline")}</span>`,
+    !adm ? (alerts ? `<span class="bdg err">${t("{n} avvisi", {n: alerts})}</span>` : "") :
     p.direct ? `<span class="bdg">${esc(p.kind_label || p.kind)}${p.caps && p.caps.mode ? " · " + (p.caps.mode === "sbc" ? "SBC" : t("autonoma")) : ""}</span>` : "",
-    p.wifi ? `<span class="bdg">${esc(p.wifi)}</span>` : "",
-    `<span class="bdg ${alerts ? "err" : "ok"}">${alerts ? t("{n} avvisi", {n: alerts}) : t("Nessun errore")}</span>`,
-    p.firmware ? `<span class="bdg ${p.fw_min ? "warn" : ""}" title="${p.fw_min ? esc(t("Firmware {v} inferiore al minimo supportato dal Hub ({min}).", {v: p.firmware, min: p.fw_min})) : ""}">fw ${esc(p.firmware)}</span>` : "",
+    adm && p.wifi ? `<span class="bdg">${esc(p.wifi)}</span>` : "",
+    adm ? `<span class="bdg ${alerts ? "err" : "ok"}">${alerts ? t("{n} avvisi", {n: alerts}) : t("Nessun errore")}</span>` : "",
+    adm && p.firmware ? `<span class="bdg ${p.fw_min ? "warn" : ""}" title="${p.fw_min ? esc(t("Firmware {v} inferiore al minimo supportato dal Hub ({min}).", {v: p.firmware, min: p.fw_min})) : ""}">fw ${esc(p.firmware)}</span>` : "",
   ].join("");
   return `<div class="pc-title"><div class="pc-name">${esc(p.name)}</div>
-      <div class="pc-model">${esc([p.brand, p.printer_model || p.model].filter(Boolean).join(" "))}${diam ? " · " + esc(diam) : ""} · ${p.direct && p.web_url ? `<a class="iplink" href="${esc(p.web_url)}" target="_blank" rel="noopener noreferrer" title="${esc(t("Apri l'interfaccia web della stampante in una nuova scheda"))}">${esc((p.ip || "").replace(/\/.*$/, ""))}${EXT_ICON}</a>`
-        : esc(p.direct ? (p.ip || "").replace(/\/.*$/, "") : p.sn)}</div></div>
+      <div class="pc-model">${[esc([p.brand, p.printer_model || p.model].filter(Boolean).join(" ")), diam ? esc(diam) : "",
+        p.direct && p.web_url ? `<a class="iplink" href="${esc(p.web_url)}" target="_blank" rel="noopener noreferrer" title="${esc(t("Apri l'interfaccia web della stampante in una nuova scheda"))}">${esc((p.ip || "").replace(/\/.*$/, ""))}${EXT_ICON}</a>`
+          : p.direct ? esc((p.ip || "").replace(/\/.*$/, "")) : adm ? esc(p.sn) : ""].filter(Boolean).join(" · ")}</div></div>
     <div class="bdgs">${badges}</div>`;
 }
 function statusInfo(p) {
@@ -334,7 +337,7 @@ function statusInfo(p) {
     <div class="progrow"><div class="strand" style="${fc ? "--fc:" + fc : ""}"><i style="width:${showJob ? p.progress : 0}%"></i></div><b>${showJob ? p.progress + "%" : "—"}</b></div>
     <div class="muted small">${p.active ? t("mancano {d}", {d: fmtDur(p.remaining_min * 60)}) + (p.total_layers ? " · " + t("strato {a}/{b}", {a: p.layer, b: p.total_layers}) : "")
         + ((p.job_materials || []).length ? " · " + p.job_materials.map(m => `<span class="jm">${m.color ? `<i style="--c:${esc(m.color)}"></i>` : ""}${esc(m.type)}</span>`).join(", ") : "")
-      : p.online ? (done ? t("Conferma che il piatto è libero per la prossima stampa") : t("Pronta per una nuova stampa")) : t("Non raggiungibile dal Hub")}</div>
+      : p.online ? (done ? t("Conferma che il piatto è libero per la prossima stampa") : t("Pronta per una nuova stampa")) : p.direct ? t("Non raggiungibile") : t("Non raggiungibile dal Hub")}</div>
     ${p.pending ? `<div class="small ${p.pending.warned ? "warn" : "muted"}">${p.pending.warned ? t("La stampa {f} non è partita: controlla la stampante", {f: esc(p.pending.task)})
       : t("Comando inviato: in attesa che la stampante scarichi {f} e parta…", {f: esc(p.pending.task)})}</div>` : ""}
 ${next}`;
@@ -418,18 +421,22 @@ function cardBody(p) {
     .map(c => `<div class="alert">${c} ${esc(hmsDesc[p.model + c] || "")}</div>`).join("")
     + (p.alerts || []).map(a => `<div class="alert">${esc(a.msg ? t(a.msg, a.params || {}) : a.text)}</div>`).join("");
   const groups = GROUPS.filter(g => g.printers.includes(p.sn));
-  return `<div class="tiles">${tiles.join("")}</div>
-    ${fans.length ? `<div class="tiles fans">${fans.map(([k, l]) => `<div class="tile"><span>${l}</span><b>${f[k]}%</b></div>`).join("")}</div>` : ""}
-    ${done && canOperate() && (!p.direct || caps.bed_clean) ? `<button class="platebtn" data-opt="bed_clean">${t("Segna il piatto come liberato")}</button>` : ""}
+  // sempre visibili: piatto da liberare, comandi, avvisi (l'errore di connessione di una stampante offline no:
+  // è già in Amministrazione)
+  const ctrls = `${done && canOperate() && (!p.direct || caps.bed_clean) ? `<button class="platebtn" data-opt="bed_clean">${t("Segna il piatto come liberato")}</button>` : ""}
     <div class="sec">${t("Comandi")}</div>
     <div class="ctrls">${caps.remote_files && can("print") && p.online ? `<button type="button" data-remote>${t("File sulla stampante")}</button>` : ""}${direct ? (caps.speed ? `<button type="button" class="bdg edit" data-speed="${p.speed_pct}" ${canOperate() && p.online ? "" : "disabled"}>${t("Velocità")} · ${p.speed_pct}% ✎</button>`
       : `<span class="bdg">${t("Velocità")} · ${p.speed_pct}%</span>`)
       : `<span class="bdg">${t("Velocità")} · ${esc(t(SPEEDS[p.speed_lvl] || "—"))}</span>`}<span class="grow"></span>${btns.join("") || `<span class="muted small">${t("Nessun comando disponibile in questo stato")}</span>`}</div>
+    ${alerts ? `<div class="alerts">${alerts}</div>` : ""}
+    ${p.last_cmd_error && p.online ? `<div class="warn">${t("Ultimo invio fallito: {e}", {e: esc(p.last_cmd_error)})}</div>` : ""}`;
+  // dietro la freccina: temperature, ventole, utensili, filamenti, gruppi
+  const details = `<div class="tiles">${tiles.join("")}</div>
+    ${fans.length ? `<div class="tiles fans">${fans.map(([k, l]) => `<div class="tile"><span>${l}</span><b>${f[k]}%</b></div>`).join("")}</div>` : ""}
     ${direct && !p.trays.length ? "" : `<div class="sec">${t("Filamenti")}</div>
     ${filamentCards(p)}`}
-    ${alerts ? `<div class="alerts">${alerts}</div>` : ""}
-    ${p.last_cmd_error ? `<div class="warn">${t("Ultimo invio fallito: {e}", {e: esc(p.last_cmd_error)})}</div>` : ""}
     ${groups.length ? `<div>${groups.map(g => `<span class="tag" style="--c:${esc(g.color)}"><i></i>${esc(g.name)}</span>`).join(" ")}</div>` : ""}`;
+  return {ctrls, details};
 }
 // File nella memoria della stampante, per i tipi che non accettano caricamenti (es. Raise3D)
 async function remoteFilesDialog(p, folder) {
@@ -485,6 +492,7 @@ function createCard(p) {
         <button type="button" class="camicon" data-camview hidden title="${esc(t("Apri la camera"))}" aria-label="${esc(t("Apri la camera"))}">${CAM_ICON}</button></div>
       <div class="st-info"></div>
     </div>
+    <div class="pc-ctrls"></div>
     <button type="button" class="expand" data-expand aria-expanded="false" title="${esc(t("Mostra tutti i dettagli"))}"><span>▾</span></button>
     <div class="pc-body"></div>`;
   a.classList.toggle("compact", !EXPANDED_CARDS.has(p.sn));
@@ -527,7 +535,9 @@ function cardFor(p) {
   refreshCam(card);
   setHTML($(".pc-top", card), cardTop(p));
   setHTML($(".st-info", card), statusInfo(p));
-  setHTML($(".pc-body", card), cardBody(p));
+  const body = cardBody(p);
+  setHTML($(".pc-ctrls", card), body.ctrls);
+  setHTML($(".pc-body", card), body.details);
   return card;
 }
 const stateDot = p => `<i class="sdot ${!p.online ? "off" : p.active ? (p.state === "PAUSE" ? "pause" : "run") : ["FINISH", "FAILED"].includes(p.state) ? "warn" : "idle"}"></i>`;
