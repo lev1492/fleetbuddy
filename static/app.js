@@ -67,7 +67,9 @@ async function api(path, opts = {}) {
   return data;
 }
 function toast(text, level = "info") {
-  const el = document.createElement("div"); el.className = "toast " + level; el.textContent = text;
+  const el = document.createElement("div"); el.className = "toast " + level;
+  el.innerHTML = `<span class="ti" aria-hidden="true">${level === "ok" ? "✓" : level === "error" ? "!" : "i"}</span><span></span>`;
+  el.lastChild.textContent = text;
   $("#toasts").append(el); setTimeout(() => el.remove(), level === "error" ? 9000 : 4500);
 }
 async function act(fn, okMsg) { try { const r = await fn(); if (okMsg) toast(okMsg, "ok"); return r; } catch (e) { toast(e.message, "error"); } }
@@ -433,8 +435,8 @@ function cardBody(p) {
   // dietro la freccina: temperature, ventole, utensili, filamenti, gruppi
   const details = `<div class="tiles">${tiles.join("")}</div>
     ${fans.length ? `<div class="tiles fans">${fans.map(([k, l]) => `<div class="tile"><span>${l}</span><b>${f[k]}%</b></div>`).join("")}</div>` : ""}
-    ${direct && !p.trays.length ? "" : `<div class="sec">${t("Filamenti")}</div>
-    ${filamentCards(p)}`}
+    ${direct && !p.trays.length ? ((p.spools || []).length ? `<div class="sec">${t("Filamenti")}</div>${spoolsLine(p)}` : "") : `<div class="sec">${t("Filamenti")}</div>
+    ${filamentCards(p)}${typeof spoolsLine === "function" ? spoolsLine(p) : ""}`}
     ${groups.length ? `<div>${groups.map(g => `<span class="tag" style="--c:${esc(g.color)}"><i></i>${esc(g.name)}</span>`).join(" ")}</div>` : ""}`;
   return {ctrls, details};
 }
@@ -748,7 +750,7 @@ RENDER.archive = async function renderArchive() {
     : (sel ? t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti) nel progetto {p} oppure sceglilo dal computer", {p: `<b>${esc(projPath(sel))}</b>`})
       : uploadPid === null ? t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti), sarà senza progetto, oppure sceglilo dal computer")
       : t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti) nel progetto {p} oppure sceglilo dal computer", {p: `<b>${esc(PROJECTS[0].name)}</b>`}));
-  el.innerHTML = `<div class="head"><div><h1>${t("Archivio")}</h1><p class="sub">${t("I file sono organizzati in progetti. Ogni utente vede solo i progetti che l'amministratore gli ha assegnato.")}</p></div>
+  el.innerHTML = `<div class="head"><div><h1>${t("Files")}</h1><p class="sub">${t("I file sono organizzati in progetti. Ogni utente vede solo i progetti che l'amministratore gli ha assegnato.")}</p></div>
       <button class="admin-only primary" id="newproj">${t("Nuovo progetto")}</button></div>
     <div class="chips" id="pchips">
       <button class="chip ${projFilter ? "" : "on"}" data-p="">${t("Tutti")} <small>${PROJECTS.reduce((n, p) => n + (p.files || 0), 0)}</small></button>
@@ -816,7 +818,7 @@ function projectDialog(p, parent) {
   const moveOpts = p && isSub ? PROJECTS.filter(x => x.id !== null && x.id !== p.id && !isAncestor(p, x) && canManage(x.id)) : [];
   openDialog(`<h3>${title}</h3>
     <div class="row"><label style="flex:1">${t("Nome")}<input name="pname" value="${esc(p ? p.name : "")}" maxlength="60"></label>
-      <label>${t("Colore")}<input type="color" name="color" value="${esc(p ? p.color : parent ? parent.color : "#2B63C6")}"></label></div>
+      <label>${t("Colore")}<input type="color" name="color" value="${esc(p ? p.color : parent ? parent.color : "#B25D0D")}"></label></div>
     <label>${t("Descrizione")}<textarea name="description" rows="3" maxlength="500">${esc(p ? p.description : "")}</textarea></label>
     ${moveOpts.length ? `<label>${t("Si trova in")}<select name="parent">${moveOpts.map(x => `<option value="${x.id}" ${x.id === p.parent_id ? "selected" : ""}>${esc(projPath(x))}</option>`).join("")}</select></label>` : ""}
     <p class="sub" style="margin:0">${isSub ? t("Le cartelle sono visibili a chi ha accesso al progetto che le contiene.") : t("Dopo averlo creato, assegna il progetto agli utenti da Amministrazione → Utenti → Permessi.")}</p>
@@ -1003,7 +1005,7 @@ RENDER.queue = async function renderQueue() {
   const el = $("#v-queue");
   const items = await api("/api/queue").catch(e => (toast(e.message, "error"), []));
   const dest = q => q.printer_sn ? esc(printerName(q.printer_sn)) : q.group_name ? t("gruppo {g}", {g: esc(q.group_name)}) : t("qualsiasi stampante");
-  el.innerHTML = `<div class="head"><div><h1>${t("Coda di stampa")}</h1><p class="sub">${t("Le stampe partono da sole quando la stampante è inattiva ed escono dalla coda appena iniziano (restano nello storico). Dopo ogni stampa conferma \"Segna il piatto come liberato\" sulla scheda della stampante.")}</p></div>
+  el.innerHTML = `<div class="head"><div><h1>${t("Coda di Stampa")}</h1><p class="sub">${t("Le stampe partono da sole quando la stampante è inattiva ed escono dalla coda appena iniziano (restano nello storico). Dopo ogni stampa conferma \"Segna il piatto come liberato\" sulla scheda della stampante.")}</p></div>
     <button id="qpause" class="admin-only ${S.queue_paused ? "primary" : ""}">${S.queue_paused ? t("Riprendi la coda") : t("Metti in pausa la coda")}</button></div>
     <div class="list">${items.length ? items.map(q => `<div class="item" data-id="${q.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${q.file_id}/thumb/${q.plate}">
@@ -1653,7 +1655,7 @@ function accessDialog(u, groups, projs) {
 function groupDialog(g) {
   openDialog(`<h3>${g ? t("Modifica gruppo") : t("Nuovo gruppo")}</h3>
     <div class="row"><label style="flex:1">${t("Nome")}<input name="gname" value="${esc(g ? g.name : "")}" maxlength="40"></label>
-      <label>${t("Colore")}<input type="color" name="color" value="${esc(g ? g.color : "#0E7C6B")}"></label></div>
+      <label>${t("Colore")}<input type="color" name="color" value="${esc(g ? g.color : "#F9A420")}"></label></div>
     <fieldset><legend>${t("Stampanti del gruppo")}</legend><div class="checks">${S.printers.map(p =>
       `<label class="inline"><input type="checkbox" name="pr" value="${esc(p.sn)}" ${g && g.printers.includes(p.sn) ? "checked" : ""}> ${esc(p.name)} <small class="muted">${esc(p.model)}</small></label>`).join("") || t("Nessuna stampante collegata.")}</div></fieldset>
     <p class="sub" style="margin:0">${t("Una stampante può far parte di più gruppi.")}</p>

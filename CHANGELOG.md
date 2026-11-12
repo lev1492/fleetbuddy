@@ -3,6 +3,25 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.23.0] – 2026-11-12
+
+### Novità
+- Libreria Materiali (nuova voce di menu), sul modello di Spoolman: produttori, filamenti (materiale, colore,
+  diametro, densità, peso netto, prezzo, temperature, codice articolo) e bobine (peso iniziale, residuo, posizione,
+  lotto, prezzo, ultimo uso, archiviazione). Una bobina si assegna a uno slot di una stampante (AMS e slot per
+  Bambu Lab, utensile per le altre): il consumo di ogni stampa su quello slot, misurato o stimato, viene scalato
+  automaticamente; se il consumo di una stampa cambia (conferma dell'esito, correzioni) o la stampa viene eliminata
+  dallo storico, la bobina si riallinea. Pesata con la bilancia (peso lordo meno la bobina vuota) o residuo
+  inserito a mano, storico di ogni bobina, bobine quasi finite evidenziate, più bobine uguali in un colpo solo.
+  Le bobine assegnate compaiono anche nella scheda della stampante. Nuovo permesso "Libreria Materiali", aggiunto
+  ai ruoli Manager e Operatore.
+- Menu: "Coda" diventa "Coda di Stampa", "Archivio" diventa "Files".
+
+### Modifiche
+- Notifiche nello stile Fabbrix: pannello del tema con barra colorata e icona (informazione arancione, esito
+  positivo verde, errore rosso), al posto del riquadro pieno del tema precedente. Colori predefiniti di gruppi e
+  progetti allineati al marchio.
+
 ## [0.22.2] – 2026-11-12
 
 ### Modifiche

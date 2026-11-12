@@ -10,7 +10,7 @@ from pathlib import Path
 from . import notifier
 from .config import Config
 from .db import DB
-from . import production
+from . import materials, production
 from .connectors import DirectClient, make_client
 from .gcodemeta import is_gcode
 from .hub_client import FleetHubClient, HubError
@@ -150,6 +150,7 @@ class Service:
         self.db.x("DELETE FROM conn_events WHERE ts < ?", (time.time() - 30 * 86400,))
         # produzione: tabelle e riallineamento dei pezzi (dopo che tutto il resto è pronto)
         production.init(self.db)
+        materials.init(self.db)
         try:
             self._fix_offline_duplicates()          # dopo la creazione delle tabelle della produzione
         except Exception:  # noqa: BLE001 - una correzione dei dati non deve mai impedire l'avvio
@@ -341,6 +342,7 @@ class Service:
         if est["status"] == "to_confirm":
             grams = 0.0
             self.db.x("DELETE FROM job_filaments WHERE job_id=?", (est["id"],))
+            materials.sync_job(self.db, est["id"])
         else:
             grams = self._record_filaments(est, prog)
         self.db.update_job(est["id"], ended_at=end, status="unknown", progress=prog, filament_g=grams)
@@ -358,6 +360,7 @@ class Service:
             self.db.update_job(job_id, status="finished", progress=100, filament_g=grams, confirmed_by=who or "?")
         else:
             self.db.x("DELETE FROM job_filaments WHERE job_id=?", (job_id,))
+            materials.sync_job(self.db, job_id)
             self.db.update_job(job_id, status="failed", filament_g=0, confirmed_by=who or "?")
         production.on_job_closed(self, job_id, "finished" if outcome == "finished" else "failed", job["printer_name"] or "")
         log.info("%s: esito di %s confermato %s%s", job["printer_name"], job["task_name"], outcome, f" da {who}" if who else "")
@@ -428,6 +431,7 @@ class Service:
     def _reopen_job(self, job: dict, p: dict):
         self.db.update_job(job["id"], status="running", ended_at=None, estimated=0, error="")
         self.db.x("DELETE FROM job_filaments WHERE job_id=?", (job["id"],))
+        materials.sync_job(self.db, job["id"])
         self.db.x("UPDATE production_units SET status='printing', ended_at=NULL WHERE job_id=?", (job["id"],))
         self._open_jobs[p["sn"]] = self.db.one("SELECT * FROM jobs WHERE id=?", (job["id"],))
         log.info("%s: di nuovo online e ancora in stampa con %s: lavoro riaperto", p["name"], job["task_name"])
@@ -650,6 +654,8 @@ class Service:
             for u in self.db.q(f"SELECT id FROM production_units WHERE job_id IN ({ids})"):
                 self.db.x("UPDATE production_units SET status='pending', job_id=NULL, printer_sn=NULL WHERE id=?", (u["id"],))
             self.db.x(f"DELETE FROM job_filaments WHERE job_id IN ({ids})")
+            for jid in bad:
+                materials.sync_job(self.db, jid)
             self.db.x(f"DELETE FROM jobs WHERE id IN ({ids})")
             log.warning("Storico: eliminate %d copie errate di lavori creati mentre una stampante era offline", len(bad))
         self.db.set_setting("fix_offline_dup", True)
@@ -951,6 +957,7 @@ class Service:
         if status == "to_confirm":
             grams = 0.0                                       # il consumo si registra solo se l'esito è confermato riuscito
             self.db.x("DELETE FROM job_filaments WHERE job_id=?", (job["id"],))
+            materials.sync_job(self.db, job["id"])
         else:
             grams = self._record_filaments(job, progress if status != "finished" else 100, printer=p, measured=measured)
         snap = ""
@@ -981,6 +988,16 @@ class Service:
 
     def _record_filaments(self, job: dict, progress: float, printer: dict | None = None,
                           measured: list[dict] | None = None) -> float:
+        """Registra il consumo della stampa e lo scala dalle bobine assegnate (Libreria Materiali)."""
+        total = self._record_filaments_raw(job, progress, printer, measured)
+        try:
+            materials.sync_job(self.db, job["id"])
+        except Exception:  # noqa: BLE001 - l'inventario non deve mai bloccare la registrazione delle stampe
+            log.exception("Libreria Materiali: consumo della stampa %s non scalato", job.get("id"))
+        return total
+
+    def _record_filaments_raw(self, job: dict, progress: float, printer: dict | None = None,
+                              measured: list[dict] | None = None) -> float:
         """Registra il consumo per filamento: quello misurato dalla stampante se c'è (anche per le stampe fallite),
         altrimenti quello previsto, in proporzione all'avanzamento se la stampa non è finita."""
         factor = max(0.0, min(1.0, (progress or 0) / 100))
@@ -989,6 +1006,7 @@ class Service:
         except ValueError:
             plan = []
         self.db.x("DELETE FROM job_filaments WHERE job_id=?", (job["id"],))
+        materials.sync_job(self.db, job["id"])
         total = 0.0
         if measured:
             # tipo e colore dal piano, se la misura non li conosce (es. bilance INTAMSYS)

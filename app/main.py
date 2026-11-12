@@ -22,7 +22,7 @@ from .i18n import LANGS, _, current_lang, from_accept_language, normalize
 from .hub_client import HubError
 from .printers import FILAMENT_PRESETS, auto_map, firmware_below_min, is_ready
 from .service import Service, qmsg
-from . import production
+from . import materials, production
 from .connectors import KINDS, make_client
 from .gcodemeta import is_gcode, parse_gcode, thumbnail_png
 from .threemf import md5_file, parse_3mf, thumbnail
@@ -193,6 +193,12 @@ def job_materials(p: dict) -> list[dict]:
 def state_for(u: User) -> dict:
     st = S().snapshot_state()
     st["printers"] = [dict(p) for p in st["printers"] if u.sees_printer(p["sn"])]   # copie: i dati aggiunti sono per utente
+    try:
+        spools = materials.assigned(S().db)
+        for p in st["printers"]:
+            p["spools"] = spools.get(p["sn"], [])
+    except Exception:  # noqa: BLE001 - l'inventario non deve bloccare lo stato delle stampanti
+        pass
     if not u.sees_all:
         rows = [r for r in S().db.q("SELECT q.printer_sn, q.group_id, q.copies, f.project_id FROM queue q LEFT JOIN files f "
                                     "ON f.id=q.file_id WHERE q.status='queued'") if queue_visible(u, r)]
@@ -554,6 +560,95 @@ async def users_access(request: Request, uid: int, body: dict):
     return {"ok": True}
 
 
+# ====================================================================== Libreria Materiali
+@app.get("/api/materials")
+async def materials_list(request: Request):
+    U(request)
+    return materials.library(S().db)
+
+
+def _mat_call(fn, *a):
+    try:
+        return fn(S().db, *a)
+    except ValueError as e:
+        raise HTTPException(400, _(str(e)))
+
+
+@app.post("/api/materials/{kind}")
+async def materials_add(request: Request, kind: str, body: dict):
+    need(U(request), "materials")
+    fn = {"vendors": materials.save_vendor, "filaments": materials.save_filament, "spools": materials.save_spool}.get(kind)
+    if not fn:
+        raise HTTPException(404)
+    if kind == "spools" and int(body.get("count") or 1) > 1:       # più bobine uguali in un colpo solo
+        return {"ids": [_mat_call(fn, body) for _ in range(min(50, int(body["count"])))]}
+    return {"id": _mat_call(fn, body)}
+
+
+@app.put("/api/materials/{kind}/{oid}")
+async def materials_edit(request: Request, kind: str, oid: int, body: dict):
+    need(U(request), "materials")
+    fn = {"vendors": materials.save_vendor, "filaments": materials.save_filament, "spools": materials.save_spool}.get(kind)
+    if not fn:
+        raise HTTPException(404)
+    return {"id": _mat_call(fn, body, oid)}
+
+
+@app.delete("/api/materials/{kind}/{oid}")
+async def materials_delete(request: Request, kind: str, oid: int):
+    need(U(request), "materials")
+    db = S().db
+    if kind == "vendors":
+        if db.one("SELECT 1 FROM mat_filaments WHERE vendor_id=?", (oid,)):
+            raise HTTPException(409, _("Ci sono filamenti di questo produttore: eliminali o spostali prima"))
+        db.x("DELETE FROM mat_vendors WHERE id=?", (oid,))
+    elif kind == "filaments":
+        if db.one("SELECT 1 FROM mat_spools WHERE filament_id=?", (oid,)):
+            raise HTTPException(409, _("Ci sono bobine di questo filamento: eliminale prima, oppure archiviale"))
+        db.x("DELETE FROM mat_filaments WHERE id=?", (oid,))
+    elif kind == "spools":
+        db.x("DELETE FROM mat_usage WHERE spool_id=?", (oid,))
+        db.x("DELETE FROM mat_spools WHERE id=?", (oid,))
+    else:
+        raise HTTPException(404)
+    return {"ok": True}
+
+
+@app.post("/api/materials/spools/{sid}/assign")
+async def materials_assign(request: Request, sid: int, body: dict):
+    u = U(request)
+    need(u, "materials")
+    sn = body.get("printer_sn") or None
+    if sn:
+        printer_for(u, sn)
+    materials.assign(S().db, sid, sn, body.get("ams_id"), body.get("slot_id"), body.get("label", ""))
+    return {"ok": True}
+
+
+@app.post("/api/materials/spools/{sid}/weigh")
+async def materials_weigh(request: Request, sid: int, body: dict):
+    need(U(request), "materials")
+    g = body.get("gross"); r = body.get("remaining")
+    _mat_call(materials.weigh, sid, float(g) if g not in (None, "") else None, float(r) if r not in (None, "") else None)
+    return {"ok": True}
+
+
+@app.post("/api/materials/spools/{sid}/archive")
+async def materials_archive(request: Request, sid: int, body: dict):
+    need(U(request), "materials")
+    arch = bool(body.get("archived", True))
+    S().db.x("UPDATE mat_spools SET archived=? WHERE id=?", (1 if arch else 0, sid))
+    if arch:
+        materials.assign(S().db, sid, None)
+    return {"ok": True}
+
+
+@app.get("/api/materials/spools/{sid}/usage")
+async def materials_usage(request: Request, sid: int):
+    U(request)
+    return materials.usage(S().db, sid)
+
+
 # ====================================================================== ruoli (solo amministratore)
 @app.get("/api/roles")
 async def roles_list(request: Request):
@@ -639,7 +734,7 @@ async def groups_add(request: Request, body: dict):
         raise HTTPException(400, _("Dai un nome al gruppo"))
     if S().db.one("SELECT 1 FROM printer_groups WHERE name=?", (name,)):
         raise HTTPException(409, _("Esiste già un gruppo con questo nome"))
-    gid = S().db.x("INSERT INTO printer_groups(name, color) VALUES(?,?)", (name, body.get("color") or "#0E7C6B"))
+    gid = S().db.x("INSERT INTO printer_groups(name, color) VALUES(?,?)", (name, body.get("color") or "#F9A420"))
     for sn in body.get("printers") or []:
         S().db.x("INSERT OR IGNORE INTO group_printers VALUES(?,?)", (gid, sn))
     return {"id": gid}
@@ -748,7 +843,7 @@ async def projects_add(request: Request, body: dict):
     if not color and parent is not None:                 # le sottocartelle prendono il colore del progetto
         color = (S().db.one("SELECT color FROM projects WHERE id=?", (parent,)) or {}).get("color")
     pid = S().db.x("INSERT INTO projects(name, description, color, created_at, created_by, parent_id) VALUES(?,?,?,?,?,?)",
-                   (name, str(body.get("description", ""))[:500], color or "#2B63C6", time.time(), u.id, parent))
+                   (name, str(body.get("description", ""))[:500], color or "#B25D0D", time.time(), u.id, parent))
     return {"id": pid}
 
 
@@ -1205,6 +1300,7 @@ async def job_delete(request: Request, jid: int):
     if j and j["snapshot"]:
         (cfg.data_path / j["snapshot"]).unlink(missing_ok=True)
     S().db.x("DELETE FROM jobs WHERE id=?", (jid,))
+    materials.sync_job(S().db, jid)               # il consumo della stampa eliminata torna sulla bobina
     return {"ok": True}
 
 
@@ -1967,6 +2063,6 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 async def index():
     # versione nei link di script e stili: dopo un aggiornamento il browser carica sempre i file nuovi
     html = (BASE_DIR / "static" / "index.html").read_text(encoding="utf-8")
-    for asset in ("/static/app.js", "/static/production.js", "/static/general.js", "/static/style.css"):
+    for asset in ("/static/app.js", "/static/production.js", "/static/materials.js", "/static/general.js", "/static/style.css"):
         html = html.replace(f'"{asset}"', f'"{asset}?v={__version__}"')
     return Response(html, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-cache"})

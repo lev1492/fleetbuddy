@@ -36,8 +36,9 @@ PERMISSIONS = {
     "history": N_("Corregge lo storico (elimina voci)"),
     "stats": N_("Vede le statistiche e le esporta"),
     "users": N_("Gestisce gli utenti dei ruoli indicati"),
+    "materials": N_("Gestisce la Libreria Materiali (bobine, filamenti, produttori)"),
 }
-OPERATIVE = ["control", "print", "files", "production", "confirm", "stats"]
+OPERATIVE = ["control", "print", "files", "production", "confirm", "stats", "materials"]
 BUILTIN_ROLES = {
     # chiave: (nome, permessi, ruoli assegnabili da chi ha "users")
     "admin": (N_("Amministratore"), list(PERMISSIONS), []),
@@ -55,6 +56,15 @@ def ensure_roles(db):
         if not db.one("SELECT 1 FROM roles WHERE key=?", (k,)):
             db.x("INSERT INTO roles(key, name, perms, assign, builtin, position) VALUES(?,?,?,?,1,?)",
                  (k, name, json.dumps(perms), json.dumps(assign), i))
+    # permessi nuovi aggiunti una volta ai ruoli predefiniti che li prevedono (es. "materials" dalla 0.23.0)
+    if not db.get_setting("roles_materials_added", False):
+        for k in ("manager", "operator"):
+            r = db.one("SELECT perms FROM roles WHERE key=?", (k,))
+            if r:
+                perms = json.loads(r["perms"] or "[]")
+                if "materials" not in perms:
+                    db.x("UPDATE roles SET perms=? WHERE key=?", (json.dumps(perms + ["materials"]), k))
+        db.set_setting("roles_materials_added", True)
     # l'amministratore ha sempre tutti i permessi, anche quelli aggiunti nelle versioni successive
     db.x("UPDATE roles SET perms=? WHERE key='admin'", (json.dumps(list(PERMISSIONS)),))
 

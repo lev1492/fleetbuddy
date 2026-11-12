@@ -143,8 +143,13 @@ dialog::backdrop{background:rgba(10,14,18,.5)}
 .warn{color:var(--pause);font-size:13px}
 .dlgfoot{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 #toasts{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:50;max-width:min(380px,90vw)}
-.toast{background:var(--ink);color:var(--surface);padding:10px 14px;border-radius:var(--radius-sm);font-size:14px;box-shadow:0 6px 24px rgba(0,0,0,.25)}
-.toast.error{background:var(--err);color:#fff}.toast.ok{background:var(--done);color:#fff}
+.toast{--tc:var(--accent);display:flex;gap:10px;align-items:flex-start;background:var(--surface);color:var(--ink);padding:11px 14px 11px 12px;
+  border:1px solid var(--line);border-left:4px solid var(--tc);border-radius:var(--radius-sm);font-size:14px;box-shadow:0 8px 28px rgba(0,0,0,.28);
+  animation:toastin .18s ease-out}
+.toast .ti{flex:0 0 20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:800;background:var(--tc);color:var(--on-accent)}
+.toast.ok{--tc:var(--done)}.toast.ok .ti{color:#fff}
+.toast.error{--tc:var(--err)}.toast.error .ti{color:#fff}
+@keyframes toastin{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
 
 
 /* ---- accesso e utente */
@@ -577,6 +582,22 @@ a.iplink:hover{color:var(--done);text-decoration-color:currentColor}
 .cam .camicon[hidden]{display:none}
 .camlive{position:relative;min-height:200px;display:grid;place-items:center;background:var(--sunk);border-radius:8px;overflow:hidden;color:var(--muted)}
 .camlive img{width:100%;display:block}
+
+/* Libreria Materiali */
+.mkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:0 0 16px}
+.mkpis .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:12px 16px;display:flex;flex-direction:column;gap:2px}
+.mkpis .kpi span{font-size:12px;color:var(--muted);font-weight:600}.mkpis .kpi b{font-size:24px}
+.mkpis .kpi.warnk b{color:var(--pause)}
+.mtools{margin:14px 0 12px;align-items:center;gap:12px}.mtools input[type=search]{min-width:280px}
+.msw{display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--c);border:1px solid color-mix(in srgb,var(--ink) 25%,transparent);vertical-align:-2px}
+.mtable td{vertical-align:middle}.mtable tr.march{opacity:.55}
+.mrem{min-width:170px}.mrem span:last-child{white-space:nowrap}
+.mbar{display:inline-block;width:80px;height:7px;border-radius:4px;background:var(--sunk);overflow:hidden;vertical-align:middle;margin-right:8px}
+.mbar i{display:block;height:100%;background:var(--done)}.mbar.low i{background:var(--pause)}
+.macts{white-space:nowrap;text-align:right}.macts button{margin-left:4px;padding:4px 9px;font-size:13px}
+.mspools{display:flex;flex-wrap:wrap;gap:6px}
+.mspool{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;background:var(--sunk);border:1px solid var(--line);border-radius:14px;padding:3px 10px}
+.mspool.low{border-color:var(--pause)}
 
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
