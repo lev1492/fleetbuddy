@@ -1,4 +1,4 @@
-"""Libreria Materiali: inventario di produttori, filamenti e bobine (sul modello di Spoolman).
+"""Materiali: inventario di produttori, filamenti e bobine (sul modello di Spoolman).
 
 Una bobina si assegna a una stampante e a uno slot (AMS e slot per Bambu Lab, utensile per le altre). A ogni stampa
 il consumo registrato per quello slot (misurato dalla stampante o stimato) viene scalato dalla bobina. Il calcolo è

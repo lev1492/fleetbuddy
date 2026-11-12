@@ -36,7 +36,7 @@ PERMISSIONS = {
     "history": N_("Corregge lo storico (elimina voci)"),
     "stats": N_("Vede le statistiche e le esporta"),
     "users": N_("Gestisce gli utenti dei ruoli indicati"),
-    "materials": N_("Gestisce la Libreria Materiali (bobine, filamenti, produttori)"),
+    "materials": N_("Gestisce i Materiali (bobine, filamenti, produttori)"),
 }
 OPERATIVE = ["control", "print", "files", "production", "confirm", "stats", "materials"]
 BUILTIN_ROLES = {

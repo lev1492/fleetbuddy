@@ -988,12 +988,12 @@ class Service:
 
     def _record_filaments(self, job: dict, progress: float, printer: dict | None = None,
                           measured: list[dict] | None = None) -> float:
-        """Registra il consumo della stampa e lo scala dalle bobine assegnate (Libreria Materiali)."""
+        """Registra il consumo della stampa e lo scala dalle bobine assegnate (Materiali)."""
         total = self._record_filaments_raw(job, progress, printer, measured)
         try:
             materials.sync_job(self.db, job["id"])
         except Exception:  # noqa: BLE001 - l'inventario non deve mai bloccare la registrazione delle stampe
-            log.exception("Libreria Materiali: consumo della stampa %s non scalato", job.get("id"))
+            log.exception("Materiali: consumo della stampa %s non scalato", job.get("id"))
         return total
 
     def _record_filaments_raw(self, job: dict, progress: float, printer: dict | None = None,

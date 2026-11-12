@@ -3,6 +3,11 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.23.1] – 2026-11-12
+
+### Modifiche
+- Menu: torna "Coda"; "Libreria Materiali" diventa "Materiali".
+
 ## [0.23.0] – 2026-11-12
 
 ### Novità

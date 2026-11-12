@@ -1005,7 +1005,7 @@ RENDER.queue = async function renderQueue() {
   const el = $("#v-queue");
   const items = await api("/api/queue").catch(e => (toast(e.message, "error"), []));
   const dest = q => q.printer_sn ? esc(printerName(q.printer_sn)) : q.group_name ? t("gruppo {g}", {g: esc(q.group_name)}) : t("qualsiasi stampante");
-  el.innerHTML = `<div class="head"><div><h1>${t("Coda di Stampa")}</h1><p class="sub">${t("Le stampe partono da sole quando la stampante è inattiva ed escono dalla coda appena iniziano (restano nello storico). Dopo ogni stampa conferma \"Segna il piatto come liberato\" sulla scheda della stampante.")}</p></div>
+  el.innerHTML = `<div class="head"><div><h1>${t("Coda di stampa")}</h1><p class="sub">${t("Le stampe partono da sole quando la stampante è inattiva ed escono dalla coda appena iniziano (restano nello storico). Dopo ogni stampa conferma \"Segna il piatto come liberato\" sulla scheda della stampante.")}</p></div>
     <button id="qpause" class="admin-only ${S.queue_paused ? "primary" : ""}">${S.queue_paused ? t("Riprendi la coda") : t("Metti in pausa la coda")}</button></div>
     <div class="list">${items.length ? items.map(q => `<div class="item" data-id="${q.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${q.file_id}/thumb/${q.plate}">

@@ -560,7 +560,7 @@ async def users_access(request: Request, uid: int, body: dict):
     return {"ok": True}
 
 
-# ====================================================================== Libreria Materiali
+# ====================================================================== Materiali
 @app.get("/api/materials")
 async def materials_list(request: Request):
     U(request)

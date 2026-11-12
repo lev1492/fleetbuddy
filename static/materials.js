@@ -1,4 +1,4 @@
-// Libreria Materiali: inventario di bobine, filamenti e produttori (sul modello di Spoolman).
+// Materiali: inventario di bobine, filamenti e produttori (sul modello di Spoolman).
 // Il consumo di ogni stampa viene scalato dalla bobina assegnata allo slot della stampante.
 "use strict";
 
@@ -14,7 +14,7 @@ RENDER.materials = async function renderMaterials() {
   try { MAT = await api("/api/materials"); }
   catch (e) { el.innerHTML = `<p class="warn">${esc(e.message)}</p>`; return; }
   const s = MAT.summary, edit = can("materials");
-  el.innerHTML = `<div class="head"><div><h1>${t("Libreria Materiali")}</h1>
+  el.innerHTML = `<div class="head"><div><h1>${t("Materiali")}</h1>
       <p class="sub">${t("Inventario di bobine, filamenti e produttori. Il consumo di ogni stampa viene scalato dalla bobina assegnata allo slot della stampante.")}</p></div></div>
     <div class="kpis mkpis">
       <div class="kpi"><span>${t("Bobine attive")}</span><b>${s.spools}</b></div>
@@ -250,6 +250,6 @@ function vendorDialog(v) {
 // bobine assegnate, nella scheda della stampante (sotto i filamenti)
 function spoolsLine(p) {
   if (!(p.spools || []).length) return "";
-  return `<div class="mspools">${p.spools.map(s => `<span class="mspool ${s.pct != null && s.pct < 15 ? "low" : ""}" title="${esc(t("Bobina #{n} della Libreria Materiali", {n: s.id}))}">
+  return `<div class="mspools">${p.spools.map(s => `<span class="mspool ${s.pct != null && s.pct < 15 ? "low" : ""}" title="${esc(t("Bobina #{n} della sezione Materiali", {n: s.id}))}">
     ${swatch(s.color)}${s.slot_label ? `<b>${esc(s.slot_label)}</b> ` : ""}${esc([s.material, s.name].filter(Boolean).join(" "))} · ${kg(s.remaining)}</span>`).join("")}</div>`;
 }
