@@ -205,9 +205,13 @@ def nozzles(rs: dict, model: str, ex: list[dict]) -> list[dict]:
                         "temp": t.get("temp"), "target": t.get("target"),
                         "diameter": _num(n.get("diameter")) or gen_diam, **nozzle_kind(code)})
     elif ex:
+        # La stampante non invia device.nozzle (es. alcuni firmware X2D): su un doppio ugello il valore generale
+        # nozzle_diameter/nozzle_type NON è quello di ogni ugello, quindi non si attribuisce a entrambi
+        # (sarebbe un dato falso): diametro e tipo restano "non comunicati"; il valore generale resta a parte.
         for e in ex:
             out.append({"id": e["id"], "side": ("right" if e["id"] == 0 else "left") if dual else "main",
-                        "temp": e["temp"], "target": e["target"], "diameter": gen_diam, **nozzle_kind(gen_type)})
+                        "temp": e["temp"], "target": e["target"], "diameter": None if dual else gen_diam,
+                        **nozzle_kind(None if dual else gen_type)})
     else:   # stampanti a ugello singolo (P1, A1, X1): valori classici di report_status
         out.append({"id": 0, "side": "main", "temp": round(_num(rs.get("nozzle_temper")), 1),
                     "target": round(_num(rs.get("nozzle_target_temper")), 1),
@@ -309,6 +313,8 @@ def normalize(d: dict) -> dict:
         "ams_busy": (int(_num(rs.get("ams_status"))) >> 8) != 0,
         "trays": tr,
         "nozzles": noz,
+        # diametro generale di report_status, mostrato a parte quando un doppio ugello non comunica i singoli diametri
+        "nozzle_diameter_general": _num(rs.get("nozzle_diameter")) or None,
         "ams_units": ams_units(rs, model, noz),
         "fans": {"part": fan_pct(rs.get("cooling_fan_speed")), "aux": fan_pct(rs.get("big_fan1_speed")),
                  "chamber": fan_pct(rs.get("big_fan2_speed"))},

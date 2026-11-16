@@ -338,7 +338,8 @@ function nozzleType(n) {
 }
 function cardTop(p) {
   const n0 = p.nozzles[0] || {};
-  const diam = p.nozzles.length > 1 ? p.nozzles.map(n => n.diameter ? `${sideLetter(n.side)} ${n.diameter}` : "").filter(Boolean).join(" · ")
+  const diam = p.nozzles.length > 1 ? (p.nozzles.map(n => n.diameter ? `${sideLetter(n.side)} ${n.diameter}` : "").filter(Boolean).join(" · ")
+      || (p.nozzle_diameter_general ? `${t("ugelli")} ${p.nozzle_diameter_general}*` : ""))
     : (n0.diameter ? `${n0.diameter} mm` : "");
   const alerts = (p.print_error ? 1 : 0) + p.hms.length;
   const adm = isAdmin();             // numero di serie, firmware, collegamento e segnale: solo amministratori
@@ -439,7 +440,8 @@ function cardBody(p) {
   if (!direct) {
     tiles.push(`<div class="tile"><span>${t("Piatto|letto")}</span><b>${deg(p.bed, p.bed_target)}</b></div>`);
     if (p.chamber != null) tiles.push(`<div class="tile"><span>${t("Camera")}</span><b>${deg(p.chamber, p.chamber_target)}</b></div>`);
-    tiles.push(`<div class="tile wide"><span>${t("Hotend")}</span>${p.nozzles.map(n => `<div class="hot">${dual ? `<b class="side">${sideLetter(n.side)}</b>` : ""}<b>${n.diameter ? n.diameter + " mm" : "—"}</b> <small>${nozzleType(n)}</small></div>`).join("")}</div>`);
+    tiles.push(`<div class="tile wide"><span>${t("Hotend")}</span>${p.nozzles.map(n => `<div class="hot">${dual ? `<b class="side">${sideLetter(n.side)}</b>` : ""}<b>${n.diameter ? n.diameter + " mm" : "—"}</b> <small>${nozzleType(n)}</small></div>`).join("")}
+      ${dual && !p.nozzles.some(n => n.diameter) ? `<small class="muted">${t("La stampante non comunica diametro e tipo di ogni ugello (dato generale: {d} mm).", {d: p.nozzle_diameter_general ?? "—"})}</small>` : ""}</div>`);
   }
   const f = p.fans || {};
   const fans = [["part", t("Ventola pezzo")], ["aux", t("Ventola ausiliaria")], ["chamber", t("Ventola camera")]].filter(([k]) => f[k] != null);

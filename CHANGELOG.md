@@ -3,6 +3,16 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.25.1] – 2026-11-16
+
+### Correzioni
+- Bambu a doppio ugello: se la stampante non invia i dati di ogni ugello (device.nozzle, previsto dalla
+  documentazione del Fleet Hub ma assente con alcuni firmware, es. X2D 01.02.00.00), il diametro e il tipo generali
+  venivano attribuiti a entrambi gli ugelli, mostrando ad esempio "SX 0.4 · DX 0.4" anche con ugelli diversi. Ora
+  diametro e tipo risultano non comunicati, il valore generale è indicato a parte con una spiegazione, e il controllo
+  di compatibilità dei file non usa il diametro in questo caso. Le stampanti che inviano device.nozzle e quelle a
+  ugello singolo non cambiano.
+
 ## [0.25.0] – 2026-11-12
 
 ### Novità
