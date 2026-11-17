@@ -3,6 +3,14 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.27.0] – 2026-11-18
+
+### Novità
+- Files: i file si possono rinominare (pulsante "Rinomina"), con il permesso Archivio (amministratore, Manager,
+  Operatore; non il Visitatore). L'estensione resta quella originale, perché decide su quali stampanti il file può
+  andare; non sono ammessi nomi vuoti, separatori di percorso né doppioni nella stessa cartella. Lo storico mantiene
+  il nome usato al momento della stampa.
+
 ## [0.26.2] – 2026-11-18
 
 ### Correzioni

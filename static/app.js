@@ -853,7 +853,7 @@ RENDER.archive = async function renderArchive() {
       <div><div class="t" title="${esc(f.filename)}">${esc(f.filename)}</div>
         <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.id === undefined ? pr.name : projPath(pr))}</span> · <span class="bdg" ${f.meta.encrypted ? `title="${esc(t("Chitubox ha cifrato i dati di questo file: anteprima, durata e peso non sono leggibili. La stampa funziona normalmente; esportando in .goo i dati sono leggibili."))}"` : ""}>${f.meta.kind === "resin" ? `${t("Resina")} ${esc((f.meta.format || "").toUpperCase())}${f.meta.encrypted ? " · " + t("cifrato") : ""}` : f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
         <div class="m">${t("Caricato il {d}", {d: fmtDate(f.uploaded_at)})} · ${t("stampato {n} volte", {n: f.prints})}${f.prints ? " " + t("({n} riuscite)", {n: f.ok}) : ""}</div></div>
-      <div class="a">${can("print") ? `<button class="primary" data-print>${t("Stampa")}</button>` : ""}${can("files") ? `<button data-move>${t("Sposta")}</button>` : ""}
+      <div class="a">${can("print") ? `<button class="primary" data-print>${t("Stampa")}</button>` : ""}${can("files") ? `<button data-rename>${t("Rinomina")}</button>` : ""}${can("files") ? `<button data-move>${t("Sposta")}</button>` : ""}
         <a class="btn" href="/api/files/${f.id}/download">${t("Scarica")}</a>${canDel ? `<button class="danger" data-del>${t("Elimina")}</button>` : ""}</div></div>`;
   }).join("") : `<div class="empty">${PROJECTS.length || seesAll() ? t("Nessun file qui. Esporta dallo slicer con \"Esporta G-code del piatto\" e trascinalo nell'area qui sopra.") : t("Nessun progetto assegnato al tuo utente. Chiedi all'amministratore.")}</div>`;
   $$("#v-archive .pager").forEach(x => x.remove());
@@ -868,6 +868,13 @@ RENDER.archive = async function renderArchive() {
     const f = files.find(x => x.id === +it.dataset.id);
     if (e.target.closest("[data-print]")) printDialog(f);
     if (e.target.closest("[data-move]")) moveDialog(f);
+    if (e.target.closest("[data-rename]")) {
+      // si modifica il nome senza estensione: l'estensione resta quella del file
+      const ext = [".gcode.3mf", ".3mf", ".bgcode", ".gcode", ".gco", ".g", ".ufp", ".ctb", ".goo", ".cbddlp"].find(x => f.filename.toLowerCase().endsWith(x)) || "";
+      const n = await uiPrompt(t("Nuovo nome del file (l'estensione {e} resta invariata)", {e: ext || "—"}), f.filename.slice(0, f.filename.length - ext.length));
+      if (n != null && n.trim() && n.trim() + ext !== f.filename
+          && await act(() => api(`/api/files/${f.id}`, {method: "PATCH", body: {filename: n.trim()}}), t("File rinominato"))) RENDER.archive();
+    }
     if (e.target.closest("[data-del]") && await uiConfirm(t("Eliminare {f} dall'archivio?", {f: f.filename}), {danger: true})) { await act(() => api(`/api/files/${f.id}`, {method: "DELETE"})); RENDER.archive(); }
   };
 };

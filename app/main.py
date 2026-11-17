@@ -1147,7 +1147,31 @@ async def edit_file(request: Request, fid: int, body: dict):
         if not u.sees_project(pid):
             raise HTTPException(403, _("Non hai accesso al progetto di destinazione"))
         S().db.x("UPDATE files SET project_id=? WHERE id=?", (pid, fid))
+    if "filename" in body:
+        S().db.x("UPDATE files SET filename=? WHERE id=?", (_new_filename(fid, body["filename"]), fid))
     return {"ok": True}
+
+
+FILE_EXTS = (".gcode.3mf", ".3mf", ".bgcode", ".gcode", ".gco", ".g", ".ufp", ".ctb", ".goo", ".cbddlp")
+
+
+def _new_filename(fid: int, name) -> str:
+    """Nuovo nome di un file: stessa estensione dell'originale (decide su quali stampanti può andare), niente nomi
+    vuoti, separatori di percorso o doppioni nella stessa cartella."""
+    row = S().db.one("SELECT filename, project_id FROM files WHERE id=?", (fid,))
+    old = row["filename"]
+    ext = next((e for e in FILE_EXTS if old.lower().endswith(e)), Path(old).suffix)
+    name = " ".join(str(name or "").replace("/", " ").replace("\\", " ").split())
+    for e in FILE_EXTS:                                     # estensione scritta o cambiata per sbaglio: si toglie
+        if name.lower().endswith(e):
+            name = name[: -len(e)].rstrip(" .")
+            break
+    if not name:
+        raise HTTPException(400, _("Dai un nome al file"))
+    name = name[: 120 - len(ext)] + ext
+    if S().db.one("SELECT 1 FROM files WHERE filename=? COLLATE NOCASE AND project_id IS ? AND id<>?", (name, row["project_id"], fid)):
+        raise HTTPException(409, _("Esiste già un file con questo nome in questa cartella"))
+    return name
 
 
 @app.get("/api/files/{fid}/thumb/{plate}")
