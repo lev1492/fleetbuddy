@@ -609,7 +609,7 @@ a.iplink:hover{color:var(--done);text-decoration-color:currentColor}
 .gfull{grid-column:1/-1}
 
 /* cartelle a elenco: una per riga, nome intero */
-.fhead{display:flex;align-items:center;gap:10px;margin:2px 0 8px}
+.fhead{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin:2px 0 8px;flex-basis:100%;width:100%}   /* a destra, sotto i pulsanti della cartella */
 .fhead .seg button{padding:4px 12px;font-size:13px}
 .folders.flist-rows{display:flex;flex-direction:column;gap:4px}
 .folders.flist-rows .folder{grid-template-columns:auto 1fr auto;grid-template-rows:auto;padding:8px 12px}

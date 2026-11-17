@@ -3,6 +3,12 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.27.1] – 2026-11-18
+
+### Modifiche
+- Files: la scelta della vista delle cartelle (Riquadri / Elenco) e il loro numero sono allineati a destra, sotto i
+  pulsanti della cartella.
+
 ## [0.27.0] – 2026-11-18
 
 ### Novità
