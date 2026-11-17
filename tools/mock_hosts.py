@@ -378,6 +378,14 @@ MAINBOARD = "c0ffee00c0ffee00"
 def sdcp_status() -> dict:
     tick()
     code = {"printing": 13, "paused": 6}.get(P["state"]) or {"complete": 9, "cancelled": 8}.get(P["result"], 0)
+    if K.get("resin"):        # Saturn 4 Ultra 16K: campi reali della stampante a resina (tempi in millisecondi)
+        code = {"printing": 3, "paused": 6}.get(P["state"]) or {"complete": 9, "cancelled": 8}.get(P["result"], 0)
+        return {"Status": {"CurrentStatus": [1] if P["state"] in ("printing", "paused") else [0], "ReleaseFilm": 19624,
+                           "TempOfUVLED": 24.257158279418945, "TimeLapseStatus": 0, "HeatStatus": 1, "TempOfTank": 25, "TempTargetTank": 30,
+                           "PrintInfo": {"Status": code, "CurrentLayer": int(progress() * 1850), "TotalLayer": 1850,
+                                         "CurrentTicks": int(progress() * K["dur"] * 1000), "TotalTicks": K["dur"] * 1000, "ErrorNumber": 0,
+                                         "Filename": P["file"] or "", "TaskId": f"task{P['jobid']}"}},
+                "MainboardID": MAINBOARD, "TimeStamp": int(time.time()), "Topic": f"sdcp/status/{MAINBOARD}"}
     return {"Status": {"CurrentStatus": [1] if P["state"] in ("printing", "paused") else [0],
                        "TempOfNozzle": round(P["tool"][0], 1), "TempTargetNozzle": P["tool"][1],
                        "TempOfHotbed": round(P["bed"][0], 1), "TempTargetHotbed": P["bed"][1],
@@ -412,7 +420,7 @@ async def sdcp_ws(ws: WebSocket):
             elif cmd == 130:
                 cancel()
             elif cmd == 386:
-                extra = {"VideoUrl": f"127.0.0.1:{K['port']}/video"}
+                extra = {"VideoUrl": K.get("rtsp") or f"127.0.0.1:{K['port']}/video"}
             await ws.send_text(json.dumps({"Id": "x", "Topic": f"sdcp/response/{MAINBOARD}",
                                            "Data": {"Cmd": cmd, "RequestID": d["RequestID"], "MainboardID": MAINBOARD,
                                                     "Data": {"Ack": ack, **extra}}}))
@@ -445,7 +453,8 @@ def udp_discovery(port: int):
     while True:
         data, addr = s.recvfrom(1024)
         if data.strip() == b"M99999":
-            s.sendto(json.dumps({"Id": "x", "Data": {"Name": "Centauri", "MachineName": "Centauri Carbon", "BrandName": "ELEGOO",
+            s.sendto(json.dumps({"Id": "x", "Data": {"Name": "Dentek" if K.get("resin") else "Centauri",
+                                 "MachineName": "Saturn 4 Ultra 16K" if K.get("resin") else "Centauri Carbon", "BrandName": "ELEGOO",
                                                      "MainboardIP": "127.0.0.1", "MainboardID": MAINBOARD,
                                                      "ProtocolVersion": "V3.0.0", "FirmwareVersion": "V1.1.29"}}).encode(), addr)
 
@@ -905,10 +914,12 @@ if __name__ == "__main__":
     ap.add_argument("--history-delay", type=int, default=0, help="UltiMaker: secondi prima che la stampa compaia nello storico")
     ap.add_argument("--f4", action="store_true", help="UltiMaker Factor 4 con i dati reali (pre_print, ristampa, Material Station)")
     ap.add_argument("--udp-port", type=int, default=3000)
+    ap.add_argument("--resin", action="store_true", help="Elegoo a resina (Saturn 4 Ultra 16K) con i dati reali")
+    ap.add_argument("--rtsp", default="", help="Elegoo: indirizzo RTSP restituito per la camera (Cmd 386)")
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--duration", type=int, default=30)
     a = ap.parse_args()
-    K.update(kind=a.kind, dur=a.duration, port=a.port, md5=a.md5, no_layerinfo=a.no_layerinfo)
+    K.update(kind=a.kind, dur=a.duration, port=a.port, md5=a.md5, no_layerinfo=a.no_layerinfo, resin=a.resin, rtsp=a.rtsp)
     UM.update(connect=not a.no_connect, approve_after=a.approve_after, newfw=a.newfw, cloud=a.cloud, history_delay=a.history_delay, f4=a.f4, pre=8 if a.f4 else 0)
     if a.kind == "elegoo":
         threading.Thread(target=udp_discovery, args=(a.udp_port,), daemon=True).start()

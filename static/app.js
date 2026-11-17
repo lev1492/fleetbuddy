@@ -413,7 +413,7 @@ function cardBody(p) {
   if (direct) {
     p.nozzles.forEach(n => tiles.push(tile(esc(n.label || sideLetter(n.side) || t("Ugello")) + (n.active && p.nozzles.length > 1 ? " ●" : ""), n.temp, n.target, `tool:${n.id}`, n.fault)));
     if ((p.beds || []).length > 1) p.beds.forEach(b => tiles.push(tile(`${t("Piatto|letto")} ${esc(b.label)}`, b.temp, b.target, b.key, b.fault)));
-    else tiles.push(tile(t("Piatto|letto"), p.bed, p.bed_target, "bed", p.beds && p.beds[0] && p.beds[0].fault));
+    else if (!p.resin_info) tiles.push(tile(t("Piatto|letto"), p.bed, p.bed_target, "bed", p.beds && p.beds[0] && p.beds[0].fault));   // le resine non hanno il piatto riscaldato
     if (p.chamber != null) tiles.push(tile(t("Camera"), p.chamber, p.chamber_target, "chamber"));
     // dati dell'ugello per utensile, quando la stampante li comunica (es. variabili FabbrixOS sulla Duet)
     if (p.air_manager) {
@@ -443,6 +443,12 @@ function cardBody(p) {
     tiles.push(`<div class="tile wide"><span>${t("Hotend")}</span>${p.nozzles.map(n => `<div class="hot">${dual ? `<b class="side">${sideLetter(n.side)}</b>` : ""}<b>${n.diameter ? n.diameter + " mm" : "—"}</b> <small>${nozzleType(n)}</small></div>`).join("")}
       ${dual && !p.nozzles.some(n => n.diameter) ? `<small class="muted">${t("La stampante non comunica diametro e tipo di ogni ugello (dato generale: {d} mm).", {d: p.nozzle_diameter_general ?? "—"})}</small>` : ""}</div>`);
   }
+  const ri = p.resin_info;
+  if (ri) {                      // stampante a resina (Elegoo SDCP): vasca, LED UV, pellicola
+    if (ri.tank != null) tiles.push(`<div class="tile"><span>${t("Vasca")}${ri.heating ? " ♨" : ""}</span><b>${deg(ri.tank, ri.tank_target)}</b></div>`);
+    if (ri.uv_led != null) tiles.push(`<div class="tile"><span>${t("LED UV")}</span><b>${Math.round(ri.uv_led)}°</b></div>`);
+    if (ri.release_film != null) tiles.push(`<div class="tile" title="${esc(t("Sollevamenti della pellicola FEP dall'ultimo azzeramento sulla stampante"))}"><span>${t("Pellicola FEP")}</span><b>${Number(ri.release_film).toLocaleString(LOCALES[LANG])}</b></div>`);
+  }
   const f = p.fans || {};
   const fans = [["part", t("Ventola pezzo")], ["aux", t("Ventola ausiliaria")], ["chamber", t("Ventola camera")]].filter(([k]) => f[k] != null);
   const btns = [];
@@ -459,7 +465,7 @@ function cardBody(p) {
   // è già in Amministrazione)
   const ctrls = `${done && canOperate() && (!p.direct || caps.bed_clean) ? `<button class="platebtn" data-opt="bed_clean">${t("Segna il piatto come liberato")}</button>` : ""}
     <div class="sec">${t("Comandi")}</div>
-    <div class="ctrls">${caps.remote_files && can("print") && p.online ? `<button type="button" data-remote>${t("File sulla stampante")}</button>` : ""}${direct ? (caps.speed ? `<button type="button" class="bdg edit" data-speed="${p.speed_pct}" ${canOperate() && p.online ? "" : "disabled"}>${t("Velocità")} · ${p.speed_pct}% ✎</button>`
+    <div class="ctrls">${caps.remote_files && can("print") && p.online ? `<button type="button" data-remote>${t("File sulla stampante")}</button>` : ""}${p.resin_info ? "" : direct ? (caps.speed ? `<button type="button" class="bdg edit" data-speed="${p.speed_pct}" ${canOperate() && p.online ? "" : "disabled"}>${t("Velocità")} · ${p.speed_pct}% ✎</button>`
       : `<span class="bdg">${t("Velocità")} · ${p.speed_pct}%</span>`)
       : `<span class="bdg">${t("Velocità")} · ${esc(t(SPEEDS[p.speed_lvl] || "—"))}</span>`}<span class="grow"></span>${btns.join("") || `<span class="muted small">${t("Nessun comando disponibile in questo stato")}</span>`}</div>
     ${alerts ? `<div class="alerts">${alerts}</div>` : ""}
@@ -809,7 +815,7 @@ RENDER.archive = async function renderArchive() {
           <div class="seg" id="fview" role="group">${[["tiles", t("Riquadri")], ["list", t("Elenco")]].map(([k, l]) => `<button type="button" data-fv="${k}" class="${fv === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
           <div class="folders ${fv === "list" ? "flist-rows" : ""}">${subs.map(x => `<button type="button" class="folder" data-p="${x.id}" style="--c:${esc(x.color)}" title="${esc(x.name)}"><span class="fic">📁</span><b>${esc(x.name)}</b>
           <small class="muted">${t("{n} file", {n: x.files_total})}${x.children ? " · " + t("{n} cartelle", {n: x.children}) : ""}</small></button>`).join("")}</div>`; })() : ""}` : ""}
-    ${can("files") ? `<div class="drop" id="drop">${dropText}<input type="file" id="fpick" accept=".3mf,.gcode,.gco,.g,.bgcode,.ufp" multiple hidden></div>` : ""}
+    ${can("files") ? `<div class="drop" id="drop">${dropText}<input type="file" id="fpick" accept=".3mf,.gcode,.gco,.g,.bgcode,.ufp,.ctb,.goo,.cbddlp" multiple hidden></div>` : ""}
     <div class="list" id="flist"><div class="empty">${t("Caricamento…")}</div></div>`;
   $("#pchips").onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; projFilter = c.dataset.p; localStorage.setItem("fb_proj", projFilter); RENDER.archive(); };
   $$("#v-archive .folders, #v-archive .crumbs").forEach(box => box.onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; e.preventDefault();
@@ -845,7 +851,7 @@ RENDER.archive = async function renderArchive() {
     return `<div class="item" data-id="${f.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${f.id}/thumb/${p0.index || 1}">
       <div><div class="t" title="${esc(f.filename)}">${esc(f.filename)}</div>
-        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.id === undefined ? pr.name : projPath(pr))}</span> · <span class="bdg">${f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
+        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.id === undefined ? pr.name : projPath(pr))}</span> · <span class="bdg">${f.meta.kind === "resin" ? `${t("Resina")} ${esc((f.meta.format || "").toUpperCase())}` : f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
         <div class="m">${t("Caricato il {d}", {d: fmtDate(f.uploaded_at)})} · ${t("stampato {n} volte", {n: f.prints})}${f.prints ? " " + t("({n} riuscite)", {n: f.ok}) : ""}</div></div>
       <div class="a">${can("print") ? `<button class="primary" data-print>${t("Stampa")}</button>` : ""}${can("files") ? `<button data-move>${t("Sposta")}</button>` : ""}
         <a class="btn" href="/api/files/${f.id}/download">${t("Scarica")}</a>${canDel ? `<button class="danger" data-del>${t("Elimina")}</button>` : ""}</div></div>`;
@@ -941,7 +947,7 @@ async function uploadFiles(list, pid) {
 const reasonText = r => { try { const d = JSON.parse(r); return t(d.msg, d.params || {}); } catch { return t(r || ""); } };
 async function printDialog(f, presetPrinter) {
   const plates = f.meta.plates;
-  const isG = f.meta.kind === "gcode";   // .gcode → stampanti dirette (Duet); .gcode.3mf → Bambu
+  const isG = f.meta.kind === "gcode" || f.meta.kind === "resin";   // .gcode/.ctb/.goo → stampanti dirette; .gcode.3mf → Bambu
   // compatibilità decisa dal server (tipo di file, modello per cui è stato preparato, ugello): la stessa di coda e Produzione
   const tg = await api(`/api/files/${f.id}/targets`).catch(() => null);
   const info = sn => (tg ? tg.printers.find(x => x.sn === sn) : null);

@@ -128,8 +128,10 @@ class ElegooClient(DirectClient):
             state = "IDLE"
         fname = pi.get("Filename") or ""
         task = os.path.basename(fname).rsplit(".", 1)[0] if fname else ""
+        resin = "TempOfNozzle" not in s and ("TempOfTank" in s or "TempOfUVLED" in s)   # Saturn, Mars, Jupiter…
         total, cur = pi.get("TotalTicks") or 0, pi.get("CurrentTicks") or 0
-        scale = 1000 if total > 7 * 86400 else 1          # alcuni firmware usano i millisecondi, altri i secondi
+        # le resine contano in millisecondi; per la Centauri Carbon dipende dal firmware
+        scale = 1000 if resin or total > 7 * 86400 else 1
         layer, layers = pi.get("CurrentLayer") or 0, pi.get("TotalLayer") or 0
         progress = pi.get("Progress")
         if progress is None:
@@ -147,13 +149,17 @@ class ElegooClient(DirectClient):
             fans={"part": fans.get("ModelFan"), "aux": fans.get("AuxiliaryFan"), "chamber": fans.get("BoxFan")},
             firmware=info.get("FirmwareVersion") or "", model=info.get("MachineName") or "Elegoo",
             last_result=result if fname else None,
-            caps={**self.caps, "chamber_heater": False, "resin": not noz})
+            resin_info={"tank": s.get("TempOfTank"), "tank_target": s.get("TempTargetTank"),
+                        "uv_led": round(s["TempOfUVLED"], 1) if isinstance(s.get("TempOfUVLED"), (int, float)) else None,
+                        "release_film": s.get("ReleaseFilm"), "heating": bool(s.get("HeatStatus"))} if resin else None,
+            caps={**self.caps, "chamber_heater": False, "resin": resin,
+                  "print_options": [] if resin else self.caps["print_options"]})
 
     def info(self, raw: dict) -> dict:
         i = raw.get("info") or {}
         return {"board": f"{i.get('BrandName', 'Elegoo')} {i.get('MachineName', '')}".strip(), "firmware": i.get("FirmwareVersion"),
                 "mode": f"SDCP {i.get('ProtocolVersion', '')}".strip(), "status": self.normalize(raw)["state"].lower(),
-                "tools": 1 if "TempOfNozzle" in (raw.get("status") or {}) else 0}
+                "tools": 1 if "TempOfNozzle" in (raw.get("status") or {}) else 0, "camera_url": self._video or None}
 
     def snapshot(self) -> bytes | None:
         if self.snapshot_url:
@@ -163,10 +169,16 @@ class ElegooClient(DirectClient):
                 self._video = (self._command(386, {"Enable": 1}) or {}).get("VideoUrl", "")
             except HubError:
                 return None
-            if self._video and not self._video.startswith("http"):
+            if self._video and "://" not in self._video:
                 self._video = "http://" + self._video
         if not self._video:
             return None
+        if self._video.lower().startswith(("rtsp://", "rtsps://")):
+            from .base import rtsp_frame
+            img = rtsp_frame(self._video)              # flusso RTSP: fotogramma estratto con ffmpeg
+            if img is None:
+                self._video = ""                       # si richiede di nuovo l'indirizzo alla prossima apertura
+            return img
         try:   # primo fotogramma JPEG del flusso MJPEG
             with self._s.get(self._video, stream=True, timeout=5) as r:
                 buf = b""
@@ -216,6 +228,9 @@ class ElegooClient(DirectClient):
                 offset += len(part)
                 if size == 0:
                     break
+        if name.lower().endswith((".ctb", ".goo", ".cbddlp")):   # stampante a resina
+            self._command(128, {"Filename": f"/local/{name}", "StartLayer": 0})
+            return
         self._command(128, {"Filename": f"/local/{name}", "StartLayer": 0,
                             "Calibration_switch": 1 if opts.get("bed_leveling", True) else 0,
                             "PrintPlatformType": 0, "Tlp_Switch": 1 if opts.get("timelapse") else 0})

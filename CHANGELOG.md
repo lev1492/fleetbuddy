@@ -3,6 +3,24 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.26.0] – 2026-11-17
+
+### Novità
+- Stampanti a resina Elegoo (SDCP: Saturn 4 Ultra 16K, Mars, Jupiter…): nella scheda temperatura della vasca
+  (attuale e obiettivo, con il riscaldamento), del LED UV e contatore della pellicola FEP, senza ugelli, piatto e
+  velocità; strati e tempo rimanente letti in millisecondi; avvio con il solo file e lo strato iniziale.
+- File di resina in Files: .ctb (Chitubox), .goo (Elegoo) e .cbddlp, con macchina, strati, tempo di stampa, volume e
+  peso della resina e anteprima (lettore scritto per Fabbrix Farm Manager sulla base delle specifiche pubbliche dei
+  formati). I .ctb cifrati di Chitubox 1.9 e successivi si caricano e si stampano, ma tempo, peso e anteprima non
+  sono leggibili. I file di resina vanno solo alle stampanti a resina (dello stesso modello, se indicato nel file) e
+  i G-code non vanno mai alle stampanti a resina: vale per stampa, coda e Produzione.
+- Camera Elegoo: oltre al flusso MJPEG (Centauri Carbon) anche l'indirizzo RTSP restituito dalla stampante; la
+  prova di connessione mostra l'indirizzo ottenuto.
+
+### Correzioni
+- Fleet Hub: la lettura della singola stampante (/v1/hub/devices/{sn}) usa la chiave "dev_info" della risposta
+  reale (funzione non usata dall'applicazione, nessun effetto visibile).
+
 ## [0.25.1] – 2026-11-16
 
 ### Correzioni

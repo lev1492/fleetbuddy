@@ -293,7 +293,7 @@ class FleetHubClient:
 
     def device(self, sn: str) -> dict:
         r = self.request("GET", f"/v1/hub/devices/{sn}")
-        return r.get("device") or r
+        return r.get("dev_info") or r.get("device") or r     # il Hub reale racchiude i dati in "dev_info"
 
     def opt(self, sn: str, opt: str, extra: dict | None = None) -> dict:
         body = {"dev_id": sn, "opt": opt}

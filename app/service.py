@@ -38,7 +38,7 @@ class _NoHub:
 def task_name_for(filename: str, plate: int, plates: int) -> str:
     """Nome del lavoro inviato al Hub: lo stesso usato per riconoscere la stampa nello storico."""
     task = Path(filename).name.replace(".gcode.3mf", "").replace(".3mf", "")
-    for ext in (".bgcode", ".ufp", ".gcode", ".gco", ".g"):
+    for ext in (".bgcode", ".ufp", ".gcode", ".gco", ".g", ".ctb", ".goo", ".cbddlp"):
         if task.lower().endswith(ext):
             task = task[: -len(ext)]
             break
@@ -1120,7 +1120,8 @@ class Service:
                 from .threemf import thumbnail
                 path = self.cfg.path(f["path"])
                 plate = (job or {}).get("plate") or 1
-                thumb = await asyncio.to_thread(thumbnail_png if f["meta"].get("kind") == "gcode" else (lambda x: thumbnail(x, plate)), path)
+                from .resinmeta import file_thumbnail
+                thumb = await asyncio.to_thread(file_thumbnail, path, f["meta"], plate)
         self._thumb_cache[key] = (time.time(), thumb)
         return thumb, "thumbnail" if thumb else ""
 
@@ -1201,9 +1202,10 @@ class Service:
         p = self.printers.get(sn)
         if not p:
             raise HubError(key="Stampante sconosciuta o offline")
-        gcode_file = f["meta"].get("kind") == "gcode"
-        if gcode_file != (sn in self.direct):
-            raise HubError(key="Questo file non è adatto a questa stampante: i .gcode.3mf vanno alle Bambu, i .gcode alle altre")
+        gcode_file = f["meta"].get("kind") in ("gcode", "resin")      # file per stampanti dirette (anche resina)
+        ok, why = production.check(self, f, sn)
+        if not ok:
+            raise HubError(key="Questo file non è adatto a questa stampante: {r}", params={"r": production.reason_text(why)})
         if gcode_file:
             if not self.direct[sn].caps.get("upload", True):
                 raise HubError(key="Questa stampante non accetta file dalla rete: avvia un file presente nella sua memoria")

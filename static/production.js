@@ -17,11 +17,12 @@ let PDATA = null, PPLAN = null, PTIMER = null;
 const pmsg = m => { if (!m) return ""; try { const o = JSON.parse(m); return t(o.msg, o.params || {}); } catch { return m; } };
 const whenAbs = ts => new Date(ts * 1000).toLocaleString(LOCALES[LANG], {weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"});
 const whenRel = ts => ts <= Date.now() / 1000 + 60 ? t("adesso") : t("tra {d}", {d: fmtDur(ts - Date.now() / 1000)});
-const fileKind = f => f.meta.format === "ufp" ? "ufp" : f.meta.kind === "gcode" ? "gcode" : "3mf";
+const fileKind = f => f.meta.kind === "resin" ? "resin" : f.meta.format === "ufp" ? "ufp" : f.meta.kind === "gcode" ? "gcode" : "3mf";
 function compatibleWith(p, kind) {
   const c = p.caps || {};
   if (kind === "3mf") return !p.direct;
-  if (!p.direct || c.upload === false) return false;
+  if (kind === "resin") return !!(p.direct && c.resin);       // .ctb/.goo solo alle stampanti a resina
+  if (!p.direct || c.upload === false || c.resin) return false;
   return kind !== "ufp" || !!c.ufp;
 }
 

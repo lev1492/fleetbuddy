@@ -22,7 +22,7 @@ from .i18n import LANGS, _, current_lang, from_accept_language, normalize
 from .hub_client import HubError
 from .printers import FILAMENT_PRESETS, auto_map, firmware_below_min, is_ready
 from .service import Service, qmsg
-from . import materials, production
+from . import materials, production, resinmeta
 from .connectors import KINDS, make_client
 from .gcodemeta import is_gcode, parse_gcode, thumbnail_png
 from .threemf import md5_file, parse_3mf, thumbnail
@@ -1091,12 +1091,14 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
     data = S().cfg.data_path
     gcode_file = is_gcode(file.filename or "")
     low = (file.filename or "").lower()
-    ext = (".bgcode" if low.endswith(".bgcode") else ".ufp" if low.endswith(".ufp") else ".gcode") if gcode_file else ".3mf"
+    resin = resinmeta.is_resin(low)                     # .ctb / .goo / .cbddlp: stampanti a resina Elegoo
+    ext = (Path(low).suffix if resin else (".bgcode" if low.endswith(".bgcode") else ".ufp" if low.endswith(".ufp") else ".gcode")
+           if gcode_file else ".3mf")
     tmp = data / "tmp" / f"{uuid.uuid4().hex}{ext}"
     with tmp.open("wb") as out:
         shutil.copyfileobj(file.file, out, 1 << 20)
     try:
-        meta = await asyncio.to_thread(parse_gcode if gcode_file else parse_3mf, tmp)
+        meta = await asyncio.to_thread(resinmeta.parse_resin if resin else parse_gcode if gcode_file else parse_3mf, tmp)
     except Exception as e:  # noqa: BLE001
         tmp.unlink(missing_ok=True)
         raise HTTPException(400, _("File non valido: {e}", e=e))
@@ -1151,8 +1153,7 @@ async def edit_file(request: Request, fid: int, body: dict):
 @app.get("/api/files/{fid}/thumb/{plate}")
 async def file_thumb(request: Request, fid: int, plate: int):
     f = file_for(U(request), fid)
-    img = await asyncio.to_thread(thumbnail_png if f["meta"].get("kind") == "gcode" else (lambda pth: thumbnail(pth, plate)),
-                                  cfg.path(f["path"]))
+    img = await asyncio.to_thread(resinmeta.file_thumbnail, cfg.path(f["path"]), f["meta"], plate)
     if not img:
         raise HTTPException(404)
     return Response(img, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
@@ -1365,8 +1366,7 @@ async def job_thumb(request: Request, jid: int):
     if not f or not cfg.path(f["path"]).exists():
         raise HTTPException(404)
     plate = j["plate"] or 1
-    img = await asyncio.to_thread(thumbnail_png if f["meta"].get("kind") == "gcode" else (lambda pth: thumbnail(pth, plate)),
-                                  cfg.path(f["path"]))
+    img = await asyncio.to_thread(resinmeta.file_thumbnail, cfg.path(f["path"]), f["meta"], plate)
     if not img:
         raise HTTPException(404)
     return Response(img, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})

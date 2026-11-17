@@ -90,6 +90,19 @@ def check(svc, f: dict, sn: str) -> tuple[bool, str]:
     stampanti dirette che accettano file; .ufp → UltiMaker), modello per cui è stato preparato, diametro dell'ugello."""
     kind, fmt = f["meta"].get("kind"), f["meta"].get("format")
     c = svc.direct.get(sn)
+    p = svc.printers.get(sn) or {}
+    resin_printer = bool((p.get("caps") or {}).get("resin"))
+    if kind == "resin":
+        # .ctb / .goo: solo stampanti a resina Elegoo (SDCP), del modello indicato nel file se c'è
+        if c is None or c.kind != "elegoo" or not resin_printer:
+            return False, N_("file per stampanti a resina")
+        model = f["meta"].get("printer_model") or ""
+        a, b = _norm_model(model.upper().replace("ELEGOO", "")), _norm_model((p.get("model") or "").upper().replace("ELEGOO", ""))
+        if a and b and a not in b and b not in a:
+            return False, _msg("preparato per {model}", model=model)
+        return True, ""
+    if resin_printer:
+        return False, N_("stampante a resina: servono file .ctb o .goo")
     if kind != "gcode":
         if c is not None:
             return False, N_("file per stampanti Bambu Lab")
