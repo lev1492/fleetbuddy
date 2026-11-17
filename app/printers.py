@@ -57,6 +57,26 @@ def hms_code(entry: dict) -> str:
     return f"{int(entry.get('attr', 0)):08X}{int(entry.get('code', 0)):08X}"
 
 
+# Avvisi HMS da ignorare in certe condizioni: codice → funzione che, dato report_status, dice se ignorarlo.
+# 0500010000030007 "Impossibile registrare il timelapse senza chiavetta USB": le X2D lo mostrano a ogni stampa anche
+# con il timelapse disattivato sulla stampante (ip_cam.timelapse = "disable"): in quel caso non è un problema reale.
+HMS_IGNORE = {
+    "0500010000030007": lambda rs: str(((rs.get("ip_cam") or rs.get("ipcam") or {}).get("timelapse") or "")).lower() == "disable",
+}
+
+
+def hms_codes(rs: dict) -> list[str]:
+    """Codici HMS attivi, esclusi quelli che nella situazione attuale non segnalano un problema reale."""
+    out = []
+    for h in rs.get("hms") or []:
+        code = hms_code(h)
+        rule = HMS_IGNORE.get(code)
+        if rule and rule(rs):
+            continue
+        out.append(code)
+    return out
+
+
 def print_error_code(v) -> str:
     n = int(_num(v))
     return f"{n:08X}" if n else ""
@@ -318,7 +338,7 @@ def normalize(d: dict) -> dict:
         "ams_units": ams_units(rs, model, noz),
         "fans": {"part": fan_pct(rs.get("cooling_fan_speed")), "aux": fan_pct(rs.get("big_fan1_speed")),
                  "chamber": fan_pct(rs.get("big_fan2_speed"))},
-        "hms": [hms_code(h) for h in rs.get("hms") or []],
+        "hms": hms_codes(rs),
         "print_error": print_error_code(rs.get("print_error")),
         "firmware": up.get("current_ver", ""),
         "upgrade_state": up.get("upgrade_state", ""),

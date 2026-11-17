@@ -3,6 +3,14 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.26.2] – 2026-11-18
+
+### Correzioni
+- Bambu X2D: l'avviso HMS 0500010000030007 ("Impossibile registrare il timelapse senza chiavetta USB"), mostrato a
+  ogni stampa, viene ignorato quando la stampante ha il timelapse disattivato (ip_cam.timelapse = "disable"): non
+  compare più nella scheda, nel conteggio degli avvisi e nelle notifiche. Con il timelapse attivo, o se il dato
+  manca, l'avviso resta visibile.
+
 ## [0.26.1] – 2026-11-17
 
 ### Correzioni
