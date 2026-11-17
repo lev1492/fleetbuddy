@@ -380,7 +380,8 @@ def sdcp_status() -> dict:
     code = {"printing": 13, "paused": 6}.get(P["state"]) or {"complete": 9, "cancelled": 8}.get(P["result"], 0)
     if K.get("resin"):        # Saturn 4 Ultra 16K: campi reali della stampante a resina (tempi in millisecondi)
         code = {"printing": 3, "paused": 6}.get(P["state"]) or {"complete": 9, "cancelled": 8}.get(P["result"], 0)
-        return {"Status": {"CurrentStatus": [1] if P["state"] in ("printing", "paused") else [0], "ReleaseFilm": 19624,
+        busy = [1] if P["state"] in ("printing", "paused") else [2] if time.time() < K.get("checking_until", 0) else [0]
+        return {"Status": {"CurrentStatus": busy, "ReleaseFilm": 19624,
                            "TempOfUVLED": 24.257158279418945, "TimeLapseStatus": 0, "HeatStatus": 1, "TempOfTank": 25, "TempTargetTank": 30,
                            "PrintInfo": {"Status": code, "CurrentLayer": int(progress() * 1850), "TotalLayer": 1850,
                                          "CurrentTicks": int(progress() * K["dur"] * 1000), "TotalTicks": K["dur"] * 1000, "ErrorNumber": 0,
@@ -409,10 +410,14 @@ async def sdcp_ws(ws: WebSocket):
             if cmd == 128:
                 fname = d["Data"]["Filename"].rsplit("/", 1)[-1]
                 if fname not in UPLOADS:
-                    ack = 1
+                    ack = 2                                        # file non trovato
+                elif time.time() < K.get("checking_until", 0):
+                    print("SDCP avvio IGNORATO (file in verifica):", d["Data"])   # risposta positiva, ma non parte
                 else:
                     start(fname)
                     print("SDCP avvio:", d["Data"])
+            elif cmd == 258:
+                extra = {"FileList": [{"name": f"/local/{n}", "usedSize": sz, "type": 1} for n, sz in UPLOADS.items()]}
             elif cmd == 129:
                 pause()
             elif cmd == 131:
@@ -437,6 +442,8 @@ async def sdcp_upload(req: Request):
     form = await req.form()
     data = await form["File"].read()
     UPLOADS[form["File"].filename] = UPLOADS.get(form["File"].filename, 0) + len(data)
+    if K.get("check_delay"):        # come le resine: dopo il caricamento la stampante verifica il file per qualche secondo
+        K["checking_until"] = time.time() + K["check_delay"]
     return {"code": "000000", "success": True, "messages": None}
 
 
@@ -916,10 +923,11 @@ if __name__ == "__main__":
     ap.add_argument("--udp-port", type=int, default=3000)
     ap.add_argument("--resin", action="store_true", help="Elegoo a resina (Saturn 4 Ultra 16K) con i dati reali")
     ap.add_argument("--rtsp", default="", help="Elegoo: indirizzo RTSP restituito per la camera (Cmd 386)")
+    ap.add_argument("--check-delay", type=int, default=0, help="Elegoo: secondi di verifica del file dopo il caricamento")
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--duration", type=int, default=30)
     a = ap.parse_args()
-    K.update(kind=a.kind, dur=a.duration, port=a.port, md5=a.md5, no_layerinfo=a.no_layerinfo, resin=a.resin, rtsp=a.rtsp)
+    K.update(kind=a.kind, dur=a.duration, port=a.port, md5=a.md5, no_layerinfo=a.no_layerinfo, resin=a.resin, rtsp=a.rtsp, check_delay=a.check_delay)
     UM.update(connect=not a.no_connect, approve_after=a.approve_after, newfw=a.newfw, cloud=a.cloud, history_delay=a.history_delay, f4=a.f4, pre=8 if a.f4 else 0)
     if a.kind == "elegoo":
         threading.Thread(target=udp_discovery, args=(a.udp_port,), daemon=True).start()

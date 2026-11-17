@@ -3,6 +3,20 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.26.1] – 2026-11-17
+
+### Correzioni
+- Stampanti a resina Elegoo: il file veniva caricato ma la stampa non partiva. Dopo il caricamento la stampante
+  verifica il file e un avvio inviato in quel momento viene ignorato. Ora Farm Manager attende la fine della
+  verifica (fino a 3 minuti), avvia il file con il nome esatto registrato dalla stampante (elenco dei file in
+  memoria), controlla che la stampa sia davvero partita (fino a tre tentativi) e, se la stampante rifiuta, ne
+  mostra il motivo (file non trovato, risoluzione o modello diversi, file non leggibile…).
+- Camera Elegoo: l'indirizzo restituito dalla stampante viene riconosciuto anche con un nome di campo diverso e,
+  se manca il protocollo, si provano MJPEG e RTSP; l'indirizzo ottenuto compare nella prova di connessione e nel
+  registro.
+- Files: i .ctb cifrati da Chitubox sono indicati come "cifrato", con la spiegazione dell'assenza di anteprima,
+  durata e peso.
+
 ## [0.26.0] – 2026-11-17
 
 ### Novità

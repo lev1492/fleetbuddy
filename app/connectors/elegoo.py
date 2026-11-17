@@ -21,8 +21,20 @@ import requests
 from ..hub_client import HubError
 from .base import DirectClient, base_state, bed, nozzle
 
+
+def N_(s: str) -> str:
+    """Segna una frase da tradurre."""
+    return s
+
 # PrintInfo.Status (SDCP): 5 in pausa…, 6 in pausa, 7 arresto in corso, 8 fermata, 9 completata; 0 inattiva
 PAUSED, STOPPING, STOPPED, DONE = {5, 6}, {7}, {8}, {9}
+# CurrentStatus (SDCP): 0 inattiva, 1 in stampa, 2 trasferimento/verifica del file, 3 test di esposizione, 4 test dei dispositivi
+CHECKING = 2
+# esito del comando di avvio (Cmd 128, Ack)
+START_ACK = {1: N_("la stampante è occupata"), 2: N_("file non trovato nella memoria della stampante"),
+             3: N_("verifica del file non riuscita (MD5)"), 4: N_("lettura del file non riuscita"),
+             5: N_("la risoluzione del file non corrisponde allo schermo della stampante"),
+             6: N_("formato del file non riconosciuto"), 7: N_("il file è stato preparato per un altro modello di stampante")}
 CHUNK = 1024 * 1024
 
 
@@ -159,28 +171,14 @@ class ElegooClient(DirectClient):
         i = raw.get("info") or {}
         return {"board": f"{i.get('BrandName', 'Elegoo')} {i.get('MachineName', '')}".strip(), "firmware": i.get("FirmwareVersion"),
                 "mode": f"SDCP {i.get('ProtocolVersion', '')}".strip(), "status": self.normalize(raw)["state"].lower(),
-                "tools": 1 if "TempOfNozzle" in (raw.get("status") or {}) else 0, "camera_url": self._video or None}
+                "tools": 1 if "TempOfNozzle" in (raw.get("status") or {}) else 0, "camera_url": self._video or getattr(self, "_last_video", None)}
 
-    def snapshot(self) -> bytes | None:
-        if self.snapshot_url:
-            return super().snapshot()
-        if not self._video:
-            try:
-                self._video = (self._command(386, {"Enable": 1}) or {}).get("VideoUrl", "")
-            except HubError:
-                return None
-            if self._video and "://" not in self._video:
-                self._video = "http://" + self._video
-        if not self._video:
-            return None
-        if self._video.lower().startswith(("rtsp://", "rtsps://")):
-            from .base import rtsp_frame
-            img = rtsp_frame(self._video)              # flusso RTSP: fotogramma estratto con ffmpeg
-            if img is None:
-                self._video = ""                       # si richiede di nuovo l'indirizzo alla prossima apertura
-            return img
-        try:   # primo fotogramma JPEG del flusso MJPEG
-            with self._s.get(self._video, stream=True, timeout=5) as r:
+    def _mjpeg_frame(self, url: str) -> bytes | None:
+        """Primo fotogramma JPEG di un flusso MJPEG (Centauri Carbon e altre)."""
+        try:
+            with self._s.get(url, stream=True, timeout=5) as r:
+                if r.status_code != 200:
+                    return None
                 buf = b""
                 for chunk in r.iter_content(8192):
                     buf += chunk
@@ -191,11 +189,82 @@ class ElegooClient(DirectClient):
                     if len(buf) > 2_000_000:
                         break
         except requests.RequestException:
-            self._video = ""
+            pass
+        return None
+
+    def _frame(self, url: str) -> bytes | None:
+        if url.lower().startswith(("rtsp://", "rtsps://")):
+            from .base import rtsp_frame
+            return rtsp_frame(url)                    # flusso RTSP: fotogramma estratto con ffmpeg
+        return self._mjpeg_frame(url)
+
+    def snapshot(self) -> bytes | None:
+        if self.snapshot_url:
+            return super().snapshot()
+        if self._video:
+            img = self._frame(self._video)
+            if img:
+                return img
+            self._video = ""                          # indirizzo scaduto: si chiede di nuovo alla stampante
+        try:
+            resp = self._command(386, {"Enable": 1}) or {}
+        except HubError:
+            return None
+        url = resp.get("VideoUrl") or next((v for k, v in resp.items() if "url" in k.lower() and isinstance(v, str) and v), "")
+        if not url:
+            import logging
+            logging.getLogger("fleetbuddy.elegoo").info("Elegoo %s: la richiesta della camera non contiene un indirizzo: %s", self.ip, resp)
+            return None
+        # senza protocollo si provano MJPEG (http) e RTSP: si ricorda quello che funziona
+        for cand in ([url] if "://" in url else [f"http://{url}", f"rtsp://{url}"]):
+            img = self._frame(cand)
+            if img:
+                self._video = cand
+                return img
+        import logging
+        logging.getLogger("fleetbuddy.elegoo").info("Elegoo %s: nessuna immagine dalla camera (%s)", self.ip, url)
+        self._last_video = url
         return None
 
     def has_snapshot(self) -> bool:
         return True
+
+    # ------------------------------------------------------------------ avvio sulle resine
+    def _status(self) -> dict:
+        _, st = self._exchange(0, want_status=True)
+        return st or {}
+
+    def _start_resin(self, name: str):
+        """Dopo il caricamento la stampante verifica il file (CurrentStatus 2): un avvio inviato in quel momento può
+        essere ignorato. Si attende la fine della verifica, si usa il nome esatto del file in memoria (Cmd 258), si
+        avvia e si controlla che la stampa sia davvero partita, con al massimo tre tentativi."""
+        import logging
+        log = logging.getLogger("fleetbuddy.elegoo")
+        end = time.time() + 180
+        while time.time() < end and CHECKING in (self._status().get("CurrentStatus") or []):
+            time.sleep(2)
+        path = f"/local/{name}"
+        try:
+            files = (self._command(258, {"Url": "/local"}) or {}).get("FileList") or []
+            hit = next((f.get("name") for f in files if os.path.basename(f.get("name") or "").lower() == name.lower()), None)
+            path = hit or path
+        except HubError:
+            pass                                   # elenco non disponibile: si usa il nome caricato
+        for attempt in range(3):
+            resp, _ = self._exchange(128, {"Filename": path, "StartLayer": 0})
+            ack = (resp or {}).get("Ack", 0) if resp is not None else None
+            log.info("Elegoo %s: avvio di %s, tentativo %d, esito %s", self.ip, path, attempt + 1, ack)
+            if ack not in (None, 0, 1):
+                raise HubError(key="La stampante ha rifiutato l'avvio: {r}", params={"r": START_ACK.get(ack, f"codice {ack}")})
+            until = time.time() + 15
+            while time.time() < until:
+                st = self._status()
+                pi = st.get("PrintInfo") or {}
+                if 1 in (st.get("CurrentStatus") or []) or int(pi.get("Status") or 0) not in (0, 8, 9):
+                    return                         # stampa partita
+                time.sleep(2)
+            time.sleep(3)
+        raise HubError(key="La stampante ha ricevuto il file ma non ha avviato la stampa: avviala dal display")
 
     # ------------------------------------------------------------------ comandi
     def pause(self):
@@ -229,7 +298,7 @@ class ElegooClient(DirectClient):
                 if size == 0:
                     break
         if name.lower().endswith((".ctb", ".goo", ".cbddlp")):   # stampante a resina
-            self._command(128, {"Filename": f"/local/{name}", "StartLayer": 0})
+            self._start_resin(name)
             return
         self._command(128, {"Filename": f"/local/{name}", "StartLayer": 0,
                             "Calibration_switch": 1 if opts.get("bed_leveling", True) else 0,

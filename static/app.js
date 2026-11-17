@@ -851,7 +851,7 @@ RENDER.archive = async function renderArchive() {
     return `<div class="item" data-id="${f.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${f.id}/thumb/${p0.index || 1}">
       <div><div class="t" title="${esc(f.filename)}">${esc(f.filename)}</div>
-        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.id === undefined ? pr.name : projPath(pr))}</span> · <span class="bdg">${f.meta.kind === "resin" ? `${t("Resina")} ${esc((f.meta.format || "").toUpperCase())}` : f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
+        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.id === undefined ? pr.name : projPath(pr))}</span> · <span class="bdg" ${f.meta.encrypted ? `title="${esc(t("Chitubox ha cifrato i dati di questo file: anteprima, durata e peso non sono leggibili. La stampa funziona normalmente; esportando in .goo i dati sono leggibili."))}"` : ""}>${f.meta.kind === "resin" ? `${t("Resina")} ${esc((f.meta.format || "").toUpperCase())}${f.meta.encrypted ? " · " + t("cifrato") : ""}` : f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
         <div class="m">${t("Caricato il {d}", {d: fmtDate(f.uploaded_at)})} · ${t("stampato {n} volte", {n: f.prints})}${f.prints ? " " + t("({n} riuscite)", {n: f.ok}) : ""}</div></div>
       <div class="a">${can("print") ? `<button class="primary" data-print>${t("Stampa")}</button>` : ""}${can("files") ? `<button data-move>${t("Sposta")}</button>` : ""}
         <a class="btn" href="/api/files/${f.id}/download">${t("Scarica")}</a>${canDel ? `<button class="danger" data-del>${t("Elimina")}</button>` : ""}</div></div>`;
@@ -1527,7 +1527,7 @@ function directDialog(r) {
     try {
       const x = await api("/api/direct/test", {method: "POST", body: body()});
       $("#dtest").innerHTML = `<span class="st finished">✓ ${t("Collegata")}</span> · ${esc(x.board || "")} · ${esc(x.firmware || "?")}${x.mode ? " · " + esc(x.mode === "sbc" ? "SBC" : x.mode === "standalone" ? t("autonoma") : x.mode) : ""} · ${t("{n} utensili", {n: x.tools})}${x.snapshot_configured ? " · " + (x.snapshot ? t("foto OK") : `<span class="warn">${x.rtsp && x.ffmpeg === false
-        ? t("telecamera RTSP: sul Raspberry Pi manca ffmpeg (sudo apt install ffmpeg)") : x.rtsp ? t("telecamera RTSP: nessun fotogramma, controlla l'indirizzo") : t("foto non disponibile")}</span>`) : ""}`;
+        ? t("telecamera RTSP: sul Raspberry Pi manca ffmpeg (sudo apt install ffmpeg)") : x.rtsp ? t("telecamera RTSP: nessun fotogramma, controlla l'indirizzo") : t("foto non disponibile")}</span>`) : ""}${x.camera_url ? ` · ${t("camera")}: <code>${esc(x.camera_url)}</code>` : ""}`;
     } catch (e) { $("#dtest").innerHTML = `<span class="warn">✗ ${esc(e.message)}</span>`; }
   };
   $("#dsave").onclick = async ev => {
