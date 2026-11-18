@@ -427,6 +427,9 @@ async def dispatch(svc):
 def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72, start: float | None = None) -> dict:
     """Simula la produzione nel tempo con lo stesso criterio dell'assegnazione reale.
     draft: ordine non ancora salvato, per l'anteprima (stesso formato della creazione)."""
+    # inizio della finestra richiesta (scorrimento avanti/indietro): conservato a parte, perché "start" più sotto
+    # indica l'inizio delle barre e non deve sovrascriverlo
+    window_start = start
     db = svc.db
     now = time.time()
     co = changeover_s(db)
@@ -550,7 +553,7 @@ def plan(svc, user=None, draft: dict | None = None, horizon_h: float = 72, start
         r["free_at"] = free_at.get(sn)
         r["used"] = any(b["sn"] == sn for b in bars)
     # finestra visualizzata (scorrimento avanti e indietro nel tempo): stampe già fatte dallo storico
-    win0 = start if start else now - 3600
+    win0 = window_start if window_start else now - 3600
     win1 = win0 + (horizon_h + 1) * 3600
     for r in db.q("""SELECT j.id, j.printer_sn, j.task_name, j.status, j.started_at, j.ended_at, j.estimated, j.progress,
                             u.production_id, pr.color, pr.name AS prod_name

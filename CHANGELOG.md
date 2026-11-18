@@ -3,6 +3,15 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.27.2] – 2026-11-18
+
+### Correzioni
+- Produzione → Pianificazione: con stampe in corso o pezzi in programma il Gantt non mostrava il passato. L'inizio
+  della finestra richiesta (pulsanti ◀ ▶) veniva sovrascritto dall'inizio dell'ultima barra calcolata, quindi la
+  vista partiva sempre dall'ultima stampa avviata: per esempio dalla riaccensione dopo un riavvio, o da "stamattina".
+  Ora la finestra parte dal momento richiesto e le stampe passate e in corso compaiono con i loro orari reali, anche
+  dopo un riavvio.
+
 ## [0.27.1] – 2026-11-18
 
 ### Modifiche
