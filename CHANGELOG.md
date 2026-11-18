@@ -3,6 +3,21 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.28.0] – 2026-11-18
+
+### Novità
+- Files: i G-code generati da Bambu Studio od OrcaSlicer per una stampante Bambu Lab (.gcode) vengono impacchettati
+  automaticamente come .gcode.3mf al caricamento, perché il Fleet Hub stampa solo questo formato. Dal G-code si
+  ricavano modello, ugelli, durata, peso e i filamenti effettivamente usati (tipo, colore, codice Bambu, ugello);
+  il G-code resta identico, con il suo controllo MD5. Il file compare come "nome.gcode.3mf" e si stampa come gli
+  altri 3mf, con il controllo di compatibilità e l'abbinamento dei filamenti. I G-code per le altre stampanti non
+  cambiano. I G-code Bambu già caricati vengono convertiti una volta all'avvio (stessa cartella, stesso storico).
+
+### Correzioni
+- Stampa Bambu con abbinamento manuale dei filamenti: le posizioni dei filamenti non usati dal file (es. un file
+  che usa solo il filamento 2) vengono inviate al Fleet Hub come "non usato" (ams_id 255) invece del valore interno
+  {"auto": true}.
+
 ## [0.27.2] – 2026-11-18
 
 ### Correzioni

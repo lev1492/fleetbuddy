@@ -415,7 +415,10 @@ def resolve_slots(slots: list | None, filaments: list[dict], printer: dict) -> t
         return auto_map(filaments, printer)
     autos = [f for f in filaments if f["id"] - 1 >= len(slots) or _is_auto(slots[f["id"] - 1])]
     if not autos:
-        return slots, []
+        # posizioni dei filamenti che il file non usa (es. usa solo il n. 2): "non usato" per il Hub, mai {"auto"}
+        used = {f["id"] for f in filaments}
+        return [{"ams_id": s_["ams_id"], "slot_id": s_["slot_id"]} if (i + 1) in used and s_ and not _is_auto(s_)
+                else {"ams_id": 255, "slot_id": 255} for i, s_ in enumerate(slots)], []
     found, warnings = auto_map(autos, printer)
     if found is None:
         return None, warnings

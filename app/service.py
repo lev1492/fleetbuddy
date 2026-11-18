@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import logging
 import time
 from pathlib import Path
@@ -153,6 +154,7 @@ class Service:
         materials.init(self.db)
         try:
             self._fix_offline_duplicates()          # dopo la creazione delle tabelle della produzione
+            self._fix_bambu_gcode()
         except Exception:  # noqa: BLE001 - una correzione dei dati non deve mai impedire l'avvio
             log.exception("Pulizia dello storico non riuscita")
         try:
@@ -629,6 +631,41 @@ class Service:
                 self.db.x("UPDATE queue SET copies=copies+1, message=? WHERE id=? AND status='queued'", (why, q["id"]))
             else:
                 self.db.x("UPDATE queue SET status='error', message=? WHERE id=? AND status='sent'", (why, q["id"]))
+
+    def _fix_bambu_gcode(self):
+        """Una tantum (0.28.0): i G-code per Bambu Lab caricati prima venivano trattati come file per stampanti
+        dirette e non si potevano stampare. Si impacchettano come .gcode.3mf (stesso file, stessa cartella, stesso
+        storico)."""
+        if self.db.get_setting("fix_bambu_gcode", False):
+            return
+        from . import bambu_gcode
+        from .threemf import md5_file, parse_3mf
+        done = 0
+        for f in self.db.files():
+            if (f.get("meta") or {}).get("kind") != "gcode":
+                continue
+            src = self.cfg.path(f["path"])
+            try:
+                if not src.exists() or not bambu_gcode.is_bambu_gcode(src):
+                    continue
+                tmp = src.with_name(src.stem + ".conv.3mf")
+                bambu_gcode.convert(src, tmp)
+                md5 = md5_file(tmp)
+                if self.db.one("SELECT 1 FROM files WHERE md5=? AND id<>?", (md5, f["id"])):
+                    tmp.unlink(missing_ok=True)
+                    continue
+                rel = f"{self.cfg.app.data_dir}/archive/{md5}.3mf"
+                tmp.rename(self.cfg.path(rel))
+                name = re.sub(r"\.(gcode|gco|g)$", "", f["filename"], flags=re.I) + ".gcode.3mf"
+                self.db.x("UPDATE files SET md5=?, path=?, filename=?, size=?, meta=? WHERE id=?",
+                          (md5, rel, name, self.cfg.path(rel).stat().st_size, json.dumps(parse_3mf(self.cfg.path(rel))), f["id"]))
+                src.unlink(missing_ok=True)
+                done += 1
+            except Exception:  # noqa: BLE001 - un file problematico non blocca gli altri
+                log.exception("G-code Bambu %s non convertito", f.get("filename"))
+        if done:
+            log.info("Files: %d G-code per Bambu Lab impacchettati come .gcode.3mf", done)
+        self.db.set_setting("fix_bambu_gcode", True)
 
     def _fix_offline_duplicates(self):
         """Correzione una tantum (0.20.1): una stampante offline che il Fleet Hub mostrava ancora "in stampa" faceva

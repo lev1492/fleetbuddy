@@ -22,7 +22,7 @@ from .i18n import LANGS, _, current_lang, from_accept_language, normalize
 from .hub_client import HubError
 from .printers import FILAMENT_PRESETS, auto_map, firmware_below_min, is_ready
 from .service import Service, qmsg
-from . import materials, production, resinmeta
+from . import bambu_gcode, materials, production, resinmeta
 from .connectors import KINDS, make_client
 from .gcodemeta import is_gcode, parse_gcode, thumbnail_png
 from .threemf import md5_file, parse_3mf, thumbnail
@@ -1097,6 +1097,17 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
     tmp = data / "tmp" / f"{uuid.uuid4().hex}{ext}"
     with tmp.open("wb") as out:
         shutil.copyfileobj(file.file, out, 1 << 20)
+    # G-code generato per una Bambu Lab: il Fleet Hub stampa solo .gcode.3mf, quindi lo si impacchetta
+    converted = gcode_file and not resin and await asyncio.to_thread(bambu_gcode.is_bambu_gcode, tmp)
+    if converted:
+        tmp3 = tmp.with_suffix(".3mf")
+        try:
+            await asyncio.to_thread(bambu_gcode.convert, tmp, tmp3)
+        except Exception as e:  # noqa: BLE001
+            tmp3.unlink(missing_ok=True); tmp.unlink(missing_ok=True)
+            raise HTTPException(400, _("File non valido: {e}", e=e))
+        tmp.unlink(missing_ok=True)
+        tmp, gcode_file, ext = tmp3, False, ".3mf"
     try:
         meta = await asyncio.to_thread(resinmeta.parse_resin if resin else parse_gcode if gcode_file else parse_3mf, tmp)
     except Exception as e:  # noqa: BLE001
@@ -1110,6 +1121,8 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
     rel = f"{cfg.app.data_dir}/archive/{md5}{ext}"
     tmp.rename(cfg.path(rel))
     name = Path(file.filename or "senza_nome.gcode.3mf").name
+    if converted:                                       # plate_1.gcode → plate_1.gcode.3mf
+        name = re.sub(r"\.(gcode|gco|g)$", "", name, flags=re.I) + ".gcode.3mf"
     taken = {r["filename"].lower() for r in S().db.q("SELECT filename FROM files")}
     final, n = name, 0
     while final.lower() in taken:   # file diverso con lo stesso nome: "1-nome", "2-nome", ...
@@ -1119,7 +1132,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
                    "VALUES(?,?,?,?,?,?,?,?)",
                    (md5, final, rel,
                     cfg.path(rel).stat().st_size, time.time(), json.dumps(meta), pid, u.id))
-    return {"id": fid, "duplicate": False, "filename": final, "renamed": final != name}
+    return {"id": fid, "duplicate": False, "filename": final, "renamed": final != name, "converted": bool(converted)}
 
 
 @app.delete("/api/files/{fid}")

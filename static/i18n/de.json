@@ -1065,6 +1065,7 @@
  "{a}–{b} di {n}": "{a}–{b} von {n}",
  "{f} aggiunto all'archivio": "{f} zum Archiv hinzugefügt",
  "{f} era già in archivio (progetto: {p})": "{f} war bereits im Archiv (Projekt: {p})",
+ "{f}: G-code per Bambu Lab, aggiunto come {n} per poterlo stampare dal Fleet Hub": "{f}: G-Code für Bambu Lab, als {n} hinzugefügt, damit er über den Fleet Hub gedruckt werden kann",
  "{h} h di riscaldamento": "{h} h beheizt",
  "{h} h rimanenti": "{h} h verbleibend",
  "{h} h {m} min": "{h} h {m} min",

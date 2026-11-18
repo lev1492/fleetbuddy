@@ -944,6 +944,7 @@ async function uploadFiles(list, pid) {
     const fd = new FormData(); fd.append("file", file); fd.append("project_id", pid === null || pid === undefined ? "" : String(pid));
     const r = await act(() => api("/api/files", {method: "POST", body: fd}));
     if (r) toast(r.duplicate ? t("{f} era già in archivio (progetto: {p})", {f: file.name, p: projectOf(r.project_id).name})
+      : r.converted ? t("{f}: G-code per Bambu Lab, aggiunto come {n} per poterlo stampare dal Fleet Hub", {f: file.name, n: r.filename})
       : r.renamed ? t("Esiste già un file {f}: il nuovo è stato aggiunto come {n}", {f: file.name, n: r.filename})
       : t("{f} aggiunto all'archivio", {f: file.name}), "ok");
   }
