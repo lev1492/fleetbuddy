@@ -619,6 +619,22 @@ a.iplink:hover{color:var(--done);text-decoration-color:currentColor}
 
 .incomp{margin-top:6px}.incomp summary{cursor:pointer}.incomp ul{margin:6px 0 0;padding-left:18px;max-height:160px;overflow:auto}
 
+/* chiusura delle notifiche */
+.toast .tt{flex:1;min-width:0}
+.toast .tx{flex:0 0 auto;margin:-4px -6px -4px 4px;padding:0 6px;border:0;background:none;color:var(--muted);font-size:20px;line-height:1;cursor:pointer}
+.toast .tx:hover{color:var(--ink)}
+/* avvisi sulle proprie stampe, al centro dello schermo */
+dialog.notice{width:min(460px,92vw);padding:0;border:1px solid var(--line);border-radius:var(--radius-lg);background:var(--surface);color:var(--ink);
+  box-shadow:0 18px 60px rgba(0,0,0,.45)}
+dialog.notice::backdrop{background:rgba(0,0,0,.45)}
+dialog.notice .nhead{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 10px 16px;border-bottom:1px solid var(--line)}
+dialog.notice .nhead .tx{border:0;background:none;color:var(--muted);font-size:24px;line-height:1;cursor:pointer;padding:0 4px}
+dialog.notice .nhead .tx:hover{color:var(--ink)}
+dialog.notice .nlist{display:flex;flex-direction:column;gap:8px;padding:12px;max-height:60vh;overflow:auto}
+dialog.notice .nitem{box-shadow:none;animation:none;font-size:15px}
+dialog.notice .nbody{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0}
+dialog.notice .nlink{align-self:flex-start;padding:3px 10px;font-size:13px;margin-top:2px}
+
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
 .gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}

@@ -66,11 +66,39 @@ async function api(path, opts = {}) {
   if (!r.ok) throw new Error(data.detail || data.error || data || r.statusText);
   return data;
 }
+const noteIcon = level => level === "ok" ? "✓" : level === "error" ? "!" : "i";
 function toast(text, level = "info") {
   const el = document.createElement("div"); el.className = "toast " + level;
-  el.innerHTML = `<span class="ti" aria-hidden="true">${level === "ok" ? "✓" : level === "error" ? "!" : "i"}</span><span></span>`;
-  el.lastChild.textContent = text;
+  el.innerHTML = `<span class="ti" aria-hidden="true">${noteIcon(level)}</span><span class="tt"></span>
+    <button type="button" class="tx" aria-label="${esc(t("Chiudi"))}" title="${esc(t("Chiudi"))}">×</button>`;
+  el.querySelector(".tt").textContent = text;
+  el.querySelector(".tx").onclick = () => el.remove();
   $("#toasts").append(el); setTimeout(() => el.remove(), level === "error" ? 9000 : 4500);
+}
+// Avvisi sulle stampe avviate da questo utente: riquadro al centro dello schermo, che resta finché non viene chiuso.
+// Più avvisi si impilano nello stesso riquadro.
+function notice(text, level = "info", sn = null) {
+  let d = $("#notice");
+  if (!d) {
+    d = document.createElement("dialog"); d.id = "notice"; d.className = "notice";
+    d.innerHTML = `<div class="nhead"><b>${t("Avvisi sulle tue stampe")}</b>
+      <button type="button" class="tx" aria-label="${esc(t("Chiudi"))}" title="${esc(t("Chiudi tutti"))}">×</button></div><div class="nlist"></div>`;
+    d.querySelector(".nhead .tx").onclick = () => { d.querySelector(".nlist").innerHTML = ""; d.close(); };
+    d.addEventListener("cancel", () => { d.querySelector(".nlist").innerHTML = ""; });
+    document.body.append(d);
+  }
+  const it = document.createElement("div"); it.className = "nitem toast " + level;
+  it.innerHTML = `<span class="ti" aria-hidden="true">${noteIcon(level)}</span><div class="nbody"><span class="tt"></span>
+      <small class="muted">${new Date().toLocaleTimeString(LOCALES[LANG], {timeStyle: "short"})}</small>
+      ${sn ? `<button type="button" class="nlink">${t("Vai alla stampante")}</button>` : ""}</div>
+    <button type="button" class="tx" aria-label="${esc(t("Chiudi"))}" title="${esc(t("Chiudi"))}">×</button>`;
+  it.querySelector(".tt").textContent = text;
+  const close = () => { it.remove(); if (!d.querySelector(".nitem")) d.close(); };
+  it.querySelector(".tx").onclick = close;
+  if (sn) it.querySelector(".nlink").onclick = () => { close(); location.hash = "#printers";
+    setTimeout(() => { const c = document.querySelector(`.pc[data-sn="${CSS.escape(sn)}"]`); if (c) c.scrollIntoView({behavior: "smooth", block: "center"}); }, 300); };
+  d.querySelector(".nlist").prepend(it);
+  if (!d.open) d.showModal();
 }
 async function act(fn, okMsg) { try { const r = await fn(); if (okMsg) toast(okMsg, "ok"); return r; } catch (e) { toast(e.message, "error"); } }
 const fmtDur = s => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? t("{h} h {m} min", {h, m}) : t("{m} min", {m}); };
@@ -304,7 +332,9 @@ function connect() {
     } else if (m.kind === "toast") {
       const d = m.data, p = {...(d.params || {})};
       if (p.status) p.status = jobName(p.status);
-      toast(t(d.msg, p), d.level);
+      // avviso su una stampa avviata da questo utente: al centro dello schermo; per gli altri in basso
+      if (d.owner != null && ME && d.owner === ME.id) notice(t(d.msg, p), d.level, d.sn);
+      else toast(t(d.msg, p), d.level);
     }
   };
   es.onerror = async () => {

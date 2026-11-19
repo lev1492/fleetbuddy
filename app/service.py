@@ -181,9 +181,10 @@ class Service:
                     pass
             q.put_nowait(msg)
 
-    def toast(self, msg: str, level="info", sn: str | None = None, **params):
-        """Avviso a schermo: frase italiana del catalogo + parametri, tradotta nel browser."""
-        self.emit("toast", {"msg": msg, "params": params, "level": level, "sn": sn})
+    def toast(self, msg: str, level="info", sn: str | None = None, owner: int | None = None, **params):
+        """Avviso a schermo: frase italiana del catalogo + parametri, tradotta nel browser.
+        owner: utente che ha avviato la stampa a cui si riferisce; per lui l'avviso compare al centro dello schermo."""
+        self.emit("toast", {"msg": msg, "params": params, "level": level, "sn": sn, "owner": owner})
 
     @property
     def notify_lang(self) -> str:
@@ -614,10 +615,11 @@ class Service:
         log.warning("%s non ha avviato la stampa %s dopo 2 minuti (motivo dal Hub: %s, tentativi: %s)",
                     p["sn"], data.get("task_name"), reason or "nessuno", p.get("cmd_retry"))
         if reason:
-            self.toast("{printer}: la stampa non è partita – {e}", "error", sn=p["sn"], printer=p["name"], e=reason)
+            self.toast("{printer}: la stampa non è partita – {e}", "error", sn=p["sn"], owner=data.get("user_id"),
+                       printer=p["name"], e=reason)
         else:
             self.toast("{printer}: la stampa non è partita entro 2 minuti. Controlla la stampante e ⋮ → Dati tecnici.",
-                       "error", sn=p["sn"], printer=p["name"])
+                       "error", sn=p["sn"], owner=data.get("user_id"), printer=p["name"])
         data["warned"] = True
         self.db.x("UPDATE pending_prints SET data=? WHERE printer_sn=?", (json.dumps(data), p["sn"]))
         q = data.get("queue") or {}
@@ -969,7 +971,8 @@ class Service:
             for code in codes - seen:
                 kind = "error" if len(code) == 8 else "hms"
                 desc = await self.describe(p["model"], code, kind)
-                self.toast("{printer}: {code} {desc}", "error", sn=sn, printer=p["name"], code=code, desc=desc)
+                self.toast("{printer}: {code} {desc}", "error", sn=sn, owner=(self._open_jobs.get(sn) or {}).get("started_by"),
+                           printer=p["name"], code=code, desc=desc)
                 if self.cfg.notify.on_error:
                     await self._notify("error", f"⚠️ {p['name']}", f"{code}: {desc}", p["name"])
         self._hms_seen[sn] = codes
@@ -1016,7 +1019,8 @@ class Service:
         name = job.get("task_name") or p["task_name"]
         dur = int((time.time() - (job.get("started_at") or time.time())) / 60)
         msg = JOB_TOASTS.get(status, JOB_TOASTS["unknown"])
-        self.toast(msg, "error" if status in ("failed", "to_confirm") else "ok", sn=p["sn"], printer=p["name"], task=name)
+        self.toast(msg, "error" if status in ("failed", "to_confirm") else "ok", sn=p["sn"], owner=job.get("started_by"),
+                   printer=p["name"], task=name)
         if (status == "finished" and self.cfg.notify.on_finish) or (status in ("failed", "to_confirm") and self.cfg.notify.on_failed):
             icon = {"finished": "✅", "to_confirm": "❓"}.get(status, "❌")
             title = self.nt(JOB_TITLES.get(status, JOB_TITLES["unknown"]), printer=p["name"])
@@ -1349,7 +1353,7 @@ class Service:
                     if e.code not in (1051,):
                         self.db.x("UPDATE queue SET status='error', message=? WHERE id=?",
                                   (qmsg(e.key, **{k: str(v) for k, v in e.params.items()}) if e.key else str(e), it["id"]))
-                    self.toast("Coda: errore su {printer}: {error}", "error", sn=sn, printer=p["name"],
+                    self.toast("Coda: errore su {printer}: {error}", "error", sn=sn, owner=it.get("created_by"), printer=p["name"],
                                error=e.localized(self.notify_lang))
                 except Exception as e:  # noqa: BLE001 - un errore imprevisto blocca solo questa voce, non la coda
                     log.exception("Coda: errore imprevisto inviando la voce %s a %s", it["id"], sn)

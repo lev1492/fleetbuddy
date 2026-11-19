@@ -3,6 +3,16 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.29.0] – 2026-11-19
+
+### Novità
+- Notifiche: gli avvisi su una stampa avviata da un utente (stampa terminata, fallita, da confermare o interrotta,
+  errori della stampante durante la stampa, stampa non partita, errore della coda) compaiono a quell'utente in un
+  riquadro al centro dello schermo, che resta finché non viene chiuso; più avvisi si impilano nello stesso riquadro,
+  con l'ora e il pulsante "Vai alla stampante". Agli altri utenti compaiono in basso come prima. Per le stampe
+  partite dalla coda, l'utente è chi le ha messe in coda. La conferma "stampa avviata" resta in basso per tutti.
+- Tutte le notifiche hanno una X per chiuderle.
+
 ## [0.28.0] – 2026-11-18
 
 ### Novità
