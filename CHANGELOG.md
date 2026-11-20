@@ -3,6 +3,28 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.31.0] – 2026-11-20
+
+### Novità
+- Gruppi personali: ogni utente che può stampare (quindi non il visitatore) crea i propri gruppi di stampanti dalla
+  pagina Stampanti ("+ Nuovo gruppo", "Modifica gruppo"), con le sole stampanti che vede. Una stampante può stare in
+  più gruppi. I gruppi personali li vede e li usa solo chi li ha creati (bordo tratteggiato); non danno accesso alle
+  stampanti e non si assegnano agli utenti. I gruppi condivisi restano gestiti dall'amministratore. Eliminando un
+  utente si eliminano anche i suoi gruppi personali.
+- Stampa su un gruppo: nella finestra di stampa, scegliendo un gruppo, "Stampa ora" parte sulla prima stampante del
+  gruppo pronta e compatibile (indicata nella finestra); se nessuna è pronta, la stampa va in coda per il solo
+  gruppo e parte sulla prima che si libera.
+- Files: accanto al formato compare la stampante per cui il file è stato preparato e il diametro dell'ugello
+  (es. "Per Bambu Lab H2D · ugello 0.4"), quando il file lo indica (3mf, G-code, file di resina).
+
+## [0.30.2] – 2026-11-20
+
+### Correzioni
+- Stampanti: "Prossima in coda" mostrava le stampe in coda per "qualsiasi stampante" o per un gruppo anche sulle
+  stampanti che non possono stamparle (es. un file Bambu sulla scheda di una stampante a resina). Ora considera lo
+  stesso controllo di compatibilità usato dalla coda.
+- Simulatore del Fleet Hub (solo per le prove): rinomina delle stampanti e nome delle stampe simulate.
+
 ## [0.30.1] – 2026-11-20
 
 ### Prestazioni

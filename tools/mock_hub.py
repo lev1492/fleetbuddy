@@ -186,10 +186,19 @@ def mock_offline(sn: str, off: bool = True):
 
 
 @app.post("/mock/start/{sn}")
-def mock_external_print(sn: str, dur: int = 20):
+def mock_external_print(sn: str, dur: int = 20, name: str = "Da Bambu Studio", elapsed: int = 0):
     """Solo per i test: simula una stampa avviata da Bambu Studio (fuori da Fabbrix Farm Manager)."""
-    PRINTERS[sn].update(state="PREPARE", pct=0, t0=time.time(), dur=dur, task="Da Bambu Studio",
+    PRINTERS[sn].update(state="PREPARE", pct=0, t0=time.time() - elapsed, dur=dur, task=name,
                         task_id=random.randint(1, 10**6))
+    return ok()
+
+
+@app.put("/v1/hub/devices/{sn}/name")
+async def mock_rename(sn: str, req: Request):
+    """Rinomina di una stampante (paragrafo 4.8 della documentazione del Hub)."""
+    if not authed(req):
+        return JSONResponse({"code": 1001, "message": "unauthorized"}, status_code=401)
+    PRINTERS[sn]["name"] = (await req.json()).get("name", PRINTERS[sn]["name"])
     return ok()
 
 

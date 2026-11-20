@@ -639,8 +639,14 @@ RENDER.printers = function renderPrinters() {
   list = sortPrinters(list);
   const ready = list.filter(p => p.online && p.state === "IDLE").length, printing = list.filter(p => p.active).length;
   setHTML($("#psub"), t("{a} in stampa, {b} pronte", {a: printing, b: ready}) + (S.queue_paused ? " · " + t("coda in pausa") : ""));
-  setHTML($("#gchips"), GROUPS.length ? [`<button class="chip ${groupFilter ? "" : "on"}" data-g="">${t("Tutte")} <small>${S.printers.length}</small></button>`,
-    ...GROUPS.map(g => `<button class="chip ${String(g.id) === groupFilter ? "on" : ""}" data-g="${g.id}" style="--c:${esc(g.color)}"><i></i>${esc(g.name)} <small>${g.printers.filter(sn => S.printers.some(p => p.sn === sn)).length}</small></button>`)].join("") : "");
+  const selG = GROUPS.find(g => String(g.id) === groupFilter);
+  setHTML($("#gchips"), GROUPS.length || can("print") ? [GROUPS.length ? `<button class="chip ${groupFilter ? "" : "on"}" data-g="">${t("Tutte")} <small>${S.printers.length}</small></button>` : "",
+    ...GROUPS.map(g => `<button class="chip ${String(g.id) === groupFilter ? "on" : ""} ${g.personal ? "personal" : ""}" data-g="${g.id}" style="--c:${esc(g.color)}"
+      title="${esc(g.personal ? t("Gruppo personale: lo vedi solo tu") : t("Gruppo condiviso"))}"><i></i>${esc(g.name)} <small>${g.printers.filter(sn => S.printers.some(p => p.sn === sn)).length}</small></button>`),
+    can("print") ? `<button type="button" class="chip addg" id="gnew">+ ${t("Nuovo gruppo")}</button>` : "",
+    selG && selG.personal ? `<button type="button" class="chip addg" id="gedit">${t("Modifica gruppo")}</button>` : ""].join("") : "");
+  if ($("#gnew")) $("#gnew").onclick = e => { e.stopPropagation(); groupDialog(null, true); };
+  if ($("#gedit")) $("#gedit").onclick = e => { e.stopPropagation(); groupDialog(selG, true); };
   S.printers.forEach(p => [...(p.print_error ? [p.print_error] : []), ...p.hms].forEach(c => loadHms(p.model, c)));
   const wrap = $("#pwrap");
   const brandHead = (p, i) => PSORT === "brand" && (i === 0 || brandOf(list[i - 1]) !== brandOf(p));
@@ -901,7 +907,7 @@ RENDER.archive = async function renderArchive() {
     return `<div class="item" data-id="${f.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${f.id}/thumb/${p0.index || 1}" onerror="this.onerror=null;this.classList.add('noimg');this.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'">
       <div><div class="t" title="${esc(f.filename)}">${esc(f.filename)}</div>
-        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.id === undefined ? pr.name : projPath(pr))}</span> · <span class="bdg" ${f.meta.encrypted ? `title="${esc(t("Chitubox ha cifrato i dati di questo file: anteprima, durata e peso non sono leggibili. La stampa funziona normalmente; esportando in .goo i dati sono leggibili."))}"` : ""}>${f.meta.kind === "resin" ? `${t("Resina")} ${esc((f.meta.format || "").toUpperCase())}${f.meta.encrypted ? " · " + t("cifrato") : ""}` : f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
+        <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.id === undefined ? pr.name : projPath(pr))}</span> · <span class="bdg" ${f.meta.encrypted ? `title="${esc(t("Chitubox ha cifrato i dati di questo file: anteprima, durata e peso non sono leggibili. La stampa funziona normalmente; esportando in .goo i dati sono leggibili."))}"` : ""}>${f.meta.kind === "resin" ? `${t("Resina")} ${esc((f.meta.format || "").toUpperCase())}${f.meta.encrypted ? " · " + t("cifrato") : ""}` : f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> ${f.made_for ? `<span class="bdg madefor" title="${esc(t("Stampante per cui il file è stato preparato"))}">${t("Per {m}", {m: esc(f.made_for.model)})}${f.made_for.nozzles && f.made_for.nozzles.length ? " · " + t("ugello {d}", {d: f.made_for.nozzles.join(" / ")}) : ""}</span> ` : ""}· ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
         <div class="m">${t("Caricato il {d}", {d: fmtDate(f.uploaded_at)})} · ${t("stampato {n} volte", {n: f.prints})}${f.prints ? " " + t("({n} riuscite)", {n: f.ok}) : ""}</div></div>
       <div class="a">${can("print") ? `<button class="primary" data-print>${t("Stampa")}</button>` : ""}${can("files") ? `<button data-rename>${t("Rinomina")}</button>` : ""}${can("files") ? `<button data-move>${t("Sposta")}</button>` : ""}
         <a class="btn" href="/api/files/${f.id}/download">${t("Scarica")}</a>${canDel ? `<button class="danger" data-del>${t("Elimina")}</button>` : ""}</div></div>`;
@@ -1011,6 +1017,7 @@ async function printDialog(f, presetPrinter) {
   const info = sn => (tg ? tg.printers.find(x => x.sn === sn) : null);
   const comp = tg ? tg.printers.filter(x => x.compatible && x.online) : S.printers.filter(p => p.online && !!p.direct === isG);
   const ready = comp.filter(x => x.ready), busy = comp.filter(x => !x.ready);
+  const ready_list = ready; let groupPick = null;          // per "Stampa ora" su un gruppo
   const incompatible = tg ? tg.printers.filter(x => !x.compatible) : [];
   const compSet = new Set((tg ? tg.printers.filter(x => x.compatible) : comp).map(x => x.sn));
   const myGroups = GROUPS.filter(g => (seesAll() || (g.printers.length && g.printers.every(sn => S.printers.some(p => p.sn === sn))))
@@ -1022,7 +1029,7 @@ async function printDialog(f, presetPrinter) {
       ${plates.length > 1 ? `<label>${t("Piatto")}<select name="plate">${plates.map(p => `<option value="${p.index}">${t("Piatto {n}", {n: p.index})} · ${fmtDur(p.prediction_s)}</option>`).join("")}</select></label>` : `<input type="hidden" name="plate" value="${plates[0].index}">`}
       <label>${t("Destinazione")}<select name="dest">
         ${seesAll() ? `<option value="">${t("Qualsiasi stampante libera (solo coda)")}</option>` : ""}
-        ${myGroups.length ? `<optgroup label="${esc(t("Gruppi (solo coda)"))}">${myGroups.map(g => `<option value="g:${g.id}">${t("Gruppo {g}", {g: esc(g.name)})} · ${t("{n} compatibili", {n: g.printers.filter(sn => compSet.has(sn)).length})}</option>`).join("")}</optgroup>` : ""}
+        ${myGroups.length ? `<optgroup label="${esc(t("Gruppi"))}">${myGroups.map(g => `<option value="g:${g.id}">${t("Gruppo {g}", {g: esc(g.name)})}${g.personal ? " (" + t("personale") + ")" : ""} · ${t("{n} compatibili", {n: g.printers.filter(sn => compSet.has(sn)).length})}</option>`).join("")}</optgroup>` : ""}
         ${ready.length ? `<optgroup label="${esc(t("Pronte"))}">${ready.map(p => `<option value="p:${p.sn}" ${p.sn === presetPrinter ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</optgroup>` : ""}
         ${busy.length ? `<optgroup label="${esc(t("Compatibili, occupate (solo coda)"))}">${busy.map(p => `<option value="p:${p.sn}" ${p.sn === presetPrinter ? "selected" : ""}>${esc(p.name)} – ${stateName(p.state)}</option>`).join("")}</optgroup>` : ""}
       </select></label>
@@ -1051,8 +1058,15 @@ async function printDialog(f, presetPrinter) {
     const {sn, gid} = target(), pl = plateOf();
     const pr0 = S.printers.find(x => x.sn === sn);
     const ready = !!pr0 && pr0.online && pr0.mqtt === 2 && pr0.state === "IDLE" && !pr0.pending;
-    $("#printnow").disabled = !sn || !ready;
-    $("#toqueue").classList.toggle("primary", !!sn && !ready); $("#printnow").classList.toggle("primary", !sn || ready);
+    // gruppo scelto: si può stampare subito sulla prima stampante del gruppo pronta e compatibile
+    const grp = gid ? GROUPS.find(g => g.id === gid) : null;
+    groupPick = grp ? (ready_list.find(x => grp.printers.includes(x.sn)) || null) : null;
+    $("#printnow").disabled = gid ? !groupPick : (!sn || !ready);
+    $("#toqueue").classList.toggle("primary", gid ? !groupPick : (!!sn && !ready)); $("#printnow").classList.toggle("primary", gid ? !!groupPick : (!sn || ready));
+    if (gid) {
+      $("#busynote").innerHTML = groupPick ? t("Stampa ora parte su {p}, la prima stampante pronta del gruppo.", {p: `<b>${esc(groupPick.name)}</b>`})
+        : t("Nessuna stampante del gruppo è pronta: la stampa va in coda e partirà sulla prima che si libera.");
+    } else
     $("#busynote").innerHTML = !sn || ready ? "" : !pr0.online ? t("{p} è offline: puoi solo aggiungere la stampa alla sua coda.", {p: esc(pr0.name)})
       : pr0.state === "FINISH" || pr0.state === "FAILED" ? t("{p} ha il piatto da liberare: la stampa partirà dalla coda dopo la conferma.", {p: esc(pr0.name)})
       : pr0.pending ? t("{p} sta già ricevendo una stampa: puoi solo aggiungerla alla sua coda.", {p: esc(pr0.name)})
@@ -1129,7 +1143,7 @@ async function printDialog(f, presetPrinter) {
   $("#printnow").onclick = async ev => {
     ev.preventDefault(); if (!valid()) return;
     ev.target.disabled = true; ev.target.textContent = t("Invio al Hub…");
-    const r = await act(() => api("/api/print", {method: "POST", body: {file_id: f.id, plate: +fm.plate.value, printer_sn: target().sn, slots, options: opts()}}));
+    const r = await act(() => api("/api/print", {method: "POST", body: {file_id: f.id, plate: +fm.plate.value, printer_sn: target().sn || (groupPick && groupPick.sn), slots, options: opts()}}));
     if (r) { toast(r.cached ? t("Stampa avviata (file già nella cache del Hub)") : t("File caricato sul Hub, stampa avviata"), "ok"); $("#dlg").close(); }
     else { ev.target.disabled = false; ev.target.textContent = t("Stampa ora"); }
   };
@@ -1599,9 +1613,10 @@ function directDialog(r) {
 RENDER.admin = async function renderAdmin() {
   const el = $("#v-admin");
   await loadMeta();
-  const [users, allGroups, rl] = await Promise.all([api("/api/users").catch(e => (toast(e.message, "error"), [])), api("/api/groups").catch(() => []),
+  const [users, allGroupsRaw, rl] = await Promise.all([api("/api/users").catch(e => (toast(e.message, "error"), [])), api("/api/groups").catch(() => []),
     api("/api/roles").catch(() => ({roles: [], permissions: []}))]);
   ROLE_LIST = rl.roles; PERMS = rl.permissions;
+  const allGroups = allGroupsRaw.filter(g => !g.personal);      // i gruppi personali restano dell'utente che li ha creati
   const projs = PROJECTS.filter(p => p.id !== null && p.parent_id == null);   // le sottocartelle sono incluse
   el.innerHTML = `<div class="head"><div><h1>${t("Amministrazione")}</h1></div></div>${adminTabs("admin")}
     <p class="sub">${t("Utenti, gruppi di stampanti e permessi di accesso.")}</p>
@@ -1824,19 +1839,26 @@ function accessDialog(u, groups, projs) {
     if (r) { $("#dlg").close(); RENDER.admin(); }
   };
 }
-function groupDialog(g) {
+function groupDialog(g, personal = false) {
   openDialog(`<h3>${g ? t("Modifica gruppo") : t("Nuovo gruppo")}</h3>
+    ${personal ? `<p class="sub" style="margin:0">${t("Gruppo personale: lo vedi e lo usi solo tu, per filtrare le stampanti e per mandare le stampe al solo gruppo.")}</p>` : ""}
     <div class="row"><label style="flex:1">${t("Nome")}<input name="gname" value="${esc(g ? g.name : "")}" maxlength="40"></label>
       <label>${t("Colore")}<input type="color" name="color" value="${esc(g ? g.color : "#F9A420")}"></label></div>
     <fieldset><legend>${t("Stampanti del gruppo")}</legend><div class="checks">${S.printers.map(p =>
       `<label class="inline"><input type="checkbox" name="pr" value="${esc(p.sn)}" ${g && g.printers.includes(p.sn) ? "checked" : ""}> ${esc(p.name)} <small class="muted">${esc(p.model)}</small></label>`).join("") || t("Nessuna stampante collegata.")}</div></fieldset>
     <p class="sub" style="margin:0">${t("Una stampante può far parte di più gruppi.")}</p>
-    <div class="dlgfoot">${btnCancel()}<button class="primary" id="gok">${g ? t("Salva") : t("Crea gruppo")}</button></div>`);
+    <div class="dlgfoot">${g && personal ? `<button type="button" class="danger" id="gdel">${t("Elimina")}</button><span class="grow"></span>` : ""}${btnCancel()}<button class="primary" id="gok">${g ? t("Salva") : t("Crea gruppo")}</button></div>`);
+  const done = async () => { $("#dlg").close(); await loadMeta(); (RENDER[view] || RENDER.printers)(); };
   $("#gok").onclick = async ev => {
     ev.preventDefault(); const f = $("#dlgbody");
-    const body = {name: f.gname.value, color: f.color.value, printers: $$('#dlgbody input[name="pr"]:checked').map(i => i.value)};
+    const body = {name: f.gname.value, color: f.color.value, printers: $$('#dlgbody input[name="pr"]:checked').map(i => i.value), personal};
     const r = await act(() => g ? api(`/api/groups/${g.id}`, {method: "PATCH", body}) : api("/api/groups", {method: "POST", body}), g ? t("Gruppo aggiornato") : t("Gruppo creato"));
-    if (r) { $("#dlg").close(); await loadMeta(); RENDER.admin(); }
+    if (r) { if (!g && personal && r.id) { groupFilter = String(r.id); localStorage.setItem("fb_group", groupFilter); } await done(); }
+  };
+  if ($("#gdel")) $("#gdel").onclick = async ev => {
+    ev.preventDefault();
+    if (await uiConfirm(t("Eliminare il gruppo {g}? Le stampanti restano collegate; le stampe in coda per questo gruppo andranno in errore.", {g: g.name}), {danger: true})
+        && await act(() => api(`/api/groups/${g.id}`, {method: "DELETE"}), t("Gruppo eliminato"))) { groupFilter = ""; localStorage.setItem("fb_group", ""); await done(); }
   };
 }
 

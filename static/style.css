@@ -644,6 +644,12 @@ dialog.notice .nlink{align-self:flex-start;padding:3px 10px;font-size:13px;margi
 /* file senza anteprima: riquadro neutro con l'icona di un pezzo invece dell'immagine mancante */
 img.noimg{background:var(--sunk) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='1.4' stroke-linejoin='round'%3E%3Cpath d='M12 3 4 7.5v9L12 21l8-4.5v-9z'/%3E%3Cpath d='M4 7.5 12 12l8-4.5M12 12v9'/%3E%3C/svg%3E") center/40% no-repeat}
 
+.bdg.madefor{background:color-mix(in srgb,var(--accent) 14%,transparent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+
+/* gruppi personali (bordo tratteggiato) e pulsanti dei gruppi */
+.chip.personal{border-style:dashed}
+.chip.addg{background:none;border-style:dashed;color:var(--muted)}.chip.addg:hover{color:var(--ink);border-color:var(--accent)}
+
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
 .gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}

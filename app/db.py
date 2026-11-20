@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY, user_id INTEGER, expires REAL, created_at REAL, ip TEXT DEFAULT ''
 );
-CREATE TABLE IF NOT EXISTS printer_groups (id INTEGER PRIMARY KEY, name TEXT UNIQUE COLLATE NOCASE, color TEXT DEFAULT '#0E7C6B');
+CREATE TABLE IF NOT EXISTS printer_groups (id INTEGER PRIMARY KEY, name TEXT COLLATE NOCASE, color TEXT DEFAULT '#F9A420', owner_id INTEGER);
 CREATE TABLE IF NOT EXISTS group_printers (group_id INTEGER, printer_sn TEXT, PRIMARY KEY (group_id, printer_sn));
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY, name TEXT COLLATE NOCASE, description TEXT DEFAULT '',
@@ -66,6 +66,7 @@ MIGRATIONS = [
     ("files", "uploaded_by", "INTEGER"),
     ("queue", "group_id", "INTEGER"),
     ("queue", "created_by", "INTEGER"),
+    ("printer_groups", "owner_id", "INTEGER"),          # gruppo personale di un utente (NULL = gruppo condiviso)
     ("jobs", "started_by", "INTEGER"),
     ("users", "language", "TEXT"),
     ("users", "first_name", "TEXT DEFAULT ''"),
@@ -114,6 +115,16 @@ class DB:
                 CREATE INDEX IF NOT EXISTS files_project ON files(project_id);
                 CREATE INDEX IF NOT EXISTS files_md5 ON files(md5);
             """)
+            # gruppi personali: il nome era unico per tutti; ora lo è solo tra i gruppi dello stesso proprietario
+            gsql = (self._conn.execute("SELECT sql FROM sqlite_master WHERE name='printer_groups'").fetchone() or [""])[0] or ""
+            if "UNIQUE" in gsql.upper():
+                self._conn.executescript("""
+                    CREATE TABLE printer_groups_new (id INTEGER PRIMARY KEY, name TEXT COLLATE NOCASE,
+                        color TEXT DEFAULT '#F9A420', owner_id INTEGER);
+                    INSERT INTO printer_groups_new(id, name, color, owner_id) SELECT id, name, color, owner_id FROM printer_groups;
+                    DROP TABLE printer_groups;
+                    ALTER TABLE printer_groups_new RENAME TO printer_groups;
+                """)
             # sottocartelle dei progetti: il nome era unico in tutto l'archivio; ora lo è solo nella stessa cartella.
             # SQLite non permette di togliere un vincolo UNIQUE: la tabella viene ricreata con gli stessi dati.
             sql = (self._conn.execute("SELECT sql FROM sqlite_master WHERE name='projects'").fetchone() or [""])[0] or ""

@@ -148,6 +148,9 @@ def groups_with_members() -> list[dict]:
 
 
 def group_targetable(u: User, gid: int) -> bool:
+    g = S().db.one("SELECT owner_id FROM printer_groups WHERE id=?", (gid,))
+    if g and g["owner_id"] is not None and g["owner_id"] != u.id:
+        return False                  # gruppo personale di un altro utente
     if u.sees_all:
         return True
     members = auth.group_members().get(gid, set())
@@ -216,9 +219,13 @@ def state_for(u: User) -> dict:
     elif not st["hub_ok"] and S().hub_error_obj is not None:
         st["hub_error"] = S().hub_error_obj.localized(current_lang.get())
     st["settings"] = settings()
-    rows = S().db.q("""SELECT q.id, q.printer_sn, q.group_id, q.copies, f.filename, f.project_id
+    rows = S().db.q("""SELECT q.id, q.printer_sn, q.group_id, q.copies, q.file_id, f.filename, f.project_id
                        FROM queue q LEFT JOIN files f ON f.id=q.file_id WHERE q.status='queued'
                        ORDER BY q.position, q.id""")
+    qfiles = {fid: S().db.file(fid) for fid in {r["file_id"] for r in rows if r["file_id"]}}
+    def fits(r, sn):            # voce per "qualsiasi stampante" o per un gruppo: solo se il file è compatibile
+        f = qfiles.get(r["file_id"])
+        return bool(f) and production.check(S(), f, sn)[0]
     members = auth.group_members()
     pend = {r["printer_sn"]: r for r in S().db.q("SELECT printer_sn, data, at FROM pending_prints")}
     for p in st["printers"]:
@@ -228,8 +235,8 @@ def state_for(u: User) -> dict:
             d = json.loads(pr["data"])
             p["pending"] = {"task": d.get("task_name"), "at": pr["at"], "warned": bool(d.get("warned"))}
         mine = [r for r in rows if queue_visible(u, r) and (r["printer_sn"] == p["sn"] or
-                (r["group_id"] and p["sn"] in members.get(r["group_id"], set())) or
-                (not r["printer_sn"] and not r["group_id"]))]
+                (((r["group_id"] and p["sn"] in members.get(r["group_id"], set())) or (not r["printer_sn"] and not r["group_id"]))
+                 and fits(r, p["sn"])))]
         p["next_job"] = {"filename": mine[0]["filename"], "more": len(mine) - 1} if mine else None
         p["job_materials"] = job_materials(p)
     return st
@@ -549,6 +556,10 @@ async def users_delete(request: Request, uid: int):
         raise HTTPException(409, _("Deve restare almeno un amministratore attivo"))
     S().db.x("DELETE FROM users WHERE id=?", (uid,))
     S().db.x("DELETE FROM access WHERE user_id=?", (uid,))
+    for g in S().db.q("SELECT id FROM printer_groups WHERE owner_id=?", (uid,)):     # i suoi gruppi personali
+        S().db.x("DELETE FROM group_printers WHERE group_id=?", (g["id"],))
+        S().db.x("UPDATE queue SET status='error', message=? WHERE group_id=? AND status='queued'", (qmsg("gruppo eliminato"), g["id"]))
+    S().db.x("DELETE FROM printer_groups WHERE owner_id=?", (uid,))
     auth.drop_sessions(uid)
     return {"ok": True}
 
@@ -562,6 +573,9 @@ async def users_access(request: Request, uid: int, body: dict):
         body = {"printers": [x for x in body.get("printers") or [] if me.sees_printer(x)],
                 "groups": [x for x in body.get("groups") or [] if group_targetable(me, int(x))],
                 "projects": [x for x in body.get("projects") or [] if me.sees_project(int(x))]}
+    # l'accesso si dà solo con i gruppi condivisi: quelli personali restano di chi li ha creati (vale per tutti)
+    body = {**body, "groups": [x for x in body.get("groups") or []
+                               if db.one("SELECT 1 FROM printer_groups WHERE id=? AND owner_id IS NULL", (int(x),))]}
     db.x("DELETE FROM access WHERE user_id=?", (uid,))
     for kind, key in (("printer", "printers"), ("group", "groups"), ("project", "projects")):
         for ref in body.get(key) or []:
@@ -724,9 +738,13 @@ async def roles_delete(request: Request, key: str):
 # ====================================================================== gruppi di stampanti
 @app.get("/api/groups")
 async def groups_list(request: Request):
+    """Gruppi condivisi (gestiti dall'amministratore) e gruppi personali dell'utente; quelli degli altri non si vedono."""
     u = U(request)
     out = []
     for g in groups_with_members():
+        g["personal"] = g.get("owner_id") is not None
+        if g["personal"] and g["owner_id"] != u.id:
+            continue
         if not u.sees_all:
             g["printers"] = [sn for sn in g["printers"] if u.sees_printer(sn)]
             if not g["printers"]:
@@ -735,37 +753,67 @@ async def groups_list(request: Request):
     return out
 
 
-@app.post("/api/groups")
-async def groups_add(request: Request, body: dict):
-    need_admin(U(request))
-    name = str(body.get("name", "")).strip()[:40]
+def _group_owner(u: User, body: dict | None = None, gid: int | None = None) -> int | None:
+    """Proprietario del gruppo: None per i gruppi condivisi (solo amministratore), l'utente per quelli personali
+    (chiunque possa stampare, quindi non il visitatore)."""
+    if gid is not None:
+        row = S().db.one("SELECT owner_id FROM printer_groups WHERE id=?", (gid,))
+        if not row:
+            raise HTTPException(404)
+        owner = row["owner_id"]
+        if owner is None:
+            need_admin(u)
+        elif owner != u.id and not u.is_admin:
+            raise HTTPException(403, _("Il tuo ruolo non consente questa operazione"))
+        return owner
+    if (body or {}).get("personal") or not u.is_admin:
+        need(u, "print")
+        return u.id
+    return None
+
+
+def _group_name(name, owner: int | None, exclude: int | None = None) -> str:
+    name = str(name or "").strip()[:40]
     if not name:
         raise HTTPException(400, _("Dai un nome al gruppo"))
-    if S().db.one("SELECT 1 FROM printer_groups WHERE name=?", (name,)):
+    if S().db.one("SELECT 1 FROM printer_groups WHERE name=? AND owner_id IS ? AND id IS NOT ?", (name, owner, exclude)):
         raise HTTPException(409, _("Esiste già un gruppo con questo nome"))
-    gid = S().db.x("INSERT INTO printer_groups(name, color) VALUES(?,?)", (name, body.get("color") or "#F9A420"))
-    for sn in body.get("printers") or []:
-        S().db.x("INSERT OR IGNORE INTO group_printers VALUES(?,?)", (gid, sn))
+    return name
+
+
+def _group_printers(u: User, gid: int, printers, owner: int | None):
+    S().db.x("DELETE FROM group_printers WHERE group_id=?", (gid,))
+    for sn in printers or []:
+        if owner is None or u.sees_printer(sn):      # un gruppo personale contiene solo stampanti già visibili
+            S().db.x("INSERT OR IGNORE INTO group_printers VALUES(?,?)", (gid, sn))
+
+
+@app.post("/api/groups")
+async def groups_add(request: Request, body: dict):
+    u = U(request)
+    owner = _group_owner(u, body)
+    gid = S().db.x("INSERT INTO printer_groups(name, color, owner_id) VALUES(?,?,?)",
+                   (_group_name(body.get("name"), owner), body.get("color") or "#F9A420", owner))
+    _group_printers(u, gid, body.get("printers"), owner)
     return {"id": gid}
 
 
 @app.patch("/api/groups/{gid}")
 async def groups_edit(request: Request, gid: int, body: dict):
-    need_admin(U(request))
+    u = U(request)
+    owner = _group_owner(u, gid=gid)
     if "name" in body:
-        S().db.x("UPDATE printer_groups SET name=? WHERE id=?", (str(body["name"]).strip()[:40], gid))
+        S().db.x("UPDATE printer_groups SET name=? WHERE id=?", (_group_name(body["name"], owner, gid), gid))
     if "color" in body:
         S().db.x("UPDATE printer_groups SET color=? WHERE id=?", (body["color"], gid))
     if "printers" in body:
-        S().db.x("DELETE FROM group_printers WHERE group_id=?", (gid,))
-        for sn in body["printers"]:
-            S().db.x("INSERT OR IGNORE INTO group_printers VALUES(?,?)", (gid, sn))
+        _group_printers(u, gid, body["printers"], owner)
     return {"ok": True}
 
 
 @app.delete("/api/groups/{gid}")
 async def groups_delete(request: Request, gid: int):
-    need_admin(U(request))
+    _group_owner(U(request), gid=gid)
     db = S().db
     db.x("DELETE FROM printer_groups WHERE id=?", (gid,))
     db.x("DELETE FROM group_printers WHERE group_id=?", (gid,))
@@ -1059,7 +1107,29 @@ async def files(request: Request, project: str | None = None, paged: bool = Fals
     else:
         where, args = "", ()
     rows = [f for f in S().db.files(where, args) if u.sees_project(f.get("project_id"))]
-    return page_of(rows, paged, limit, offset)
+    out = page_of(rows, paged, limit, offset)
+    for f in (out["items"] if paged else out):
+        f["made_for"] = file_made_for(f)
+    return out
+
+
+def file_made_for(f: dict) -> dict | None:
+    """Stampante per cui il file è stato preparato (se il file lo indica) e diametri degli ugelli."""
+    meta = f.get("meta") or {}
+    model, noz = "", []
+    try:
+        if meta.get("kind") not in ("gcode", "resin"):
+            model, noz = production.file_printer(S(), f)          # 3mf: letto una volta e memorizzato
+        model = model or meta.get("printer_model") or meta.get("printer_model_id") or ""
+        if not noz:
+            pl = (meta.get("plates") or [{}])[0]
+            noz = [x for x in str(pl.get("nozzle_diameters") or "").replace(",", " ").split() if x]
+    except Exception:  # noqa: BLE001 - un file illeggibile non blocca l'elenco
+        pass
+    model = str(model).strip()
+    if not model:
+        return None
+    return {"model": model, "nozzles": sorted({f"{float(x):g}" for x in noz if str(x).replace(".", "", 1).isdigit()})}
 
 
 @app.get("/api/files/{fid}/targets")
