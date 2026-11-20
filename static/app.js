@@ -808,7 +808,8 @@ async function editTray(p, ams, slot) {
 
 // ------------------------------------------------------------------ archivio e progetti
 let projFilter = localStorage.getItem("fb_proj") || "";
-let FVIEW = localStorage.getItem("fb_fview") === "list" ? "list" : "tiles";   // cartelle: riquadri o elenco   // "" = tutti, "none" = senza progetto, oppure id
+let FVIEW = localStorage.getItem("fb_fview") === "list" ? "list" : "tiles";   // cartelle: riquadri o elenco
+let FSEARCH = "";                                                               // ricerca dei file in tutte le cartelle   // "" = tutti, "none" = senza progetto, oppure id
 RENDER.archive = async function renderArchive() {
   const el = $("#v-archive");
   await loadMeta();
@@ -826,7 +827,8 @@ RENDER.archive = async function renderArchive() {
       : uploadPid === null ? t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti), sarà senza progetto, oppure sceglilo dal computer")
       : t("Trascina qui un file .gcode.3mf (Bambu) o .gcode (altre stampanti) nel progetto {p} oppure sceglilo dal computer", {p: `<b>${esc(PROJECTS[0].name)}</b>`}));
   el.innerHTML = `<div class="head"><div><h1>${t("Files")}</h1><p class="sub">${t("I file sono organizzati in progetti. Ogni utente vede solo i progetti che l'amministratore gli ha assegnato.")}</p></div>
-      <button class="admin-only primary" id="newproj">${t("Nuovo progetto")}</button></div>
+      <div class="fsearch"><input type="search" id="fsearch" placeholder="${esc(t("Cerca file in tutte le cartelle…"))}" value="${esc(FSEARCH)}" autocomplete="off">
+      <button class="admin-only primary" id="newproj">${t("Nuovo progetto")}</button></div></div>
     <div class="chips" id="pchips">
       ${showAll ? `<button class="chip ${projFilter ? "" : "on"}" data-p="">${t("Tutti")} <small>${PROJECTS.reduce((n, p) => n + (p.files || 0), 0)}</small></button>` : ""}
       ${PROJECTS.filter(p => p.parent_id == null).map(p => { const key = p.id === null ? "none" : String(p.id);
@@ -850,6 +852,16 @@ RENDER.archive = async function renderArchive() {
   $("#pchips").onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; projFilter = c.dataset.p; localStorage.setItem("fb_proj", projFilter); RENDER.archive(); };
   $$("#v-archive .folders, #v-archive .crumbs").forEach(box => box.onclick = e => { const c = e.target.closest("[data-p]"); if (!c) return; e.preventDefault();
     projFilter = c.dataset.p; localStorage.setItem("fb_proj", projFilter); RENDER.archive(); });
+  let fsT = null;
+  $("#fsearch").oninput = e => {          // ricerca mentre si scrive (attesa breve per non interrogare a ogni tasto)
+    clearTimeout(fsT);
+    const v = e.target.value;
+    fsT = setTimeout(async () => {
+      FSEARCH = v.trim();
+      await RENDER.archive();
+      const i = $("#fsearch"); i.focus(); i.setSelectionRange(i.value.length, i.value.length);
+    }, 300);
+  };
   if ($("#fview")) $("#fview").onclick = e => { const b = e.target.closest("[data-fv]"); if (!b) return;
     FVIEW = b.dataset.fv; localStorage.setItem("fb_fview", FVIEW); RENDER.archive(); };
   if ($("#newsub")) $("#newsub").onclick = () => projectDialog(null, sel);
@@ -872,14 +884,22 @@ RENDER.archive = async function renderArchive() {
     drop.ondragleave = () => drop.classList.remove("over");
     drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); uploadFiles(e.dataTransfer.files, uploadPid); };
   }
-  if (PAGES._fproj !== projFilter) { PAGES._fproj = projFilter; PAGES.files = 1; }     // altra cartella: dalla prima pagina
-  const fp = await fetchPage("files", `/api/files${projFilter ? "?project=" + projFilter : ""}`).catch(e => (toast(e.message, "error"), {items: [], total: 0}));
+  const fkey = FSEARCH ? "q:" + FSEARCH : projFilter;
+  if (PAGES._fproj !== fkey) { PAGES._fproj = fkey; PAGES.files = 1; }     // altra cartella o altra ricerca: dalla prima pagina
+  const fp = await fetchPage("files", FSEARCH ? `/api/files?q=${encodeURIComponent(FSEARCH)}`
+    : `/api/files${projFilter ? "?project=" + projFilter : ""}`).catch(e => (toast(e.message, "error"), {items: [], total: 0}));
+  if (FSEARCH) {           // risultati della ricerca: al posto di cartelle e caricamento, l'esito e il modo di tornare indietro
+    el.querySelectorAll("#pchips, .projhead, .fhead, .folders, .drop").forEach(x => x.style.display = "none");
+    $("#flist").insertAdjacentHTML("beforebegin", `<div class="fres"><span>${fp.total ? t("{n} file trovati per «{q}» in tutte le cartelle", {n: fp.total, q: esc(FSEARCH)})
+      : t("Nessun file trovato per «{q}»", {q: esc(FSEARCH)})}</span><button type="button" id="fsclear">${t("Annulla ricerca")}</button></div>`);
+    $("#fsclear").onclick = () => { FSEARCH = ""; RENDER.archive(); };
+  }
   const files = fp.items;
   $("#flist").innerHTML = files.length ? files.map(f => {
     const pl = f.meta.plates || [], p0 = pl[0] || {}, pr = projectOf(f.project_id);
     const canDel = isAdmin() || (can("files") && (seesAll() || f.uploaded_by === ME.id));
     return `<div class="item" data-id="${f.id}">
-      <img class="thumb" loading="lazy" alt="" src="/api/files/${f.id}/thumb/${p0.index || 1}">
+      <img class="thumb" loading="lazy" alt="" src="/api/files/${f.id}/thumb/${p0.index || 1}" onerror="this.onerror=null;this.classList.add('noimg');this.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'">
       <div><div class="t" title="${esc(f.filename)}">${esc(f.filename)}</div>
         <div class="m"><span class="tag" style="--c:${esc(pr.color)}"><i></i>${esc(pr.id === undefined ? pr.name : projPath(pr))}</span> · <span class="bdg" ${f.meta.encrypted ? `title="${esc(t("Chitubox ha cifrato i dati di questo file: anteprima, durata e peso non sono leggibili. La stampa funziona normalmente; esportando in .goo i dati sono leggibili."))}"` : ""}>${f.meta.kind === "resin" ? `${t("Resina")} ${esc((f.meta.format || "").toUpperCase())}${f.meta.encrypted ? " · " + t("cifrato") : ""}` : f.meta.format === "ufp" ? "UFP" : f.meta.kind === "gcode" ? "G-code" : "Bambu 3MF"}</span> · ${pl.length > 1 ? t("{n} piatti", {n: pl.length}) + " · " : ""}${fmtDur(p0.prediction_s)} · ${p0.weight_g || 0} g ${dots(p0.filaments)}</div>
         <div class="m">${t("Caricato il {d}", {d: fmtDate(f.uploaded_at)})} · ${t("stampato {n} volte", {n: f.prints})}${f.prints ? " " + t("({n} riuscite)", {n: f.ok}) : ""}</div></div>
@@ -997,7 +1017,7 @@ async function printDialog(f, presetPrinter) {
     && g.printers.some(sn => compSet.has(sn)));
   const pname = sn => (S.printers.find(p => p.sn === sn) || {}).name || sn;
   openDialog(`<h3>${t("Stampa {f}", {f: esc(f.filename)})}</h3>
-    <div class="printhead"><img class="platethumb" id="platethumb" alt="${esc(t("Anteprima del piatto"))}" src="/api/files/${f.id}/thumb/${plates[0].index}">
+    <div class="printhead"><img class="platethumb" id="platethumb" alt="${esc(t("Anteprima del piatto"))}" src="/api/files/${f.id}/thumb/${plates[0].index}" onerror="this.onerror=null;this.classList.add('noimg');this.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'">
     <div class="printinfo"><div class="row">
       ${plates.length > 1 ? `<label>${t("Piatto")}<select name="plate">${plates.map(p => `<option value="${p.index}">${t("Piatto {n}", {n: p.index})} · ${fmtDur(p.prediction_s)}</option>`).join("")}</select></label>` : `<input type="hidden" name="plate" value="${plates[0].index}">`}
       <label>${t("Destinazione")}<select name="dest">
@@ -1095,7 +1115,9 @@ async function printDialog(f, presetPrinter) {
   };
   const showPlate = () => {
     const pl = plateOf();
-    $("#platethumb").src = `/api/files/${f.id}/thumb/${pl.index}`;
+    const pth = $("#platethumb"); pth.classList.remove("noimg");
+    pth.onerror = () => { pth.onerror = null; pth.classList.add("noimg"); pth.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"; };
+    pth.src = `/api/files/${f.id}/thumb/${pl.index}`;
     $("#plateinfo").innerHTML = `${fmtDur(pl.prediction_s)} · ${pl.weight_g || 0} g ${dots(pl.filaments)}`;
   };
   showPlate();
@@ -1146,7 +1168,7 @@ RENDER.queue = async function renderQueue() {
   el.innerHTML = `<div class="head"><div><h1>${t("Coda di stampa")}</h1><p class="sub">${t("Le stampe partono da sole quando la stampante è inattiva ed escono dalla coda appena iniziano (restano nello storico). Dopo ogni stampa conferma \"Segna il piatto come liberato\" sulla scheda della stampante.")}</p></div>
     <button id="qpause" class="admin-only ${S.queue_paused ? "primary" : ""}">${S.queue_paused ? t("Riprendi la coda") : t("Metti in pausa la coda")}</button></div>
     <div class="list">${items.length ? items.map(q => `<div class="item" data-id="${q.id}">
-      <img class="thumb" loading="lazy" alt="" src="/api/files/${q.file_id}/thumb/${q.plate}">
+      <img class="thumb" loading="lazy" alt="" src="/api/files/${q.file_id}/thumb/${q.plate}" onerror="this.onerror=null;this.classList.add('noimg');this.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'">
       <div><div class="t">${esc(q.filename || t("File rimosso"))}${q.copies > 1 ? ` × ${q.copies}` : ""}</div>
         <div class="m"><span class="st ${q.status}">${jobName(q.status)}</span> · ${dest(q)} · ${t("piatto {n}", {n: q.plate})} · ${fmtDur(q.prediction_s)} · ${q.weight_g} g</div>
         ${needHtml(q)}

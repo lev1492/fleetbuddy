@@ -3,6 +3,18 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.30.0] – 2026-11-20
+
+### Novità
+- Files: campo "Cerca" per trovare i file per nome in tutte le cartelle visibili all'utente, mentre si scrive. Con
+  più parole si trovano i file che le contengono tutte, in qualsiasi ordine, senza distinzione tra maiuscole e
+  minuscole. Ogni risultato mostra la sua cartella; i risultati sono paginati; "Annulla ricerca" riporta alla
+  cartella di prima.
+
+### Correzioni
+- File senza anteprima (es. G-code senza immagine): al posto dell'icona di immagine mancante compare un riquadro
+  neutro con l'icona di un pezzo, in Files, nella finestra di stampa e nella Coda.
+
 ## [0.29.0] – 2026-11-19
 
 ### Novità

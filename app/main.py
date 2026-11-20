@@ -1048,9 +1048,13 @@ async def hms(model: str, code: str, kind: str = "hms"):
 
 # ====================================================================== archivio file
 @app.get("/api/files")
-async def files(request: Request, project: str | None = None, paged: bool = False, limit: int = 50, offset: int = 0):
+async def files(request: Request, project: str | None = None, paged: bool = False, limit: int = 50, offset: int = 0,
+                q: str | None = None):
     u = U(request)
     rows = [f for f in S().db.files() if u.sees_project(f.get("project_id"))]
+    words = (q or "").lower().split()
+    if words:          # ricerca nel nome, in tutte le cartelle visibili: tutte le parole, in qualsiasi ordine
+        return page_of([f for f in rows if all(w in f["filename"].lower() for w in words)], paged, limit, offset)
     if project == "none":
         rows = [f for f in rows if f.get("project_id") is None]
     elif project:

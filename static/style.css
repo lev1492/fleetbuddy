@@ -635,6 +635,15 @@ dialog.notice .nitem{box-shadow:none;animation:none;font-size:15px}
 dialog.notice .nbody{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0}
 dialog.notice .nlink{align-self:flex-start;padding:3px 10px;font-size:13px;margin-top:2px}
 
+/* ricerca dei file */
+.fsearch{display:flex;gap:10px;align-items:center}
+.fsearch input[type=search]{min-width:300px}
+.fres{display:flex;align-items:center;gap:12px;margin:4px 0 12px;padding:10px 14px;background:var(--sunk);border:1px solid var(--line);border-radius:var(--radius-sm)}
+.fres span{flex:1}.fres button{padding:4px 12px}
+
+/* file senza anteprima: riquadro neutro con l'icona di un pezzo invece dell'immagine mancante */
+img.noimg{background:var(--sunk) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='1.4' stroke-linejoin='round'%3E%3Cpath d='M12 3 4 7.5v9L12 21l8-4.5v-9z'/%3E%3Cpath d='M4 7.5 12 12l8-4.5M12 12v9'/%3E%3C/svg%3E") center/40% no-repeat}
+
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
 .gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}
