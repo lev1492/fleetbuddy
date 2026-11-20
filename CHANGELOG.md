@@ -3,6 +3,22 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.30.1] – 2026-11-20
+
+### Prestazioni
+- Files: l'elenco di una cartella e la ricerca contavano le stampe di ogni file con due ricerche separate nello
+  storico, senza indice, e leggevano tutti i file dell'archivio anche per aprire una sola cartella. Ora il conteggio
+  è unico, cartella e ricerca sono filtrate nel database e lo storico ha un indice per file: con 700 file e 5.000
+  stampe, aprire una cartella passa da circa 320 ms a 7 ms. Nuovi indici anche per stampante e per cartella.
+
+### Correzioni
+- Amministrazione → Controlla aggiornamenti: se l'installazione non è da GitHub o il controllo non riesce,
+  compariva un errore interno invece del messaggio (la funzione di traduzione era oscurata da una variabile).
+
+### Pulizia del codice
+- Tolte importazioni e funzioni non più usate; nessuna funzione JavaScript inutilizzata; controllati permessi
+  delle API, dipendenze e compatibilità con Python 3.11 e 3.13.
+
 ## [0.30.0] – 2026-11-20
 
 ### Novità

@@ -51,7 +51,6 @@ COLORS = {"black": "#1A1A1A", "white": "#F5F5F5", "red": "#D32F2F", "blue": "#1E
           "transparent": "#E8F1F2", "purple": "#7B3FA0", "pink": "#E85A9B", "brown": "#7A4A2A", "magenta": "#C2187A"}
 
 
-AREA_285 = 3.14159 * (2.85 / 2) ** 2      # sezione del filamento da 2,85 mm (mm²)
 
 
 def _empty(mat: dict | None) -> bool:

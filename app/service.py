@@ -13,7 +13,6 @@ from .config import Config
 from .db import DB
 from . import materials, production
 from .connectors import DirectClient, make_client
-from .gcodemeta import is_gcode
 from .hub_client import FleetHubClient, HubError
 from .i18n import tr
 
@@ -21,7 +20,7 @@ from .i18n import tr
 def qmsg(msg: str, **params) -> str:
     """Messaggio di coda salvato come frase + parametri, tradotto dal browser."""
     return json.dumps({"msg": msg, "params": params}, ensure_ascii=False)
-from .printers import auto_map, is_ready, normalize, resolve_slots
+from .printers import is_ready, normalize, resolve_slots
 
 log = logging.getLogger("fleetbuddy.service")
 
@@ -570,8 +569,6 @@ class Service:
             out[sn] = self._plast.get(sn) or c.normalize(None, "")
         return out
 
-    def kind_of(self, sn: str) -> str:
-        return self.direct[sn].kind if sn in self.direct else "bambu"
 
     async def command(self, sn: str, opt: str):
         """Pausa / ripresa / stop / piatto liberato, sulla strada giusta per il tipo di stampante."""
@@ -1157,8 +1154,6 @@ class Service:
                 fid = (pend or {}).get("file_id")
             f = self.db.file(fid) if fid else None
             if f:
-                from .gcodemeta import thumbnail_png
-                from .threemf import thumbnail
                 path = self.cfg.path(f["path"])
                 plate = (job or {}).get("plate") or 1
                 from .resinmeta import file_thumbnail

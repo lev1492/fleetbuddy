@@ -107,6 +107,13 @@ class DB:
                             first, _, last = dn.strip().partition(" ")
                             self._conn.execute("UPDATE users SET first_name=?, last_name=? WHERE id=?",
                                                (first, last.strip(), uid))
+            # indici creati dopo gli aggiornamenti dello schema: alcune colonne (es. files.project_id) nascono da questi
+            self._conn.executescript("""
+                CREATE INDEX IF NOT EXISTS jobs_file ON jobs(file_id);
+                CREATE INDEX IF NOT EXISTS jobs_printer ON jobs(printer_sn, started_at);
+                CREATE INDEX IF NOT EXISTS files_project ON files(project_id);
+                CREATE INDEX IF NOT EXISTS files_md5 ON files(md5);
+            """)
             # sottocartelle dei progetti: il nome era unico in tutto l'archivio; ora lo è solo nella stessa cartella.
             # SQLite non permette di togliere un vincolo UNIQUE: la tabella viene ricreata con gli stessi dati.
             sql = (self._conn.execute("SELECT sql FROM sqlite_master WHERE name='projects'").fetchone() or [""])[0] or ""
@@ -151,10 +158,13 @@ class DB:
             r["meta"] = json.loads(r["meta"] or "{}")
         return r
 
-    def files(self) -> list[dict]:
-        rows = self.q("""SELECT f.*, (SELECT COUNT(*) FROM jobs j WHERE j.file_id=f.id) AS prints,
-                         (SELECT COUNT(*) FROM jobs j WHERE j.file_id=f.id AND j.status='finished') AS ok
-                         FROM files f ORDER BY uploaded_at DESC""")
+    def files(self, where: str = "", args: tuple = ()) -> list[dict]:
+        """File dell'archivio con il numero di stampe (un solo conteggio per tutti i file); where filtra nel database
+        (es. la cartella aperta), così si leggono solo i file necessari."""
+        rows = self.q(f"""SELECT f.*, COALESCE(c.prints, 0) AS prints, COALESCE(c.ok, 0) AS ok FROM files f
+                          LEFT JOIN (SELECT file_id, COUNT(*) AS prints, SUM(status='finished') AS ok FROM jobs
+                                     WHERE file_id IS NOT NULL GROUP BY file_id) c ON c.file_id=f.id
+                          {("WHERE " + where) if where else ""} ORDER BY f.uploaded_at DESC""", args)
         for r in rows:
             r["meta"] = json.loads(r["meta"] or "{}")
         return rows

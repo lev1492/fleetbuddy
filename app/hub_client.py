@@ -17,7 +17,7 @@ import ssl
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Iterable
 
 import requests
 from requests.adapters import HTTPAdapter

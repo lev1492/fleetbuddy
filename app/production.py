@@ -22,7 +22,6 @@ from .printers import is_ready, resolve_slots
 
 log = logging.getLogger("fleetbuddy.production")
 
-PRIORITIES = (0, 1, 2, 3)            # bassa, normale, alta, urgente
 PALETTE = ["#3B82F6", "#F59E0B", "#10B981", "#EF4444", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316", "#6366F1", "#84CC16"]
 DEFAULT_PRINT_S = 3600               # durata usata quando il file non indica il tempo stimato
 

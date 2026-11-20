@@ -18,14 +18,14 @@ from fastapi.staticfiles import StaticFiles
 from . import APP_NAME, REPO_URL, __version__
 from .auth import PERMISSIONS, Auth, User, ensure_roles, password_problem, role_keys
 from .config import BASE_DIR, load_config
-from .i18n import LANGS, _, current_lang, from_accept_language, normalize
+from .i18n import _, current_lang, from_accept_language, normalize
 from .hub_client import HubError
 from .printers import FILAMENT_PRESETS, auto_map, firmware_below_min, is_ready
 from .service import Service, qmsg
 from . import bambu_gcode, materials, production, resinmeta
 from .connectors import KINDS, make_client
-from .gcodemeta import is_gcode, parse_gcode, thumbnail_png
-from .threemf import md5_file, parse_3mf, thumbnail
+from .gcodemeta import is_gcode, parse_gcode
+from .threemf import md5_file, parse_3mf
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("fleetbuddy.web")
@@ -119,8 +119,6 @@ def need(u: User, perm: str):
         raise HTTPException(403, _("Il tuo ruolo non consente questa operazione"))
 
 
-def need_operator(u: User):                           # compatibilità: comandi delle stampanti
-    need(u, "control")
 
 
 def printer_for(u: User, sn: str) -> dict:
@@ -1051,14 +1049,16 @@ async def hms(model: str, code: str, kind: str = "hms"):
 async def files(request: Request, project: str | None = None, paged: bool = False, limit: int = 50, offset: int = 0,
                 q: str | None = None):
     u = U(request)
-    rows = [f for f in S().db.files() if u.sees_project(f.get("project_id"))]
     words = (q or "").lower().split()
     if words:          # ricerca nel nome, in tutte le cartelle visibili: tutte le parole, in qualsiasi ordine
-        return page_of([f for f in rows if all(w in f["filename"].lower() for w in words)], paged, limit, offset)
-    if project == "none":
-        rows = [f for f in rows if f.get("project_id") is None]
-    elif project:
-        rows = [f for f in rows if str(f.get("project_id")) == project]
+        where, args = " AND ".join("instr(lower(f.filename), ?) > 0" for _w in words), tuple(words)
+    elif project == "none":
+        where, args = "f.project_id IS NULL", ()
+    elif project and project.isdigit():
+        where, args = "f.project_id=?", (int(project),)
+    else:
+        where, args = "", ()
+    rows = [f for f in S().db.files(where, args) if u.sees_project(f.get("project_id"))]
     return page_of(rows, paged, limit, offset)
 
 
@@ -1672,7 +1672,7 @@ async def admin_update_check(request: Request):
         raise HTTPException(502, out.strip().splitlines()[-1] if out.strip() else _("Controllo non riuscito"))
     st = info["status"] or {}
     if st.get("available") and st.get("latest"):
-        _, ch = await _run("git", "show", f"v{st['latest']}:CHANGELOG.md", timeout=15)
+        _code, ch = await _run("git", "show", f"v{st['latest']}:CHANGELOG.md", timeout=15)   # non "_": è la funzione di traduzione
         section, inside = [], False
         for line in ch.splitlines():
             if line.startswith("## ["):
