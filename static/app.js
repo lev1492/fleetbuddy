@@ -185,7 +185,15 @@ const projPath = p => p.id === null ? t("Senza progetto") : (p.path && p.path.le
 // messaggi di coda salvati dal server come {"msg": frase, "params": {...}}
 const qMsg = m => { try { const o = JSON.parse(m); return t(o.msg, o.params); } catch { return m; } };
 function openDialog(html) { $("#dlgbody").innerHTML = html; $("#dlg").showModal(); }
-const btnCancel = () => `<button value="cancel">${t("Annulla")}</button>`;
+const btnCancel = () => `<button type="button" value="cancel">${t("Annulla")}</button>`;
+// "Annulla" e "Chiudi" chiudono sempre la finestra, in ogni finestra: senza passare dall'invio del modulo, che il
+// browser blocca se un campo obbligatorio è vuoto o non valido (era il motivo per cui "Annulla" a volte non usciva)
+document.addEventListener("click", e => {
+  const b = e.target.closest('dialog button[value="cancel"]');
+  if (!b || b.disabled) return;
+  e.preventDefault(); e.stopPropagation();
+  b.closest("dialog").close("cancel");
+}, true);
 
 // ------------------------------------------------------------------ accesso
 async function boot() {

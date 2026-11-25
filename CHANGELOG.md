@@ -3,6 +3,13 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.32.1] – 2026-11-25
+
+### Correzioni
+- Finestre: "Annulla" (e "Chiudi") chiude sempre la finestra. Prima passava dall'invio del modulo, che il browser
+  bloccava se un campo obbligatorio era vuoto o non valido: succedeva in "Aggiungi Fleet Hub" e poteva capitare anche
+  creando cartelle o gruppi. Vale per tutte le finestre, anche quelle dei Materiali e delle conferme.
+
 ## [0.32.0] – 2026-11-25
 
 ### Novità
