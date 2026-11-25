@@ -716,3 +716,12 @@ h2.qsec{font-size:17px;margin:22px 0 10px;display:flex;align-items:baseline;gap:
 .warnbox{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:10px;border-color:var(--pause)}
 @media (max-width:640px){.hubrow{flex-wrap:wrap}.hubrow .hacts{width:100%;justify-content:flex-start}}
 #hubform.grid1{display:flex;flex-direction:column;gap:10px}
+
+/* materiale di scarto (filamento delle stampe fallite) */
+.scrap{display:inline-block;font-size:11px;font-weight:600;line-height:1.5;padding:0 7px;border-radius:9px;color:var(--err);
+  background:color-mix(in srgb,var(--err) 12%,transparent);border:1px solid color-mix(in srgb,var(--err) 35%,transparent);margin:0 4px 3px 0}
+.scrapv{color:var(--err);font-weight:600}
+.kpi.kscrap b{color:var(--err)}
+/* Storico: stampe da confermare in cima */
+tr.toconfirm td{background:color-mix(in srgb,var(--pause) 10%,transparent)}
+tr.toconfirm td:first-child{box-shadow:inset 3px 0 0 var(--pause)}

@@ -3,6 +3,19 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.33.0] – 2026-11-25
+
+### Novità
+- Materiale di scarto: il filamento delle stampe fallite conta come scarto.
+  - Storico: le stampe fallite con consumo hanno l'etichetta "scarto" accanto al filamento.
+  - Statistiche: nel riepilogo il riquadro "scarto" (peso e percentuale sul filamento del periodo); in "Filamento
+    consumato" la colonna "di cui scarto" per tipo e colore; in "Per stampante" la colonna "Scarto".
+  - Esportazioni: colonna "Scarto (g)" in Excel (dettaglio, per stampante, per giorno, filamenti, con
+    "Scarto (kg)" e "Scarto sul filamento" nel riepilogo), CSV e JSON.
+  - Materiali: nello storico della bobina le stampe fallite sono segnate come scarto.
+- Storico: le stampe da confermare (stampante offline alla fine del tempo di stampa) sono in cima all'elenco ed
+  evidenziate; una volta confermate tornano al loro posto nella cronologia.
+
 ## [0.32.1] – 2026-11-25
 
 ### Correzioni

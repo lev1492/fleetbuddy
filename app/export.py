@@ -64,8 +64,8 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
     # ------------------------------------------------------------ Dettaglio stampe
     det = wb.active
     det.title = sh("Dettaglio stampe")
-    cols = [T("Avvio"), T("Fine"), T("Stampante"), T("Seriale"), T("Lavoro"), T("Avviata da"), T("Durata (h)"), T("Filamento (g)"), T("Esito"), T("Avanzamento"), T("Errore")]
-    _header(det, 1, cols, [17, 17, 22, 18, 34, 14, 11, 13, 13, 13, 12])
+    cols = [T("Avvio"), T("Fine"), T("Stampante"), T("Seriale"), T("Lavoro"), T("Avviata da"), T("Durata (h)"), T("Filamento (g)"), T("Esito"), T("Avanzamento"), T("Errore"), T("Scarto (g)")]
+    _header(det, 1, cols, [17, 17, 22, 18, 34, 14, 11, 13, 13, 13, 12, 11])
     for i, j in enumerate(sorted(jobs, key=lambda x: x["started_at"]), start=2):
         end = j.get("ended_at")
         det.cell(row=i, column=1, value=datetime.fromtimestamp(j["started_at"])).number_format = "dd/mm/yyyy hh:mm"
@@ -80,12 +80,13 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
         det.cell(row=i, column=9, value=T(STATUS_IT.get(j["status"], j["status"])))
         det.cell(row=i, column=10, value=(j.get("progress") or 0) / 100).number_format = "0%"
         det.cell(row=i, column=11, value=j.get("error") or "")
+        det.cell(row=i, column=12, value=round(j.get("filament_g") or 0, 1) if j["status"] == "failed" else 0).number_format = "#,##0.0"
     last_det = max(1, len(jobs) + 1)
     _style_rows(det, 2, last_det, len(cols))
     det.auto_filter.ref = f"A1:{get_column_letter(len(cols))}{last_det}"
 
     # ------------------------------------------------------------ Per stampante
-    per: dict[str, dict] = defaultdict(lambda: {"name": "", "n": 0, "ok": 0, "ko": 0, "canc": 0, "h": 0.0, "g": 0.0})
+    per: dict[str, dict] = defaultdict(lambda: {"name": "", "n": 0, "ok": 0, "ko": 0, "canc": 0, "h": 0.0, "g": 0.0, "s": 0.0})
     for j in jobs:
         p = per[j.get("printer_sn") or "?"]
         p["name"] = j.get("printer_name") or p["name"]
@@ -95,9 +96,10 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
         p["canc"] += j["status"] == "cancelled"
         p["h"] += ((j.get("ended_at") or now) - j["started_at"]) / 3600
         p["g"] += j.get("filament_g") or 0
+        p["s"] += (j.get("filament_g") or 0) if j["status"] == "failed" else 0
     ps = wb.create_sheet(sh("Per stampante"))
-    pcols = [T("Stampante"), T("Seriale"), T("Stampe"), T("Riuscite"), T("Fallite"), T("Annullate"), T("Tasso di successo"), T("Ore di stampa"), T("Filamento (g)")]
-    _header(ps, 1, pcols, [24, 18, 10, 10, 10, 11, 12, 12, 13])
+    pcols = [T("Stampante"), T("Seriale"), T("Stampe"), T("Riuscite"), T("Fallite"), T("Annullate"), T("Tasso di successo"), T("Ore di stampa"), T("Filamento (g)"), T("Scarto (g)")]
+    _header(ps, 1, pcols, [24, 18, 10, 10, 10, 11, 12, 12, 13, 11])
     rows = sorted(per.items(), key=lambda kv: -kv[1]["n"])
     for i, (sn, p) in enumerate(rows, start=2):
         for c, v in enumerate([p["name"], sn, p["n"], p["ok"], p["ko"], p["canc"]], start=1):
@@ -105,28 +107,31 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
         ps.cell(row=i, column=7, value=f"=IF(C{i}=0,0,D{i}/C{i})").number_format = "0.0%"
         ps.cell(row=i, column=8, value=round(p["h"], 2)).number_format = "#,##0.0"
         ps.cell(row=i, column=9, value=round(p["g"], 1)).number_format = "#,##0"
+        ps.cell(row=i, column=10, value=round(p["s"], 1)).number_format = "#,##0"
     last_p = len(rows) + 1
     _style_rows(ps, 2, last_p, len(pcols))
     tp = last_p + 1
     _total_row(ps, tp, len(pcols), T("Totale"))
-    for c in (3, 4, 5, 6, 8, 9):
+    for c in (3, 4, 5, 6, 8, 9, 10):
         L = get_column_letter(c)
         ps.cell(row=tp, column=c, value=f"=SUM({L}2:{L}{last_p})" if rows else 0)
     ps.cell(row=tp, column=7, value=f"=IF(C{tp}=0,0,D{tp}/C{tp})")
     ps.cell(row=tp, column=7).number_format = "0.0%"
     ps.cell(row=tp, column=8).number_format = "#,##0.0"
     ps.cell(row=tp, column=9).number_format = "#,##0"
+    ps.cell(row=tp, column=10).number_format = "#,##0"
 
     # ------------------------------------------------------------ Per giorno
-    daily: dict[str, dict] = defaultdict(lambda: {"n": 0, "ok": 0, "g": 0.0})
+    daily: dict[str, dict] = defaultdict(lambda: {"n": 0, "ok": 0, "g": 0.0, "s": 0.0})
     for j in jobs:
         d = datetime.fromtimestamp(j["started_at"]).date()
         daily[d]["n"] += 1
         daily[d]["ok"] += j["status"] == "finished"
         daily[d]["g"] += j.get("filament_g") or 0
+        daily[d]["s"] += (j.get("filament_g") or 0) if j["status"] == "failed" else 0
     gs = wb.create_sheet(sh("Per giorno"))
-    gcols = [T("Data"), T("Stampe"), T("Riuscite"), T("Non riuscite"), T("Tasso di successo"), T("Filamento (g)")]
-    _header(gs, 1, gcols, [13, 10, 10, 12, 12, 13])
+    gcols = [T("Data"), T("Stampe"), T("Riuscite"), T("Non riuscite"), T("Tasso di successo"), T("Filamento (g)"), T("Scarto (g)")]
+    _header(gs, 1, gcols, [13, 10, 10, 12, 12, 13, 11])
     drows = sorted(daily.items())
     for i, (d, v) in enumerate(drows, start=2):
         gs.cell(row=i, column=1, value=d).number_format = "dd/mm/yyyy"
@@ -135,20 +140,22 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
         gs.cell(row=i, column=4, value=f"=B{i}-C{i}")
         gs.cell(row=i, column=5, value=f"=IF(B{i}=0,0,C{i}/B{i})").number_format = "0.0%"
         gs.cell(row=i, column=6, value=round(v["g"], 1)).number_format = "#,##0"
+        gs.cell(row=i, column=7, value=round(v["s"], 1)).number_format = "#,##0"
     last_g = len(drows) + 1
     _style_rows(gs, 2, last_g, len(gcols))
     tg = last_g + 1
     _total_row(gs, tg, len(gcols), T("Totale"))
-    for c in (2, 3, 4, 6):
+    for c in (2, 3, 4, 6, 7):
         L = get_column_letter(c)
         gs.cell(row=tg, column=c, value=f"=SUM({L}2:{L}{last_g})" if drows else 0)
     gs.cell(row=tg, column=5, value=f"=IF(B{tg}=0,0,C{tg}/B{tg})").number_format = "0.0%"
     gs.cell(row=tg, column=6).number_format = "#,##0"
+    gs.cell(row=tg, column=7).number_format = "#,##0"
 
     # ------------------------------------------------------------ Filamenti
     fs = wb.create_sheet(sh("Filamenti"))
-    fcols = [T("Tipo"), T("Marca"), T("Colore"), T("Filamento (g)"), T("Metri"), T("Stampe")]
-    _header(fs, 1, fcols, [12, 22, 12, 14, 10, 10])
+    fcols = [T("Tipo"), T("Marca"), T("Colore"), T("Filamento (g)"), T("Metri"), T("Stampe"), T("Scarto (g)")]
+    _header(fs, 1, fcols, [12, 22, 12, 14, 10, 10, 11])
     frows = filaments or []
     for i, f in enumerate(frows, start=2):
         fs.cell(row=i, column=1, value=f["type"])
@@ -162,15 +169,17 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
         fs.cell(row=i, column=4, value=f["grams"]).number_format = "#,##0.0"
         fs.cell(row=i, column=5, value=f.get("meters") or 0).number_format = "#,##0.0"
         fs.cell(row=i, column=6, value=f["prints"])
+        fs.cell(row=i, column=7, value=f.get("scrap_g") or 0).number_format = "#,##0.0"
     last_f = len(frows) + 1
     _style_rows(fs, 2, last_f, 2)
     for r in range(2, last_f + 1):
-        for cidx in (4, 5, 6):
+        for cidx in (4, 5, 6, 7):
             fs.cell(row=r, column=cidx).font = F_BASE
     tf = last_f + 1
     _total_row(fs, tf, len(fcols), T("Totale"))
     fs.cell(row=tf, column=4, value=f"=SUM(D2:D{last_f})" if frows else 0).number_format = "#,##0.0"
     fs.cell(row=tf, column=5, value=f"=SUM(E2:E{last_f})" if frows else 0).number_format = "#,##0.0"
+    fs.cell(row=tf, column=7, value=f"=SUM(G2:G{last_f})" if frows else 0).number_format = "#,##0.0"
     fs.cell(row=tf + 2, column=1, value=T(
         "Il consumo per tipo e colore è noto per le stampe avviate da Fabbrix Farm Manager o il cui file è nell'archivio.")).font = F_NOTE
 
@@ -198,6 +207,8 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
         (T("Tasso di successo"), "=IF(B9=0,0,B10/B9)", "0.0%"),
         (T("Ore di stampa"), f"={ref}H{tp}", "#,##0.0"),
         (T("Filamento (kg)"), f"={ref}I{tp}/1000", "#,##0.00"),
+        (T("Scarto (kg)"), f"={ref}J{tp}/1000", "#,##0.00"),
+        (T("Scarto sul filamento"), f"=IF({ref}I{tp}=0,0,{ref}J{tp}/{ref}I{tp})", "0.0%"),
     ]
     rs.cell(row=8, column=1, value=T("Indicatore")).font = F_HEAD
     rs.cell(row=8, column=2, value=T("Valore")).font = F_HEAD
@@ -206,7 +217,9 @@ def build_stats_xlsx(jobs: list[dict], *, days: int, scope: str, user: str, lang
         rs.cell(row=i, column=1, value=lab).font = F_BASE
         c = rs.cell(row=i, column=2, value=formula)
         c.font, c.number_format = F_BOLD, fmt
-    rs.cell(row=17, column=1, value=T(
+    rs.cell(row=19, column=1, value=T(
+        "Scarto: il filamento delle stampe fallite.")).font = F_NOTE
+    rs.cell(row=20, column=1, value=T(
         "Durate e grammi provengono dal monitoraggio del Hub; per le stampe interrotte il filamento "
         "è stimato in proporzione all'avanzamento.")).font = F_NOTE
 
@@ -221,13 +234,16 @@ CSV_COLUMNS = {
     "jobs": [("Avvio", "started_at", "datetime"), ("Fine", "ended_at", "datetime"), ("Stampante", "printer_name", "text"),
              ("Seriale", "printer_sn", "text"), ("Lavoro", "task_name", "text"), ("Avviata da", "started_by_name", "text"),
              ("Durata (h)", "_hours", "num"), ("Filamento (g)", "filament_g", "num"), ("Esito", "_status", "text"),
-             ("Avanzamento", "progress", "int"), ("Filamenti", "_filaments", "text"), ("Errore", "error", "text")],
+             ("Avanzamento", "progress", "int"), ("Filamenti", "_filaments", "text"), ("Errore", "error", "text"),
+             ("Scarto (g)", "_scrap", "num")],
     "filaments": [("Tipo", "type", "text"), ("Marca", "brand", "text"), ("Colore", "color", "text"),
-                  ("Filamento (g)", "grams", "num"), ("Metri", "meters", "num"), ("Stampe", "prints", "int")],
+                  ("Filamento (g)", "grams", "num"), ("Metri", "meters", "num"), ("Stampe", "prints", "int"),
+                  ("Scarto (g)", "scrap_g", "num")],
     "printers": [("Stampante", "name", "text"), ("Seriale", "printer_sn", "text"), ("Stampe", "n", "int"),
                  ("Riuscite", "ok", "int"), ("Fallite", "ko", "int"), ("Annullate", "cancelled", "int"),
-                 ("Ore di stampa", "_hours", "num"), ("Filamento (g)", "grams", "num")],
-    "daily": [("Data", "day", "text"), ("Stampe", "n", "int"), ("Riuscite", "ok", "int"), ("Filamento (g)", "grams", "num")],
+                 ("Ore di stampa", "_hours", "num"), ("Filamento (g)", "grams", "num"), ("Scarto (g)", "scrap_g", "num")],
+    "daily": [("Data", "day", "text"), ("Stampe", "n", "int"), ("Riuscite", "ok", "int"), ("Filamento (g)", "grams", "num"),
+              ("Scarto (g)", "scrap_g", "num")],
 }
 
 
@@ -246,6 +262,7 @@ def build_csv(kind: str, rows: list[dict], lang: str = "it") -> bytes:
         if "started_at" in r:
             r["_hours"] = ((r.get("ended_at") or now) - r["started_at"]) / 3600
             r["_status"] = tr(lang, STATUS_IT.get(r.get("status"), r.get("status") or ""))
+            r["_scrap"] = (r.get("filament_g") or 0) if r.get("status") == "failed" else 0
             r["_filaments"] = "; ".join(f"{f.get('type', '')} {f.get('color', '')} {f.get('grams', 0)} g"
                                         + (" ≈" if f.get("source") == "ams" else "") for f in r.get("filaments") or [])
         elif "secs" in r:

@@ -1241,9 +1241,9 @@ RENDER.history = async function renderHistory() {
   const pg = await fetchPage("history", "/api/jobs").catch(e => (toast(e.message, "error"), {items: [], total: 0, to_confirm: 0}));
   const jobs = pg.items, toConfirm = pg.to_confirm;
   el.innerHTML = `<div class="head"><div><h1>${t("Storico")}</h1><p class="sub">${t("Ogni stampa vista dal Hub, anche quelle avviate da Bambu Studio o dalla stampante.")}</p></div></div>` +
-    (toConfirm ? `<div class="pwait"><b>${t("{n} stampe da confermare", {n: toConfirm})}</b><span class="small">${t("La stampante era offline quando il tempo di stampa è scaduto: indica se la stampa è riuscita (il consumo previsto va nelle statistiche) o fallita (conta solo il fallimento).")}</span></div>` : "") +
+    (toConfirm ? `<div class="pwait"><b>${t("{n} stampe da confermare", {n: toConfirm})}</b><span class="small">${t("La stampante era offline quando il tempo di stampa è scaduto: indica se la stampa è riuscita (il consumo previsto va nelle statistiche) o fallita (conta solo il fallimento).")} ${t("Sono in cima all'elenco: una volta confermate tornano al loro posto.")}</span></div>` : "") +
     (jobs.length ? `<div class="tablewrap"><table><thead><tr><th></th><th>${t("Avvio")}</th><th>${t("Stampante")}</th><th>${t("Lavoro")}</th><th>${t("Utente")}</th><th>${t("Durata")}</th><th>${t("Filamento")}</th><th>${t("Esito")}</th><th></th></tr></thead><tbody>
-    ${jobs.map(j => `<tr data-id="${j.id}" data-file="${j.file_id || ""}">
+    ${jobs.map(j => `<tr data-id="${j.id}" data-file="${j.file_id || ""}" class="${j.status === "to_confirm" ? "toconfirm" : ""}">
       <td>${j.snapshot ? `<img class="snap" loading="lazy" alt="${esc(t("Foto a fine stampa"))}" title="${esc(t("Foto a fine stampa"))}" src="/api/jobs/${j.id}/snapshot" style="${rotStyle((S.printers.find(x => x.sn === j.printer_sn) || {}).cam_rotate)}">`
         : j.has_thumb ? `<img class="snap thumb" loading="lazy" alt="${esc(t("Anteprima del file"))}" title="${esc(t("Anteprima del file (nessuna foto a fine stampa)"))}" src="/api/jobs/${j.id}/thumb" onerror="this.remove()">` : ""}</td>
       <td>${fmtDate(j.started_at)}</td><td>${esc(j.printer_name)}</td><td>${esc(j.task_name)}</td><td>${esc(j.started_by_name || "—")}</td>
@@ -1387,17 +1387,18 @@ RENDER.stats = async function renderStats() {
     <h2>${t("Riepilogo del periodo")}</h2>
     <div class="kpis"><div class="kpi"><b>${tot.n}</b><span>${t("stampe")}</span></div><div class="kpi"><b>${rate}%</b><span>${t("riuscite")}</span></div>
       <div class="kpi"><b>${Math.round(tot.secs / 3600)} h</b><span>${t("di stampa")}</span></div><div class="kpi"><b>${(tot.grams / 1000).toFixed(2)} kg</b><span>${t("filamento")}</span></div>
-      <div class="kpi"><b>${tot.ko || 0}</b><span>${t("fallite")}</span></div></div>
+      <div class="kpi"><b>${tot.ko || 0}</b><span>${t("fallite")}</span></div>
+      <div class="kpi kscrap" title="${esc(t("Filamento delle stampe fallite"))}"><b>${fmtG(tot.scrap_g)}</b><span>${t("scarto")}${tot.grams ? ` · ${Math.round(100 * (tot.scrap_g || 0) / tot.grams)}%` : ""}</span></div></div>
     <h2>${t("Stampe")}</h2>
     ${printsChart(s.series)}
     <h2>${t("Filamento consumato")}</h2>
-    ${s.filaments && s.filaments.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Marca")}</th><th>${t("Colore")}</th><th>${t("Filamento (g)")}</th><th>${t("Metri")}</th><th>${t("Stampe")}</th></tr></thead><tbody>
-    ${s.filaments.map(f => `<tr><td>${esc(f.type)}</td><td>${esc(f.brand || "—")}</td><td title="${esc(f.color || t("Generico"))}"><span class="sw" style="--c:${esc(f.color || "transparent")}"></span>${esc(colorName(f.color))}</td><td><b>${f.grams >= 1000 ? (f.grams / 1000).toFixed(2) + " kg" : Math.round(f.grams) + " g"}</b></td><td>${(f.meters || 0).toFixed(1)}</td><td>${f.prints}</td></tr>`).join("")}
-    </tbody></table></div><p class="sub" style="margin-top:8px">${t("Il consumo per tipo e colore è noto per le stampe avviate da Fabbrix Farm Manager o il cui file è nell'archivio.")}</p>`
+    ${s.filaments && s.filaments.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Tipo")}</th><th>${t("Marca")}</th><th>${t("Colore")}</th><th>${t("Filamento")}</th><th>${t("di cui scarto")}</th><th>${t("Metri")}</th><th>${t("Stampe")}</th></tr></thead><tbody>
+    ${s.filaments.map(f => `<tr><td>${esc(f.type)}</td><td>${esc(f.brand || "—")}</td><td title="${esc(f.color || t("Generico"))}"><span class="sw" style="--c:${esc(f.color || "transparent")}"></span>${esc(colorName(f.color))}</td><td><b>${fmtG(f.grams)}</b></td><td>${f.scrap_g ? `<span class="scrapv">${fmtG(f.scrap_g)}</span>` : `<span class="muted">—</span>`}</td><td>${(f.meters || 0).toFixed(1)}</td><td>${f.prints}</td></tr>`).join("")}
+    </tbody></table></div><p class="sub" style="margin-top:8px">${t("Il consumo per tipo e colore è noto per le stampe avviate da Fabbrix Farm Manager o il cui file è nell'archivio.")} ${t("Lo scarto è il filamento delle stampe fallite.")}</p>`
       : `<p class="sub">${t("Nessun consumo registrato nel periodo. Il dettaglio è disponibile per le stampe avviate da Fabbrix Farm Manager o il cui file è nell'archivio.")}</p>`}
     <h2>${t("Per stampante")}</h2>
-    <div class="tablewrap"><table><thead><tr><th>${t("Stampante")}</th><th>${t("Stampe")}</th><th>${t("Riuscite")}</th><th>${t("Fallite")}</th><th>${t("Ore")}</th><th>${t("Filamento")}</th></tr></thead><tbody>
-    ${s.per_printer.map(p => `<tr><td>${esc(p.name)}</td><td>${p.n}</td><td>${p.ok || 0}</td><td>${p.ko || 0}</td><td>${(p.secs / 3600).toFixed(1)}</td><td>${Math.round(p.grams)} g</td></tr>`).join("") || `<tr><td colspan="6">${t("Nessun dato")}</td></tr>`}
+    <div class="tablewrap"><table><thead><tr><th>${t("Stampante")}</th><th>${t("Stampe")}</th><th>${t("Riuscite")}</th><th>${t("Fallite")}</th><th>${t("Ore")}</th><th>${t("Filamento")}</th><th>${t("Scarto")}</th></tr></thead><tbody>
+    ${s.per_printer.map(p => `<tr><td>${esc(p.name)}</td><td>${p.n}</td><td>${p.ok || 0}</td><td>${p.ko || 0}</td><td>${(p.secs / 3600).toFixed(1)}</td><td>${fmtG(p.grams)}</td><td>${p.scrap_g ? `<span class="scrapv">${fmtG(p.scrap_g)}</span>` : `<span class="muted">—</span>`}</td></tr>`).join("") || `<tr><td colspan="7">${t("Nessun dato")}</td></tr>`}
     </tbody></table></div>
     ${isAdmin() ? `<h2>${t("Qualità della connessione")} <small class="muted">${t("ultime 24 ore")}</small></h2><div id="connq"><p class="muted">${t("Caricamento…")}</p></div>` : ""}`;
   if (isAdmin()) connQuality();
@@ -1804,14 +1805,19 @@ RENDER.admin = async function renderAdmin() {
     if (await uiConfirm(t("Eliminare il gruppo {g}? Le stampanti restano collegate; le stampe in coda per questo gruppo andranno in errore.", {g: g.name}), {danger: true})) { await act(() => api(`/api/groups/${g.id}`, {method: "DELETE"}), t("Gruppo eliminato")); RENDER.admin(); }
   });
 };
-const filCell = j => j.filaments && j.filaments.length
+// grammi leggibili: sopra il chilo in kg
+const fmtG = g => (g || 0) >= 1000 ? `${((g || 0) / 1000).toFixed(2)} kg` : `${Math.round(g || 0)} g`;
+// stampa fallita: il suo consumo è materiale di scarto
+const scrapTag = j => j.status === "failed" && (j.filament_g || (j.filaments || []).some(f => f.grams))
+  ? `<span class="scrap" title="${esc(t("Stampa fallita: il filamento usato è materiale di scarto"))}">${t("scarto")}</span>` : "";
+const filCell = j => scrapTag(j) + (j.filaments && j.filaments.length
   ? `<div class="fils">${j.filaments.map(f => { const est = f.source === "ams" || f.source === "estimate", meas = f.source === "measured";
       const why = f.source === "ams" ? t("Stima dal calo del residuo delle bobine AMS") : f.source === "estimate" ? t("Quantità prevista dalla stampante, in proporzione alla parte stampata")
         : meas ? t("Consumo misurato dalla stampante") : "";
       return `<span title="${esc([f.type, f.brand, f.color].filter(Boolean).join(" · ") + (why ? " – " + why : ""))}"><i style="--c:${esc(f.color)}"></i>${esc(f.type && f.type !== "?" ? f.type : (f.brand || "?"))} ${est ? "≈" : ""}${f.grams} g${meas ? " ✓" : ""}</span>`; }).join("")}</div>`
   : j.status === "running" && (j.materials || []).length
   ? `<div class="fils" title="${esc(t("Materiali in uso: il consumo si registra a fine stampa"))}">${j.materials.map(m => `<span><i style="--c:${esc(m.color || "#888")}"></i>${esc(m.type)}</span>`).join("")}</div>`
-  : (j.filament_g ? `${j.filament_g} g` : `<span class="muted" title="${esc(t("Consumo non disponibile: la stampa non è partita da Fabbrix Farm Manager e il file non è nell'archivio"))}">—</span>`);
+  : (j.filament_g ? `${j.filament_g} g` : `<span class="muted" title="${esc(t("Consumo non disponibile: la stampa non è partita da Fabbrix Farm Manager e il file non è nell'archivio"))}">—</span>`));
 let PERMS = [];
 // Ruoli e permessi: una colonna per ruolo, una riga per permesso (solo amministratore)
 function rolesSection() {

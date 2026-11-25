@@ -156,7 +156,7 @@ async function usageDialog(s) {
   openDialog(`<h3>${t("Storico della bobina #{n}", {n: s.id})}</h3><p class="sub" style="margin:0">${swatch(s.color_hex)} ${esc(filLabel(s))} · ${kg(s.remaining)}</p>
     ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Data")}</th><th>${t("Stampa")}</th><th>${t("Stampante")}</th><th>${t("Consumo")}</th></tr></thead><tbody>
       ${rows.map(u => `<tr><td>${fmtDate(u.ts)}</td><td>${u.note === "weigh" ? `<i>${t("Pesata: residuo corretto")}</i>` : esc(u.task_name || "—")}</td>
-        <td>${esc(u.printer_name || "")}</td><td>${u.note === "weigh" ? "" : `${u.grams} g`}</td></tr>`).join("")}</tbody></table></div>`
+        <td>${esc(u.printer_name || "")}</td><td>${u.note === "weigh" ? "" : `${u.grams} g`}${u.note !== "weigh" && u.status === "failed" ? ` <span class="scrap" title="${esc(t("Stampa fallita: il filamento usato è materiale di scarto"))}">${t("scarto")}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`
       : `<p class="muted">${t("Nessuna stampa registrata su questa bobina.")}</p>`}
     <div class="dlgfoot"><button value="cancel">${t("Chiudi")}</button></div>`);
 }

@@ -1434,7 +1434,7 @@ async def jobs(request: Request, limit: int = 200, printer: str | None = None, p
     total = S().db.one(f"SELECT COUNT(*) AS n FROM jobs j {w}", tuple(args))["n"] if paged else 0
     to_confirm = S().db.one(f"SELECT COUNT(*) AS n FROM jobs j {w} {'AND' if w else 'WHERE'} j.status='to_confirm'", tuple(args))["n"] if paged else 0
     rows = S().db.q(f"""SELECT j.*, us.username AS started_by_name FROM jobs j LEFT JOIN users us ON us.id=j.started_by {w}
-                        ORDER BY j.started_at DESC LIMIT ? OFFSET ?""", (*args, limit, offset))
+                        ORDER BY j.status='to_confirm' DESC, j.started_at DESC LIMIT ? OFFSET ?""", (*args, limit, offset))
     fil = job_filaments([r["id"] for r in rows])
     fids = sorted({r["file_id"] for r in rows if r.get("file_id")})
     with_thumb = {f["id"] for f in (S().db.q(f"SELECT id, meta FROM files WHERE id IN ({','.join('?' * len(fids))})", tuple(fids)) if fids else [])
@@ -1476,7 +1476,8 @@ def filament_totals(where: str, args: list) -> list[dict]:
     """Consumo raggruppato per tipo, marca e colore nel periodo."""
     w = where.replace("started_at", "j.started_at").replace("printer_sn", "j.printer_sn")
     return S().db.q(f"""SELECT f.type, f.brand, f.color, ROUND(SUM(f.grams), 1) grams, ROUND(SUM(f.meters), 1) meters,
-                        COUNT(DISTINCT f.job_id) prints
+                        COUNT(DISTINCT f.job_id) prints,
+                        ROUND(SUM(CASE WHEN j.status='failed' THEN f.grams ELSE 0 END), 1) scrap_g
                         FROM job_filaments f JOIN jobs j ON j.id=f.job_id WHERE {w}
                         GROUP BY f.type, f.brand, f.color ORDER BY grams DESC""", args)
 
@@ -1566,16 +1567,20 @@ async def stats_export(request: Request, days: int = 30, group: int | None = Non
 def _stats_data(u: User, days: int, group: int | None) -> dict:
     db = S().db
     where, args = _stats_filter(u, days, group)
+    # scarto: il filamento delle stampe fallite (materiale buttato)
     tot = db.one(f"""SELECT COUNT(*) n, SUM(status='finished') ok, SUM(status='failed') ko,
                     SUM(status='cancelled') cancelled, COALESCE(SUM(filament_g),0) grams,
+                    COALESCE(SUM(CASE WHEN status='failed' THEN filament_g ELSE 0 END),0) scrap_g,
                     COALESCE(SUM(COALESCE(ended_at, strftime('%s','now')) - started_at),0) secs
                     FROM jobs WHERE {where}""", args)
     per = db.q(f"""SELECT printer_sn, MAX(printer_name) name, COUNT(*) n, SUM(status='finished') ok,
                   SUM(status='failed') ko, SUM(status='cancelled') cancelled, COALESCE(SUM(filament_g),0) grams,
+                  COALESCE(SUM(CASE WHEN status='failed' THEN filament_g ELSE 0 END),0) scrap_g,
                   COALESCE(SUM(COALESCE(ended_at, strftime('%s','now')) - started_at),0) secs
                   FROM jobs WHERE {where} GROUP BY printer_sn ORDER BY n DESC""", args)
     daily = db.q(f"""SELECT date(started_at,'unixepoch','localtime') day, COUNT(*) n,
-                    SUM(status='finished') ok, COALESCE(SUM(filament_g),0) grams
+                    SUM(status='finished') ok, COALESCE(SUM(filament_g),0) grams,
+                    COALESCE(SUM(CASE WHEN status='failed' THEN filament_g ELSE 0 END),0) scrap_g
                     FROM jobs WHERE {where} GROUP BY day ORDER BY day""", args)
     return {"days": days, "total": tot, "per_printer": per, "daily": daily, "filaments": filament_totals(where, args)}
 
