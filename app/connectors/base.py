@@ -44,6 +44,7 @@ class DirectClient:
         self.extra = (row.get("extra") or "").strip()
         self.snapshot_url = (row.get("snapshot_url") or "").strip()
         self.web_override = (row.get("web_url") or "").strip()
+        self.cam_rotate_set = str(row.get("camera_rotate") or "")
         self.brand = (row.get("brand") or "").strip() or self.default_brand
         self.printer_model = (row.get("printer_model") or "").strip()
         self.auto_snapshot_url = ""          # trovato dalla stampante stessa (es. OctoPrint, Moonraker)
@@ -74,6 +75,13 @@ class DirectClient:
 
     # interfaccia web della stampante (link sull'indirizzo IP nella scheda); None = il sistema non ne ha una
     web_default: str | None = None          # "base": indirizzo dell'API; "host": http://IP/; "host:PORTA"
+
+    @property
+    def cam_rotate(self) -> int:
+        """Rotazione dell'immagine della camera: impostata nella stampante, altrimenti 180° per le Fabbrix."""
+        if self.cam_rotate_set in ("0", "90", "180", "270"):
+            return int(self.cam_rotate_set)
+        return 180 if "fabbrix" in f"{self.brand} {self.printer_model}".lower() else 0
 
     @property
     def web_url(self) -> str | None:
@@ -218,6 +226,7 @@ def base_state(client: DirectClient, online: bool, error: str = "", **kw) -> dic
     st["caps"].setdefault("print_options", [])
     st["brand"] = client.brand
     st["web_url"] = client.web_url
+    st["cam_rotate"] = client.cam_rotate
     try:
         st["has_camera"] = bool(client.has_snapshot())
     except Exception:  # noqa: BLE001

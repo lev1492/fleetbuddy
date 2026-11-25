@@ -325,8 +325,10 @@ function connect() {
       hs.className = "hubstate " + (online === S.printers.length && (S.hub_ok || !hubUsed) ? "ok" : online ? "warn" : "ko");
       hs.innerHTML = `${t("{a} di {b} stampanti connesse", {a: online, b: S.printers.length})}`
         + (hubUsed ? `<small>${S.hub_ok ? t("Fleet Hub connesso") : esc(S.hub_error || t("Hub non raggiungibile"))}</small>` : "");
-      $("#qbadge").textContent = S.queue_count || "";
-      $("#qbadge").title = S.queue_count ? t("{n} stampe in coda ({f} file)", {n: S.queue_count, f: S.queue_items || S.queue_count}) : "";
+      const qn = (S.queue_count || 0) + (S.prod_pending || 0);        // stampe in coda + pezzi degli ordini da avviare
+      $("#qbadge").textContent = qn || "";
+      $("#qbadge").title = qn ? t("{n} stampe in coda ({f} file)", {n: S.queue_count || 0, f: S.queue_items || S.queue_count || 0})
+        + (S.prod_pending ? " · " + t("{n} pezzi degli ordini di produzione", {n: S.prod_pending}) : "") : "";
       if (S.settings && S.settings.camera_refresh_s !== oldRefresh) startCamTimer();
       if (view === "printers") RENDER.printers();
     } else if (m.kind === "toast") {
@@ -706,12 +708,16 @@ async function refreshCam(card, force = false) {
     card.classList.add("thumbimg");
     const url = URL.createObjectURL(await r.blob());
     const pre = new Image();
-    pre.onload = () => { const old = img._url; img.src = url; img._url = url; img.hidden = false; if (old) setTimeout(() => URL.revokeObjectURL(old), 1000); };
+    const rot = r.headers.get("X-Rotate") || 0;
+    pre.onload = () => { const old = img._url; img.src = url; img._url = url; img.hidden = false; applyRot(img, rot); if (old) setTimeout(() => URL.revokeObjectURL(old), 1000); };
     pre.onerror = () => URL.revokeObjectURL(url);
     pre.src = url;
   } catch { if (img.hidden) ph.textContent = t("Nessuna immagine disponibile"); }
   finally { card._camBusy = false; }
 }
+// rotazione della camera (es. Fabbrix, camera montata capovolta): indicata dal server per le sole immagini della camera
+const rotStyle = deg => (+deg ? `transform:rotate(${+deg}deg)` : "");
+function applyRot(img, deg) { img.style.transform = +deg ? `rotate(${+deg}deg)` : ""; }
 let camTimer = null;
 // Camera in sovrimpressione: aggiornata solo mentre è aperta (intervallo da Amministrazione → Generali)
 function startCamTimer() { clearInterval(camTimer); camTimer = null; }
@@ -729,7 +735,7 @@ async function openCamera(p) {
       if (!r.ok) { if (img.hidden) $("#camwait").textContent = t("Camera non disponibile"); return; }
       const url = URL.createObjectURL(await r.blob()), old = img._url;
       img.onload = () => { if (old) URL.revokeObjectURL(old); };
-      img.src = url; img._url = url; img.hidden = false; $("#camwait").hidden = true;
+      img.src = url; img._url = url; img.hidden = false; $("#camwait").hidden = true; applyRot(img, r.headers.get("X-Rotate") || 0);
       const q = S.printers.find(x => x.sn === p.sn) || p;
       $("#camage").textContent = q.direct ? t("Aggiornata alle {time} · ogni {s} secondi", {time: new Date().toLocaleTimeString(LOCALES[LANG], {timeStyle: "short"}), s: sec}) : snapAge(q);
     } catch { if (img.hidden) $("#camwait").textContent = t("Camera non disponibile"); }
@@ -903,7 +909,7 @@ RENDER.archive = async function renderArchive() {
   const files = fp.items;
   $("#flist").innerHTML = files.length ? files.map(f => {
     const pl = f.meta.plates || [], p0 = pl[0] || {}, pr = projectOf(f.project_id);
-    const canDel = isAdmin() || (can("files") && (seesAll() || f.uploaded_by === ME.id));
+    const canDel = can("files");          // permesso Archivio: anche i file caricati da altri nelle cartelle visibili
     return `<div class="item" data-id="${f.id}">
       <img class="thumb" loading="lazy" alt="" src="/api/files/${f.id}/thumb/${p0.index || 1}" onerror="this.onerror=null;this.classList.add('noimg');this.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'">
       <div><div class="t" title="${esc(f.filename)}">${esc(f.filename)}</div>
@@ -1176,8 +1182,19 @@ function needHtml(q) {
 }
 RENDER.queue = async function renderQueue() {
   const el = $("#v-queue");
-  const qp = await fetchPage("queue", "/api/queue").catch(e => (toast(e.message, "error"), {items: [], total: 0}));
+  const [qp, prod] = await Promise.all([fetchPage("queue", "/api/queue").catch(e => (toast(e.message, "error"), {items: [], total: 0})),
+    api("/api/production/queue").catch(() => [])]);
   const items = qp.items;
+  // pezzi degli ordini di produzione: partono da soli sulle stampanti dell'ordine (si gestiscono da Produzione)
+  const PSTATE = {pending: t("In attesa"), starting: t("In avvio"), printing: t("In stampa")};
+  const prodHtml = prod.length ? `<h2 class="qsec">${t("Dagli ordini di produzione")} <small class="muted">${t("{n} pezzi", {n: prod.reduce((n, g) => n + g.count, 0)})}</small></h2>
+    <div class="list">${prod.map(g => `<div class="item prodq" style="--c:${esc(g.color || "#F9A420")}">
+      <img class="thumb" loading="lazy" alt="" src="/api/files/${g.file_id}/thumb/${g.plate}" onerror="this.onerror=null;this.classList.add('noimg');this.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'">
+      <div><div class="t">${esc(g.filename || t("File rimosso"))}${g.count > 1 ? ` × ${g.count}` : ""}</div>
+        <div class="m"><span class="tag" style="--c:${esc(g.color || "#F9A420")}"><i></i>${esc(g.order_name)}</span> · <span class="st ${g.status === "pending" ? "queued" : "running"}">${PSTATE[g.status] || g.status}</span>
+          · ${g.printer_name ? esc(g.printer_name) : esc(g.printer_names.join(", ")) || t("nessuna stampante")}${g.order_status === "paused" ? " · " + t("ordine in pausa") : ""}</div>
+        ${g.message ? `<div class="m">${esc(qMsg(g.message))}</div>` : ""}</div>
+      <div class="a"><a class="btn" href="#production">${t("Apri l'ordine")}</a></div></div>`).join("")}</div>` : "";
   const dest = q => q.printer_sn ? esc(printerName(q.printer_sn)) : q.group_name ? t("gruppo {g}", {g: esc(q.group_name)}) : t("qualsiasi stampante");
   el.innerHTML = `<div class="head"><div><h1>${t("Coda di stampa")}</h1><p class="sub">${t("Le stampe partono da sole quando la stampante è inattiva ed escono dalla coda appena iniziano (restano nello storico). Dopo ogni stampa conferma \"Segna il piatto come liberato\" sulla scheda della stampante.")}</p></div>
     <button id="qpause" class="admin-only ${S.queue_paused ? "primary" : ""}">${S.queue_paused ? t("Riprendi la coda") : t("Metti in pausa la coda")}</button></div>
@@ -1189,7 +1206,7 @@ RENDER.queue = async function renderQueue() {
         <div class="m">${q.created_by_name ? t("Aggiunta da {u}", {u: esc(q.created_by_name)}) : ""}${q.message ? ` · ${esc(qMsg(q.message))}` : ""}</div></div>
       <div class="a operator-only">${q.status === "queued" ? `<button data-mv="up" aria-label="${esc(t("Sposta su"))}">↑</button><button data-mv="down" aria-label="${esc(t("Sposta giù"))}">↓</button>` : ""}
         ${q.status === "error" ? `<button data-retry>${t("Riprova")}</button>` : ""}<button class="danger" data-del>${t("Rimuovi")}</button></div></div>`).join("")
-      : `<div class="empty">${t("La coda è vuota. Dall'Archivio scegli \"Stampa\" e poi \"Aggiungi in coda\".")}</div>`}</div>`;
+      : prod.length ? `<div class="empty">${t("Nessuna stampa aggiunta a mano.")}</div>` : `<div class="empty">${t("La coda è vuota. Dall'Archivio scegli \"Stampa\" e poi \"Aggiungi in coda\".")}</div>`}</div>${prodHtml}`;
   if (qp.total) {
     const ph = pagerHtml("queue", qp.total);
     el.querySelector(".list").insertAdjacentHTML("beforebegin", ph);
@@ -1215,7 +1232,7 @@ RENDER.history = async function renderHistory() {
     (toConfirm ? `<div class="pwait"><b>${t("{n} stampe da confermare", {n: toConfirm})}</b><span class="small">${t("La stampante era offline quando il tempo di stampa è scaduto: indica se la stampa è riuscita (il consumo previsto va nelle statistiche) o fallita (conta solo il fallimento).")}</span></div>` : "") +
     (jobs.length ? `<div class="tablewrap"><table><thead><tr><th></th><th>${t("Avvio")}</th><th>${t("Stampante")}</th><th>${t("Lavoro")}</th><th>${t("Utente")}</th><th>${t("Durata")}</th><th>${t("Filamento")}</th><th>${t("Esito")}</th><th></th></tr></thead><tbody>
     ${jobs.map(j => `<tr data-id="${j.id}" data-file="${j.file_id || ""}">
-      <td>${j.snapshot ? `<img class="snap" loading="lazy" alt="${esc(t("Foto a fine stampa"))}" title="${esc(t("Foto a fine stampa"))}" src="/api/jobs/${j.id}/snapshot">`
+      <td>${j.snapshot ? `<img class="snap" loading="lazy" alt="${esc(t("Foto a fine stampa"))}" title="${esc(t("Foto a fine stampa"))}" src="/api/jobs/${j.id}/snapshot" style="${rotStyle((S.printers.find(x => x.sn === j.printer_sn) || {}).cam_rotate)}">`
         : j.has_thumb ? `<img class="snap thumb" loading="lazy" alt="${esc(t("Anteprima del file"))}" title="${esc(t("Anteprima del file (nessuna foto a fine stampa)"))}" src="/api/jobs/${j.id}/thumb" onerror="this.remove()">` : ""}</td>
       <td>${fmtDate(j.started_at)}</td><td>${esc(j.printer_name)}</td><td>${esc(j.task_name)}</td><td>${esc(j.started_by_name || "—")}</td>
       <td>${fmtDur((j.ended_at || Date.now() / 1000) - j.started_at)}${j.planned_s ? `<br><small class="muted" title="${esc(t("Durata prevista"))}">${t("prevista {d}", {d: fmtDur(j.planned_s)})}</small>` : ""}</td><td>${filCell(j)}</td>
@@ -1554,6 +1571,8 @@ function directDialog(r) {
     <label data-f="slug">${t("Stampante su Repetier-Server (slug, facoltativo)")}<input name="slug" value="${esc(r ? r.extra || "" : "")}" placeholder="ender3"></label>
     <label>${t("Indirizzo della foto della webcam (facoltativo)")}<input name="snap" value="${esc(r ? r.snapshot_url : "")}" placeholder="http://192.168.1.179:8080/?action=snapshot · rtsp://192.168.1.180/live"></label>
     <p class="sub small" style="margin:-4px 0 6px">${t("Accetta l'indirizzo di un'immagine (http) o di un flusso video RTSP, es. Prusa Buddy3D Camera: rtsp://IP-della-camera/live.")}</p>
+    <label>${t("Rotazione della camera")}<select name="camrot">${[["", t("Automatica (180° per le Fabbrix)")], ["0", "0°"], ["90", "90°"], ["180", "180°"], ["270", "270°"]]
+      .map(([v, l]) => `<option value="${v}" ${(r ? r.camera_rotate || "" : "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
     <label data-f="web">${t("Indirizzo dell'interfaccia web (facoltativo)")}<input name="web" value="${esc(r ? r.web_url || "" : "")}" placeholder="${esc(t("automatico, es. http://192.168.1.60/"))}"></label>
     ${r ? `<label class="inline"><input type="checkbox" name="en" ${r.enabled ? "checked" : ""}> ${t("Attiva")}</label>` : ""}
     <div id="dtest" class="small"></div>
@@ -1594,7 +1613,7 @@ function directDialog(r) {
   showFields(); if (!r && !val("brand").value) { val("brand").value = KIND_BRAND[val("kind").value] || ""; fillModels(); }
   const body = () => ({id: r ? r.id : undefined, name: val("dname").value || val("host").value, kind: val("kind").value, host: val("host").value,
     password: val("pw").value, api_key: val("api").value, username: val("user").value, extra: val("slug").value,
-    brand: val("brand").value.trim(), printer_model: val("pmodel").value.trim(), web_url: val("web").value.trim(),
+    brand: val("brand").value.trim(), printer_model: val("pmodel").value.trim(), web_url: val("web").value.trim(), camera_rotate: val("camrot").value,
     snapshot_url: val("snap").value, ...(r ? {enabled: val("en").checked} : {})});
   $("#dtry").onclick = async () => {
     $("#dtest").innerHTML = `<span class="muted">${t("Collegamento in corso…")}</span>`;

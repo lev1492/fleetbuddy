@@ -3,6 +3,33 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.31.1] – 2026-11-25
+
+### Novità
+- Files: chi ha il permesso Archivio (anche l'operatore, non il visitatore) può eliminare anche i file caricati da
+  altri, nelle cartelle che vede.
+- Files: un file con lo stesso nome di uno già presente nella stessa cartella mantiene il nome se è preparato per
+  una stampante, un ugello o materiali diversi; il numero davanti ("1-") si aggiunge solo con la stessa
+  configurazione. Il controllo riguarda solo la cartella, non più tutto l'archivio. Vale anche per la rinomina.
+- Camera: rotazione dell'immagine per stampante (Amministrazione → Altre stampanti → Modifica → Rotazione della
+  camera); automatica di 180° per le stampanti Fabbrix, la cui camera è montata capovolta. Vale per la camera dal
+  vivo, per l'immagine nella scheda quando viene dalla camera e per le foto di fine stampa; le anteprime dei file non
+  si ruotano.
+
+- Produzione → Nuovo ordine: per ogni modello si sceglie prima la cartella (le cartelle e sottocartelle visibili
+  all'utente, in ordine ad albero) e poi il modello della cartella, con la stampante per cui è preparato.
+- Coda: i pezzi degli ordini di produzione ancora da stampare compaiono nella Coda, in una sezione "Dagli ordini di
+  produzione", con ordine, stato (in attesa, in avvio, in stampa), stampanti e motivo dell'attesa (es. "in attesa
+  del filamento"); il numero accanto a "Coda" li conta. Si gestiscono sempre dalla Produzione.
+- Produzione: priorità e ordine degli ordini (frecce ↑ ↓) li cambiano solo il Manager e l'amministratore; gli
+  ordini creati dagli altri ruoli hanno priorità normale.
+
+### Correzioni
+- Gruppi personali: togliendo tutte le stampanti un gruppo spariva dall'elenco (pur esistendo ancora), e non si
+  poteva crearne uno nuovo con lo stesso nome. Ora un gruppo personale resta sempre visibile al proprietario, anche
+  vuoto, e si può riempire, rinominare o eliminare.
+- Strumenti di prova: certificati del simulatore del Fleet Hub compatibili con la verifica di Python 3.13.
+
 ## [0.31.0] – 2026-11-20
 
 ### Novità

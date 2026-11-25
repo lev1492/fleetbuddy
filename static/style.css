@@ -650,6 +650,12 @@ img.noimg{background:var(--sunk) url("data:image/svg+xml,%3Csvg xmlns='http://ww
 .chip.personal{border-style:dashed}
 .chip.addg{background:none;border-style:dashed;color:var(--muted)}.chip.addg:hover{color:var(--ink);border-color:var(--accent)}
 
+.pitem .pfold{max-width:240px}
+
+/* pezzi degli ordini di produzione nella Coda */
+h2.qsec{font-size:17px;margin:22px 0 10px;display:flex;align-items:baseline;gap:8px}
+.item.prodq{border-left:4px solid var(--c)}
+
 @media (max-width:760px){.gday{grid-template-columns:1fr}}
 /* Gantt: orari non lavorativi e stampanti offline */
 .gclosed{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 14%,transparent) 0 5px,transparent 5px 10px);pointer-events:none;z-index:0}

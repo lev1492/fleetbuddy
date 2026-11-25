@@ -209,6 +209,7 @@ def state_for(u: User) -> dict:
             p["spools"] = spools.get(p["sn"], [])
     except Exception:  # noqa: BLE001 - l'inventario non deve bloccare lo stato delle stampanti
         pass
+    st["prod_pending"] = sum(g["count"] for g in production_queue(u) if g["status"] == "pending")   # pezzi degli ordini da avviare
     if not u.sees_all:
         rows = [r for r in S().db.q("SELECT q.printer_sn, q.group_id, q.copies, f.project_id FROM queue q LEFT JOIN files f "
                                     "ON f.id=q.file_id WHERE q.status='queued'") if queue_visible(u, r)]
@@ -747,8 +748,8 @@ async def groups_list(request: Request):
             continue
         if not u.sees_all:
             g["printers"] = [sn for sn in g["printers"] if u.sees_printer(sn)]
-            if not g["printers"]:
-                continue
+            if not g["printers"] and not g["personal"]:
+                continue          # un gruppo condiviso senza stampanti visibili non serve; uno personale resta, anche vuoto
         out.append(g)
     return out
 
@@ -1044,8 +1045,16 @@ async def printer_snapshot(request: Request, sn: str, kind: str = "auto"):
     if not img:
         raise HTTPException(404, _("Istantanea non disponibile"))
     media = "image/png" if img[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
-    return Response(img, media_type=media, headers={"Cache-Control": "no-store", "X-Image-Kind": kind,
-                                                    "Access-Control-Expose-Headers": "X-Image-Kind"})
+    rot = camera_rotation(sn) if kind == "camera" else 0      # l'anteprima del file non si ruota mai
+    return Response(img, media_type=media, headers={"Cache-Control": "no-store", "X-Image-Kind": kind, "X-Rotate": str(rot),
+                                                    "Access-Control-Expose-Headers": "X-Image-Kind, X-Rotate"})
+
+
+def camera_rotation(sn: str) -> int:
+    """Rotazione della camera di una stampante (gradi): quella impostata, altrimenti 180° per le Fabbrix (camera montata
+    capovolta), 0 per le altre."""
+    c = S().direct.get(sn)
+    return c.cam_rotate if c is not None else 0
 
 
 @app.get("/api/printers/{sn}/raw")
@@ -1197,9 +1206,9 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
     name = Path(file.filename or "senza_nome.gcode.3mf").name
     if converted:                                       # plate_1.gcode → plate_1.gcode.3mf
         name = re.sub(r"\.(gcode|gco|g)$", "", name, flags=re.I) + ".gcode.3mf"
-    taken = {r["filename"].lower() for r in S().db.q("SELECT filename FROM files")}
+    sig = file_signature({"id": None, "path": rel, "meta": meta})
     final, n = name, 0
-    while final.lower() in taken:   # file diverso con lo stesso nome: "1-nome", "2-nome", ...
+    while _name_clash(final, pid, sig):   # stesso nome e stessa configurazione nella cartella: "1-nome", "2-nome", ...
         n += 1
         final = f"{n}-{name}"
     fid = S().db.x("INSERT INTO files(md5, filename, path, size, uploaded_at, meta, project_id, uploaded_by) "
@@ -1209,12 +1218,28 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
     return {"id": fid, "duplicate": False, "filename": final, "renamed": final != name, "converted": bool(converted)}
 
 
+def file_signature(f: dict) -> tuple:
+    """Configurazione di un file: stampante per cui è preparato, ugelli e materiali. Due file con lo stesso nome ma
+    configurazione diversa (es. stessa staffa per H2D e per X1E, o in PETG e in PLA) possono stare nella stessa cartella."""
+    mf = file_made_for(f) or {}
+    mats = sorted({str(x.get("type") or "").upper() for pl in (f.get("meta") or {}).get("plates") or []
+                   for x in pl.get("filaments") or [] if x.get("type")})
+    return (mf.get("model", "").lower(), tuple(mf.get("nozzles") or ()), tuple(mats))
+
+
+def _name_clash(name: str, pid, sig: tuple, exclude: int | None = None) -> bool:
+    for r in S().db.q("SELECT id, path, meta FROM files WHERE filename=? COLLATE NOCASE AND project_id IS ? AND id IS NOT ?",
+                      (name, pid, exclude)):
+        if file_signature({"id": r["id"], "path": r["path"], "meta": json.loads(r["meta"] or "{}")}) == sig:
+            return True
+    return False
+
+
 @app.delete("/api/files/{fid}")
 async def delete_file(request: Request, fid: int):
     u = U(request)
     f = file_for(u, fid)
-    if not (u.is_admin or (u.can("files") and (u.sees_all or f.get("uploaded_by") == u.id))):
-        raise HTTPException(403, _("Puoi eliminare solo i file caricati da te"))
+    need(u, "files")            # file_for ha già verificato che la cartella sia visibile all'utente
     cfg.path(f["path"]).unlink(missing_ok=True)
     S().db.x("DELETE FROM files WHERE id=?", (fid,))
     S().db.x("DELETE FROM queue WHERE file_id=? AND status='queued'", (fid,))
@@ -1256,8 +1281,8 @@ def _new_filename(fid: int, name) -> str:
     if not name:
         raise HTTPException(400, _("Dai un nome al file"))
     name = name[: 120 - len(ext)] + ext
-    if S().db.one("SELECT 1 FROM files WHERE filename=? COLLATE NOCASE AND project_id IS ? AND id<>?", (name, row["project_id"], fid)):
-        raise HTTPException(409, _("Esiste già un file con questo nome in questa cartella"))
+    if _name_clash(name, row["project_id"], file_signature(S().db.file(fid)), exclude=fid):
+        raise HTTPException(409, _("Esiste già un file con questo nome e la stessa configurazione in questa cartella"))
     return name
 
 
@@ -1777,11 +1802,41 @@ def _prod_visible(u: User, row: dict) -> bool:
     return u.sees_all or any(u.sees_printer(sn) for sn in json.loads(row["printers"] or "[]"))
 
 
+def production_queue(u: User) -> list[dict]:
+    """Pezzi degli ordini di produzione attivi o in pausa non ancora stampati, raggruppati per ordine, modello e stato:
+    compaiono nella Coda insieme alle stampe in coda."""
+    rows = S().db.q("""SELECT p.id AS production_id, p.name AS order_name, p.color, p.priority, p.status AS order_status, p.printers,
+                              u.file_id, u.plate, u.status, u.printer_sn, u.message, f.filename, COUNT(*) AS count
+                       FROM production_units u JOIN productions p ON p.id=u.production_id LEFT JOIN files f ON f.id=u.file_id
+                       WHERE p.status IN ('active','paused') AND u.status IN ('pending','starting','printing')
+                       GROUP BY p.id, u.file_id, u.plate, u.status, u.printer_sn, u.message
+                       ORDER BY p.priority DESC, p.position, MIN(u.seq)""")
+    names = {p["sn"]: p["name"] for p in S().printers.values()}
+    out = []
+    for r in rows:
+        if not _prod_visible(u, r):
+            continue
+        r["printer_names"] = [names.get(sn, sn) for sn in json.loads(r.pop("printers") or "[]") if u.sees_printer(sn)]
+        r["printer_name"] = names.get(r["printer_sn"] or "", "")
+        out.append(r)
+    return out
+
+
+@app.get("/api/production/queue")
+async def production_queue_list(request: Request):
+    return production_queue(U(request))
+
+
 def _prod_row(u: User, pid: int) -> dict:
     row = S().db.one("SELECT * FROM productions WHERE id=?", (pid,))
     if not row or not _prod_visible(u, row):
         raise HTTPException(404, _("Produzione non trovata"))
     return row
+
+
+def can_prioritize(u: User) -> bool:
+    """Priorità e ordine degli ordini di produzione: solo amministratore e Manager."""
+    return u.is_admin or u.role == "manager"
 
 
 def _prod_body(u: User, body: dict) -> dict:
@@ -1793,7 +1848,10 @@ def _prod_body(u: User, body: dict) -> dict:
         if copies:
             items.append({"file_id": f["id"], "plate": int(it.get("plate") or 1), "copies": copies})
     printers = [sn for sn in body.get("printers") or [] if u.sees_printer(sn) and sn in S().printers]
-    return {**body, "items": items, "printers": printers}
+    out = {**body, "items": items, "printers": printers}
+    if not can_prioritize(u):
+        out["priority"] = 1                       # gli altri ruoli creano ordini a priorità normale
+    return out
 
 
 @app.get("/api/productions")
@@ -1862,6 +1920,8 @@ async def productions_edit(request: Request, pid: int, body: dict):
     if "name" in body:
         S().db.x("UPDATE productions SET name=? WHERE id=?", (str(body["name"]).strip()[:80] or row["name"], pid))
     if "priority" in body:
+        if not can_prioritize(u):
+            raise HTTPException(403, _("Solo il Manager e l'amministratore possono cambiare la priorità"))
         S().db.x("UPDATE productions SET priority=? WHERE id=?", (max(0, min(3, int(body["priority"]))), pid))
     if body.get("status") in ("active", "paused") and row["status"] in ("active", "paused"):
         S().db.x("UPDATE productions SET status=? WHERE id=?", (body["status"], pid))
@@ -1910,6 +1970,8 @@ async def production_go(request: Request, sn: str):
 async def productions_move(request: Request, pid: int, body: dict):
     u = U(request)
     need(u, "production")
+    if not can_prioritize(u):
+        raise HTTPException(403, _("Solo il Manager e l'amministratore possono cambiare la priorità"))
     _prod_row(u, pid)
     production.move(S().db, pid, "up" if body.get("direction") == "up" else "down")
     return {"ok": True}
@@ -1976,7 +2038,7 @@ DIRECT_KINDS = tuple(KINDS)
 
 def _direct_row(body: dict, old: dict | None = None) -> dict:
     row = dict(old or {})
-    for k in ("name", "host", "snapshot_url", "username", "extra", "brand", "printer_model", "web_url"):
+    for k in ("name", "host", "snapshot_url", "username", "extra", "brand", "printer_model", "web_url", "camera_rotate"):
         if k in body:
             row[k] = str(body[k] or "").strip()[:200]
     for k in ("password", "api_key"):   # segreti: un campo vuoto in modifica significa "non cambiare"
@@ -1990,13 +2052,14 @@ def _direct_row(body: dict, old: dict | None = None) -> dict:
     row.setdefault("name", row["host"])
     for k in ("password", "snapshot_url", "api_key", "username", "extra", "brand", "printer_model", "web_url"):
         row.setdefault(k, "")
+    row["camera_rotate"] = row.get("camera_rotate") if str(row.get("camera_rotate") or "") in ("0", "90", "180", "270") else ""
     return row
 
 
 @app.get("/api/direct")
 async def direct_list(request: Request):
     _admin(request)
-    rows = S().db.q("SELECT id, kind, name, host, snapshot_url, username, extra, brand, printer_model, web_url, enabled, created_at, "
+    rows = S().db.q("SELECT id, kind, name, host, snapshot_url, username, extra, brand, printer_model, web_url, camera_rotate, enabled, created_at, "
                     "password <> '' AS has_password, api_key <> '' AS has_api_key FROM direct_printers ORDER BY name")
     for r in rows:
         sn = f"{r['kind']}-{r['id']}"
@@ -2057,9 +2120,9 @@ async def direct_add(request: Request, body: dict):
     _admin(request)
     row = _direct_row(body)
     rid = S().db.x("INSERT INTO direct_printers(kind, name, host, password, snapshot_url, api_key, username, extra, brand, "
-                   "printer_model, web_url, enabled, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)",
+                   "printer_model, web_url, camera_rotate, enabled, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
                    (row["kind"], row["name"], row["host"], row["password"], row["snapshot_url"], row["api_key"],
-                    row["username"], row["extra"], row["brand"], row["printer_model"], row["web_url"], time.time()))
+                    row["username"], row["extra"], row["brand"], row["printer_model"], row["web_url"], row["camera_rotate"], time.time()))
     S().reload_direct()
     return {"id": rid, "sn": f"{row['kind']}-{rid}"}
 
@@ -2073,9 +2136,9 @@ async def direct_edit(request: Request, rid: int, body: dict):
     row = _direct_row(body, old)
     enabled = 1 if body.get("enabled", old["enabled"]) else 0
     S().db.x("UPDATE direct_printers SET name=?, host=?, password=?, snapshot_url=?, api_key=?, username=?, extra=?, "
-             "brand=?, printer_model=?, web_url=?, enabled=? WHERE id=?",
+             "brand=?, printer_model=?, web_url=?, camera_rotate=?, enabled=? WHERE id=?",
              (row["name"], row["host"], row["password"], row["snapshot_url"], row["api_key"], row["username"], row["extra"],
-              row["brand"], row["printer_model"], row["web_url"], enabled, rid))
+              row["brand"], row["printer_model"], row["web_url"], row["camera_rotate"], enabled, rid))
     S().reload_direct()
     return {"ok": True}
 

@@ -17,6 +17,8 @@ let PDATA = null, PPLAN = null, PTIMER = null;
 const pmsg = m => { if (!m) return ""; try { const o = JSON.parse(m); return t(o.msg, o.params || {}); } catch { return m; } };
 const whenAbs = ts => new Date(ts * 1000).toLocaleString(LOCALES[LANG], {weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"});
 const whenRel = ts => ts <= Date.now() / 1000 + 60 ? t("adesso") : t("tra {d}", {d: fmtDur(ts - Date.now() / 1000)});
+// priorità e ordine degli ordini: solo amministratore e Manager (controllato anche dal server)
+const canPrio = () => !!ME && (ME.role === "admin" || ME.role === "manager");
 const fileKind = f => f.meta.kind === "resin" ? "resin" : f.meta.format === "ufp" ? "ufp" : f.meta.kind === "gcode" ? "gcode" : "3mf";
 function compatibleWith(p, kind) {
   const c = p.caps || {};
@@ -81,9 +83,9 @@ function orderCard(p, i, list) {
       ${p.status !== "active" ? `<span class="bdg">${t(PSTATE[p.status])}</span>` : ""}
       <span class="grow"></span>
       ${open && can("production") ? `<div class="po-actions">
-        <button type="button" data-po="up" title="${esc(t("Sposta prima"))}" ${i === 0 ? "disabled" : ""}>↑</button>
+        ${canPrio() ? `<button type="button" data-po="up" title="${esc(t("Sposta prima"))}" ${i === 0 ? "disabled" : ""}>↑</button>
         <button type="button" data-po="down" title="${esc(t("Sposta dopo"))}" ${i === list.length - 1 ? "disabled" : ""}>↓</button>
-        <select data-po="prio" aria-label="${esc(t("Priorità"))}">${Object.entries(PRIO).map(([k, l]) => `<option value="${k}" ${+k === p.priority ? "selected" : ""}>${t(l)}</option>`).join("")}</select>
+        <select data-po="prio" aria-label="${esc(t("Priorità"))}">${Object.entries(PRIO).map(([k, l]) => `<option value="${k}" ${+k === p.priority ? "selected" : ""}>${t(l)}</option>`).join("")}</select>` : ""}
         <button type="button" data-po="${p.status === "paused" ? "resume" : "pause"}">${p.status === "paused" ? "▶ " + t("Riprendi") : "⏸ " + t("Pausa")}</button>
         <button type="button" class="danger" data-po="cancel">${t("Annulla")}</button></div>`
         : can("production") && !open ? `<button type="button" class="linkbtn" data-po="delete">${t("Elimina")}</button>` : ""}</div>
@@ -221,11 +223,23 @@ function renderGantt() {
 async function newOrderDialog() {
   const files = (await api("/api/files").catch(() => [])).filter(f => (f.meta.plates || []).length);
   if (!files.length) return toast(t("Carica prima i modelli nell'archivio"), "error");
-  const items = [{file_id: files[0].id, plate: files[0].meta.plates[0].index, copies: 1}];
+  await loadMeta();                                   // cartelle visibili aggiornate
   const fileOf = id => files.find(f => f.id === +id);
+  // cartelle che contengono modelli (anche nelle sottocartelle), in ordine ad albero; "" = senza progetto
+  const fkey = f => f.project_id == null ? "" : String(f.project_id);
+  const used = new Set();
+  files.forEach(f => { let p = PROJECTS.find(x => x.id === f.project_id); used.add(fkey(f));
+    for (let i = 0; p && p.parent_id != null && i < 20; i++) { used.add(String(p.parent_id)); p = PROJECTS.find(x => x.id === p.parent_id); } });
+  const folders = PROJECTS.filter(p => p.id !== null && used.has(String(p.id)))
+    .sort((a, b) => projPath(a).localeCompare(projPath(b)));
+  const folderOpts = sel => `${folders.map(p => `<option value="${p.id}" ${String(p.id) === sel ? "selected" : ""}>${"\u2003".repeat(p.depth || 0)}📁 ${esc(p.name)}</option>`).join("")}
+    ${used.has("") ? `<option value="" ${sel === "" ? "selected" : ""}>${t("Senza progetto")}</option>` : ""}`;
+  const inFolder = k => files.filter(f => fkey(f) === k).sort((a, b) => a.filename.localeCompare(b.filename));
+  const first = inFolder(folders.length ? String(folders[0].id) : "")[0] || files[0];
+  const items = [{folder: fkey(first), file_id: first.id, plate: first.meta.plates[0].index, copies: 1}];
   openDialog(`<h3>${t("Nuovo ordine di produzione")}</h3>
     <div class="row"><label style="flex:1">${t("Nome dell'ordine")}<input name="pname" maxlength="80" placeholder="${esc(t("es. Staffe cliente Rossi"))}"></label></div>
-    <label>${t("Priorità")}</label><div class="seg" id="pprio">${Object.entries(PRIO).map(([k, l]) => `<button type="button" data-v="${k}" class="${k === "1" ? "on" : ""} p${k}">${t(l)}</button>`).join("")}</div>
+    <label ${canPrio() ? "" : 'style="display:none"'}>${t("Priorità")}</label><div class="seg" id="pprio" ${canPrio() ? "" : 'style="display:none"'}>${Object.entries(PRIO).map(([k, l]) => `<button type="button" data-v="${k}" class="${k === "1" ? "on" : ""} p${k}">${t(l)}</button>`).join("")}</div>
     <h4>${t("Modelli e copie")}</h4><div id="pitems"></div>
     <button type="button" id="padd">＋ ${t("Aggiungi modello")}</button>
     <h4>${t("Stampanti")}</h4><div class="row small"><button type="button" class="linkbtn" id="pall">${t("Tutte le compatibili")}</button>
@@ -243,7 +257,9 @@ async function newOrderDialog() {
       const f = fileOf(it.file_id), pls = f.meta.plates;
       const pl = pls.find(x => x.index === it.plate) || pls[0];
       return `<div class="pitem" data-i="${i}">
-        <select data-k="file">${files.map(x => `<option value="${x.id}" ${x.id === it.file_id ? "selected" : ""}>${esc(x.filename)}</option>`).join("")}</select>
+        <select data-k="folder" class="pfold" aria-label="${esc(t("Cartella"))}">${folderOpts(it.folder)}</select>
+        <select data-k="file" aria-label="${esc(t("Modello"))}">${inFolder(it.folder).map(x => `<option value="${x.id}" ${x.id === it.file_id ? "selected" : ""}>${esc(x.filename)}${x.made_for ? " · " + esc(x.made_for.model.replace("Bambu Lab ", "")) : ""}</option>`).join("")
+          || `<option value="">${t("Nessun modello in questa cartella")}</option>`}</select>
         ${pls.length > 1 ? `<select data-k="plate">${pls.map(x => `<option value="${x.index}" ${x.index === it.plate ? "selected" : ""}>${t("Piatto {n}", {n: x.index})}</option>`).join("")}</select>` : ""}
         <label class="inline">× <input type="number" data-k="copies" min="1" max="999" value="${it.copies}" style="width:72px"></label>
         <small class="muted">${fmtDur(pl.prediction_s)} · ${pl.weight_g || 0} g</small>
@@ -276,10 +292,18 @@ async function newOrderDialog() {
   }, 350); };
   drawItems(); drawPrinters(); preview();
   $("#pprio").onclick = e => { const b = e.target.closest("[data-v]"); if (!b) return; prio = +b.dataset.v; $$("#pprio button").forEach(x => x.classList.toggle("on", x === b)); preview(); };
-  $("#padd").onclick = () => { items.push({file_id: items[items.length - 1].file_id, plate: items[items.length - 1].plate, copies: 1}); drawItems(); drawPrinters(); preview(); };
+  $("#padd").onclick = () => { const l = items[items.length - 1]; items.push({folder: l.folder, file_id: l.file_id, plate: l.plate, copies: 1}); drawItems(); drawPrinters(); preview(); };
   $("#pitems").onchange = $("#pitems").oninput = e => {
     const row = e.target.closest("[data-i]"); if (!row) return;
     const it = items[+row.dataset.i], k = e.target.dataset.k;
+    if (k === "folder") {          // cartella cambiata: primo modello della cartella (o delle sue sottocartelle)
+      it.folder = e.target.value;
+      let f = inFolder(it.folder)[0];
+      if (!f) { const sub = folders.find(p => (p.path || []).length > 1 && String(p.id) !== it.folder && files.some(x => fkey(x) === String(p.id)) && isAncestor({id: +it.folder}, p));
+        if (sub) { it.folder = String(sub.id); f = inFolder(it.folder)[0]; } }
+      if (f) { it.file_id = f.id; it.plate = f.meta.plates[0].index; }
+      drawItems(); drawPrinters();
+    }
     if (k === "file") { it.file_id = +e.target.value; it.plate = fileOf(it.file_id).meta.plates[0].index; drawItems(); drawPrinters(); }
     if (k === "plate") it.plate = +e.target.value;
     if (k === "copies") it.copies = Math.max(1, Math.min(999, +e.target.value || 1));
@@ -294,7 +318,7 @@ async function newOrderDialog() {
   fm.elements.namedItem("pname").oninput = preview;
   $("#psave").onclick = async ev => {
     ev.preventDefault();
-    const body = {name: fm.elements.namedItem("pname").value || t("Produzione"), priority: prio, items, printers: [...checked],
+    const body = {name: fm.elements.namedItem("pname").value || t("Produzione"), priority: prio, items: items.filter(it => it.file_id), printers: [...checked],
       auto_retry: fm.elements.namedItem("pretry").checked, paused: fm.elements.namedItem("ppaused").checked};
     if (await act(() => api("/api/productions", {method: "POST", body}), t("Ordine creato"))) { $("#dlg").close(); PTAB = "gantt"; localStorage.setItem("fb_ptab", PTAB); RENDER.production(); }
   };

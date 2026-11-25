@@ -80,6 +80,7 @@ MIGRATIONS = [
     ("direct_printers", "brand", "TEXT DEFAULT ''"),
     ("direct_printers", "printer_model", "TEXT DEFAULT ''"),
     ("direct_printers", "web_url", "TEXT DEFAULT ''"),
+    ("direct_printers", "camera_rotate", "TEXT DEFAULT ''"),       # '' automatico (180° per Fabbrix), 0, 90, 180, 270
     ("projects", "parent_id", "INTEGER"),
     ("jobs", "estimated", "INTEGER DEFAULT 0"),
     ("jobs", "planned_s", "REAL DEFAULT 0"),
