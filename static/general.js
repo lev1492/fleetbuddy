@@ -24,16 +24,23 @@ RENDER.general = async function renderGeneral() {
   const country = () => GEN.countries.find(c => c.code === cfg.country) || {subdivs: []};
   el.innerHTML = `<div class="head"><div><h1>${t("Amministrazione")}</h1></div></div>${adminTabs("general")}
     <div class="gen">
-      <section class="box"><h2>${t("Impostazioni")}</h2>
-        <div class="row">
-          <label>${t("Aggiornamento della camera aperta")}<select id="camref">${REFRESH_OPTS.map(([v, l]) => `<option value="${v}" ${v === Math.min(30, Math.max(5, S.settings.camera_refresh_s || 10)) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
-          <label>${t("Lettura delle stampanti")}<select id="poll">${Object.entries(POLL_LABELS).map(([v, l]) => `<option value="${v}" ${+v === (S.settings.poll_interval || GEN.poll_default || 5) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
-          <label class="inline gfull"><input type="checkbox" id="fshowall" ${S.settings.files_show_all ? "checked" : ""}> ${t("Mostra «Tutti» nella pagina Files (tutti i file di tutti i progetti insieme)")}</label>
-          <label>${t("Offline dopo")}<select id="grace">${Object.entries(GRACE_LABELS).map(([v, l]) => `<option value="${v}" ${+v === (S.settings.offline_grace_s || 30) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
-          <label>${t("Lingua delle notifiche")}<select id="notlang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === (S.settings.notify_lang || "it") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
-        </div><p class="sub small" style="margin:10px 0 0">${t("Lettura delle stampanti: ogni quanto Fabbrix Farm Manager chiede lo stato a ciascuna stampante. Un intervallo più lungo alleggerisce la rete Wi-Fi; schede e avvio delle stampe si aggiornano un po' più lentamente.")}
-          ${t("Una stampante che non risponde resta com'era per il tempo indicato prima di risultare offline: le brevi interruzioni del Wi-Fi non interrompono più schede, coda e produzione.")}
-          ${t("La lingua delle notifiche vale per ntfy, Telegram e webhook, che non sono legati a un utente.")}</p></section>
+      <section class="box gsettings"><h2>${t("Impostazioni")}</h2>
+        <div class="gset-grid">
+          <div class="gset"><h3>${t("Stampanti")}</h3>
+            <label>${t("Lettura delle stampanti")}<select id="poll">${Object.entries(POLL_LABELS).map(([v, l]) => `<option value="${v}" ${+v === (S.settings.poll_interval || GEN.poll_default || 5) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
+            <p class="hint">${t("Ogni quanto Fabbrix Farm Manager chiede lo stato a ciascuna stampante. Un intervallo più lungo alleggerisce la rete Wi-Fi.")}</p>
+            <label>${t("Offline dopo")}<select id="grace">${Object.entries(GRACE_LABELS).map(([v, l]) => `<option value="${v}" ${+v === (S.settings.offline_grace_s || 30) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
+            <p class="hint">${t("Una stampante che non risponde resta com'era per il tempo indicato prima di risultare offline: le brevi interruzioni del Wi-Fi non interrompono più schede, coda e produzione.")}</p></div>
+          <div class="gset"><h3>${t("Camera")}</h3>
+            <label>${t("Aggiornamento della camera aperta")}<select id="camref">${REFRESH_OPTS.map(([v, l]) => `<option value="${v}" ${v === Math.min(30, Math.max(5, S.settings.camera_refresh_s || 10)) ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
+            <p class="hint">${t("Ogni quanto si aggiorna l'immagine quando qualcuno tiene aperta la camera di una stampante.")}</p></div>
+          <div class="gset"><h3>${t("Files")}</h3>
+            <label class="inline"><input type="checkbox" id="fshowall" ${S.settings.files_show_all ? "checked" : ""}> ${t("Mostra «Tutti» nella pagina Files")}</label>
+            <p class="hint">${t("Aggiunge la voce «Tutti», con i file di tutti i progetti insieme. Senza, la pagina si apre sul primo progetto.")}</p></div>
+          <div class="gset"><h3>${t("Notifiche")}</h3>
+            <label>${t("Lingua delle notifiche")}<select id="notlang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === (S.settings.notify_lang || "it") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+            <p class="hint">${t("La lingua delle notifiche vale per ntfy, Telegram e webhook, che non sono legati a un utente.")}</p></div>
+        </div></section>
 
       <section class="box"><h2>${t("Informazioni")}</h2>
         <dl><dt>${t("Applicazione")}</dt><dd>${esc(APP.name)} v${esc(APP.version)}</dd>

@@ -13,6 +13,7 @@ from .config import Config
 from .db import DB
 from . import materials, production
 from .connectors import DirectClient, make_client
+from .config import HubCfg
 from .hub_client import FleetHubClient, HubError
 from .i18n import tr
 
@@ -110,11 +111,12 @@ class Service:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.db = DB(cfg.data_path / "fleetbuddy.db")
-        try:
-            self.hub = FleetHubClient(cfg) if cfg.hub.host else _NoHub("host vuoto in config.toml")
-        except Exception as e:  # noqa: BLE001 - certificati mancanti: Fabbrix Farm Manager funziona con le sole stampanti dirette
-            log.warning("Fleet Hub non disponibile (%s): restano attive le stampanti collegate direttamente", e)
-            self.hub = _NoHub(str(e))
+        # Fleet Hub: 0 = quello di config.toml, gli altri aggiunti da Amministrazione → Fleet Hub (tabella fleet_hubs)
+        self.hubs: dict[int, FleetHubClient | _NoHub] = {}
+        self.hub_info: dict[int, dict] = {}       # id -> nome, indirizzo, errore di configurazione
+        self.hub_state: dict[int, dict] = {}      # id -> esito dell'ultima lettura
+        self.hub_of: dict[str, int] = {}          # seriale -> Fleet Hub a cui è collegata la stampante
+        self.reload_hubs()
         self.hub_printers: dict[str, dict] = {}
         self.direct: dict[str, DirectClient] = {}
         self._direct_err: dict[str, str] = {}
@@ -196,6 +198,8 @@ class Service:
         return {
             "printers": sorted(self.printers.values(), key=lambda p: p["name"].lower()),
             "hub_ok": self.hub_ok, "hub_error": self.hub_error, "last_poll": self.last_poll,
+            "hubs": [{"id": hid, "name": i["name"], "main": i["main"], "enabled": i["enabled"],
+                      "ok": bool((self.hub_state.get(hid) or {}).get("ok"))} for hid, i in sorted(self.hub_info.items())],
             "queue_paused": self.db.get_setting("queue_paused", False),
             # stampe in coda: ogni voce conta per le copie che le restano da stampare
             "queue_count": self.db.one("SELECT COALESCE(SUM(MAX(COALESCE(copies, 1), 1)), 0) n FROM queue WHERE status='queued'")["n"],
@@ -218,27 +222,9 @@ class Service:
         while True:
             t0 = time.time()
             try:
-                hub_new = None
-                if not isinstance(self.hub, _NoHub):
-                    try:
-                        raw = await asyncio.to_thread(self.hub.devices)
-                        hub_new = {p["sn"]: p for p in (normalize(d) for d in raw) if p["sn"]}
-                        self.raw.update({d.get("dev_sn"): d for d in raw if d.get("dev_sn")})
-                        self.hub_ok, self.hub_error, self.hub_error_obj = True, "", None
-                    except HubError as e:
-                        if str(e) != self.hub_error:   # registra solo i cambi di errore, non ogni polling
-                            log.warning("Polling fallito: %s", e)
-                        self.hub_ok, self.hub_error, self.hub_error_obj = False, str(e), e
-                else:
-                    self.hub_ok, self.hub_error, self.hub_error_obj = False, "", None
+                hub_new, hub_now = await self._poll_hubs()
                 direct_new = await self._poll_direct()
-                if hub_new is not None:
-                    self.hub_printers = hub_new
-                hub_now = hub_new
-                if hub_now is None and self.hub_printers and not self.hub_ok:
-                    # Hub non raggiungibile: le sue stampanti risultano senza risposta (la tolleranza vale anche qui)
-                    hub_now = {sn_: {**p_, "online": False} for sn_, p_ in self.hub_printers.items()}
-                raw_all = {**(hub_now or self.hub_printers), **direct_new}
+                raw_all = {**(hub_now or {}), **direct_new}
                 for sn_, p_ in raw_all.items():                 # ultimo stato visto davvero online
                     if p_["online"]:
                         self._last_online[sn_] = (p_.get("seen_at") or time.time(), p_)
@@ -260,6 +246,127 @@ class Service:
                 log.exception("Errore nel ciclo di polling")
             self.emit("state", self.snapshot_state())
             await asyncio.sleep(max(1.0, self.poll_s() - (time.time() - t0)))
+
+    # ------------------------------------------------------------------ Fleet Hub
+    @property
+    def hub(self):
+        """Fleet Hub principale (o il primo configurato): per le chiamate non legate a una stampante."""
+        for hid in sorted(self.hubs):
+            if not isinstance(self.hubs[hid], _NoHub):
+                return self.hubs[hid]
+        return self.hubs.get(0) or _NoHub("nessun Fleet Hub configurato")
+
+    def hub_for(self, sn: str):
+        """Fleet Hub a cui è collegata la stampante."""
+        h = self.hubs.get(self.hub_of.get(sn, -1))
+        return h if h is not None else self.hub
+
+    def hub_by_id(self, hid: int):
+        h = self.hubs.get(hid)
+        if h is None:
+            raise HubError(key="Fleet Hub non trovato")
+        return h
+
+    def hub_dir(self, hid: int) -> Path:
+        return self.cfg.data_path / "hubs" / str(hid)
+
+    def hub_name(self, hid: int) -> str:
+        return (self.hub_info.get(hid) or {}).get("name") or ""
+
+    def reload_hubs(self):
+        """(Ri)carica i Fleet Hub; quelli con gli stessi dati di collegamento tengono sessione e login."""
+        main = self.cfg.hub
+        rows = [{"id": 0, "name": self.db.get_setting("hub0_name", "") or "", "host": main.host, "port": main.port,
+                 "user_name": main.user_name, "password": main.password, "hash_mode": main.password_hash_mode,
+                 "own_certs": 1, "enabled": 1, "main": True}] if main.host else []
+        rows += [{**r, "main": False} for r in self.db.q("SELECT * FROM fleet_hubs ORDER BY id")]
+        keep, info = {}, {}
+        for r in rows:
+            hid = r["id"]
+            info[hid] = {"id": hid, "name": r["name"], "host": r["host"], "port": r["port"], "user_name": r["user_name"],
+                         "own_certs": bool(r["own_certs"]), "enabled": bool(r["enabled"]), "main": r["main"], "error": ""}
+            if not r["enabled"]:
+                continue
+            if r["main"]:
+                hc, sig = main, ("main",)
+            else:
+                d = self.hub_dir(hid)
+                certs = ((str(d / "client.crt"), str(d / "client.key"), str(d / "ca.crt")) if r["own_certs"]
+                         else (str(self.cfg.path(main.client_cert)), str(self.cfg.path(main.client_key)), str(self.cfg.path(main.server_ca))))
+                hc = HubCfg(host=r["host"], port=int(r["port"] or 8888), sni_hostname=main.sni_hostname, client_cert=certs[0],
+                            client_key=certs[1], server_ca=certs[2], user_name=r["user_name"], password=r["password"],
+                            password_hash_mode=r["hash_mode"] or "demo")
+                sig = (hc.host, hc.port, hc.user_name, hc.password, *certs,
+                       *(Path(c).stat().st_mtime if Path(c).exists() else 0 for c in certs))
+            old = self.hubs.get(hid)
+            if old is not None and getattr(old, "_sig", None) == sig:
+                old.label = r["name"] or r["host"]
+                keep[hid] = old
+                continue
+            try:
+                c = FleetHubClient(self.cfg, None if r["main"] else hc, label=r["name"] or r["host"])
+                if not r["main"]:
+                    c.on_mode_change = lambda mode, _id=hid: self.db.x("UPDATE fleet_hubs SET hash_mode=? WHERE id=?", (mode, _id))
+            except Exception as e:  # noqa: BLE001 - certificati mancanti o illeggibili: si segnala, il resto funziona
+                log.warning("Fleet Hub %s non disponibile (%s)", r["name"] or r["host"], e)
+                c = _NoHub(str(e))
+                info[hid]["error"] = str(e)
+            c._sig = sig
+            keep[hid] = c
+        self.hubs, self.hub_info = keep, info
+        self.hub_state = {k: v for k, v in getattr(self, "hub_state", {}).items() if k in keep}
+
+    def hub_label(self, hid: int, lang: str | None = None) -> str:
+        i = self.hub_info.get(hid) or {}
+        return i.get("name") or (tr(lang, "Hub principale") if hid == 0 else i.get("host", ""))
+
+    def hub_error_text(self, lang: str | None) -> str:
+        """Errori dei Fleet Hub nella lingua richiesta, col nome del Hub se ce n'è più di uno."""
+        many = len(self.hub_info) > 1
+        out = []
+        for hid, st in sorted(self.hub_state.items()):
+            if st.get("ok") or not st.get("obj"):
+                continue
+            msg = st["obj"].localized(lang)
+            out.append(f"{self.hub_label(hid, lang)}: {msg}" if many else msg)
+        return " · ".join(out)
+
+    async def _poll_hubs(self):
+        """Legge tutti i Fleet Hub insieme. Restituisce (stampanti lette ora, stato da mostrare) oppure (None, None)
+        se non c'è nessun Hub utilizzabile."""
+        active = {hid: h for hid, h in self.hubs.items() if not isinstance(h, _NoHub)}
+        if not active:
+            self.hub_ok, self.hub_error, self.hub_error_obj = False, "", None
+            return None, None
+        results = await asyncio.gather(*(asyncio.to_thread(h.devices) for h in active.values()), return_exceptions=True)
+        fresh, shown, keep_old = {}, {}, {}
+        for (hid, _h), res in zip(active.items(), results):
+            prev = {sn: p for sn, p in self.hub_printers.items() if p.get("hub_id", 0) == hid}
+            if isinstance(res, BaseException):
+                e = res if isinstance(res, HubError) else HubError(key="Errore interno: {e}", params={"e": res})
+                if str(e) != (self.hub_state.get(hid) or {}).get("error"):   # registra solo i cambi di errore
+                    log.warning("Polling del Fleet Hub %s fallito: %s", self.hub_label(hid), e)
+                self.hub_state[hid] = {"ok": False, "error": str(e), "obj": e}
+                keep_old.update(prev)
+                # Hub non raggiungibile: le sue stampanti risultano senza risposta (la tolleranza vale anche qui)
+                shown.update({sn: {**p, "online": False} for sn, p in prev.items()})
+                continue
+            self.hub_state[hid] = {"ok": True, "error": "", "obj": None}
+            self.raw.update({d.get("dev_sn"): d for d in res if d.get("dev_sn")})
+            for d in res:
+                p = normalize(d)
+                if not p["sn"]:
+                    continue
+                p["hub_id"], p["hub_name"] = hid, self.hub_label(hid)
+                fresh[p["sn"]] = p
+                self.hub_of[p["sn"]] = hid
+        shown.update(fresh)
+        self.hub_printers = {**keep_old, **fresh}
+        bad = [st for st in self.hub_state.values() if not st["ok"]]
+        self.hub_ok = not bad
+        self.hub_error = " · ".join(st["error"] for st in bad)
+        self.hub_error_obj = bad[0]["obj"] if bad else None
+        return fresh, shown
 
     # ------------------------------------------------------------------ stampanti dirette
     def reload_direct(self):
@@ -576,7 +683,7 @@ class Service:
         """Pausa / ripresa / stop / piatto liberato, sulla strada giusta per il tipo di stampante."""
         c = self.direct.get(sn)
         if not c:
-            r = await asyncio.to_thread(self.hub.opt, sn, opt)
+            r = await asyncio.to_thread(self.hub_for(sn).opt, sn, opt)
             if opt == "bed_clean":
                 production.operator_ok(self, sn)       # piatto liberato: c'è un operatore, il piatto è libero
             return r
@@ -1169,7 +1276,7 @@ class Service:
             return hit[1]
         try:
             c = self.direct.get(sn)
-            img = await asyncio.to_thread(c.snapshot if c else (lambda: self.hub.snapshot(sn)))
+            img = await asyncio.to_thread(c.snapshot if c else (lambda: self.hub_for(sn).snapshot(sn)))
         except HubError:
             img = None
         if img:
@@ -1263,21 +1370,22 @@ class Service:
                                "queue": queue})
 
         cached = False
+        hub = self.hub_for(sn)                  # il Fleet Hub a cui è collegata la stampante
         try:
-            hub_files = await asyncio.to_thread(self.hub.cached_files, 500)
+            hub_files = await asyncio.to_thread(hub.cached_files, 500)
             cached = any(x.get("file_hash") == f["md5"] for x in hub_files)
         except HubError:
             pass
         try:
             try:
                 if cached:
-                    res = await asyncio.to_thread(self.hub.print_cached, f["md5"], cmd, [sn])
+                    res = await asyncio.to_thread(hub.print_cached, f["md5"], cmd, [sn])
                 else:
                     raise HubError("not cached", code=-1)
             except HubError as e:
                 if e.code != -1 and e.code in (1051, 1052, 1053):
                     raise
-                res = await asyncio.to_thread(self.hub.print_upload, str(self.cfg.path(f["path"])),
+                res = await asyncio.to_thread(hub.print_upload, str(self.cfg.path(f["path"])),
                                               f["filename"], cmd, [sn])
         except Exception:
             self.db.x("DELETE FROM pending_prints WHERE printer_sn=?", (sn,))

@@ -687,3 +687,32 @@ h2.qsec{font-size:17px;margin:22px 0 10px;display:flex;align-items:baseline;gap:
   .item{grid-template-columns:56px 1fr}.item .a{grid-column:1/-1;justify-content:flex-start}.thumb{width:56px;height:56px}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* Generali → Impostazioni: un riquadro per argomento, con la spiegazione sotto ogni scelta */
+.gset-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.gset{border:1px solid var(--line);border-radius:10px;padding:14px 16px;background:var(--sunk);display:flex;flex-direction:column;gap:6px;min-width:0}
+.gset h3{margin:0 0 4px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.gset label{display:flex;flex-direction:column;gap:4px;margin:0}
+.gset label.inline{flex-direction:row;align-items:center;gap:8px;font-weight:600}
+.gset select{width:100%}
+.gset .hint{margin:0 0 6px;font-size:12.5px;line-height:1.45;color:var(--muted)}
+.gset .hint:last-child{margin-bottom:0}
+@media (max-width:760px){.gset-grid{grid-template-columns:1fr}}
+
+/* Amministrazione → Fleet Hub: elenco dei Hub collegati */
+.hubshead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.hublist{display:flex;flex-direction:column;gap:8px}
+.hubrow{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.hubrow.on{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.hubrow .hmain{flex:1;display:flex;flex-direction:column;min-width:0}
+.hubrow .hmain small{overflow-wrap:anywhere}
+.hubrow .hmain small.err{color:var(--err)}
+.hubrow .hacts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.hdot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--off)}
+.hdot.ok{background:var(--done)} .hdot.ko{background:var(--err)}
+.hubsel span{color:var(--run)}
+.hcerts{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px dashed var(--line);border-radius:8px}
+.hcerts[hidden]{display:none}
+.warnbox{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:10px;border-color:var(--pause)}
+@media (max-width:640px){.hubrow{flex-wrap:wrap}.hubrow .hacts{width:100%;justify-content:flex-start}}
+#hubform.grid1{display:flex;flex-direction:column;gap:10px}

@@ -97,9 +97,13 @@ class _SSLAdapter(HTTPAdapter):
 
 
 class FleetHubClient:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, hub=None, label: str = ""):
+        """`hub`: impostazioni di un Fleet Hub aggiunto da Amministrazione (altrimenti quello di config.toml)."""
         self.cfg = cfg
-        h = cfg.hub
+        self.h = h = hub or cfg.hub
+        self.extra = hub is not None
+        self.label = label
+        self.on_mode_change = None          # Fleet Hub aggiunti: dove salvare la formula della password
         self.base = f"https://{h.host}:{h.port}"
         self._token: str | None = None
         self._lock = threading.Lock()
@@ -112,7 +116,7 @@ class FleetHubClient:
 
     # ------------------------------------------------------------------ infra
     def _make_session(self) -> requests.Session:
-        h = self.cfg.hub
+        h = self.h
         key = self.cfg.path(h.client_key)
         ctx = ssl.create_default_context(cafile=str(self.cfg.path(h.server_ca)))
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2   # minimo richiesto dal Hub (Security White Paper 5.1)
@@ -198,7 +202,10 @@ class FleetHubClient:
                 secs = int(m.group(1)) * 60 + 60
             reason = "Il Hub ha bloccato temporaneamente i login (troppi tentativi)"
         elif e.code == 1023:
-            reason = "Nome utente o password dell'account API errati: correggi config.toml e riavvia Fabbrix Farm Manager"
+            if self.extra:
+                reason = "Nome utente o password dell'account API errati: correggili in Amministrazione → Fleet Hub"
+            else:
+                reason = "Nome utente o password dell'account API errati: correggi config.toml e riavvia Fabbrix Farm Manager"
         else:
             secs, reason = 30, "Login non riuscito"
         self._login_block_until = time.time() + secs
@@ -207,7 +214,7 @@ class FleetHubClient:
         log.error("%s (codice %s). Nessun nuovo tentativo per %d min.", reason, e.code, secs // 60 or 1)
 
     def _login_once(self, mode: str) -> str:
-        h = self.cfg.hub
+        h = self.h
         self._last_login = time.time()
         t = self.request("POST", "/v1/hub/login/local/tickets", auth=False, json={"user_name": h.user_name})
         tk = json.loads(base64.b64decode(t["ticket"]))
@@ -219,7 +226,7 @@ class FleetHubClient:
         return r["token"]
 
     def _login(self) -> str:
-        h = self.cfg.hub
+        h = self.h
         try:
             token = self._login_once(h.password_hash_mode)
         except HubError as e:
@@ -230,11 +237,15 @@ class FleetHubClient:
             other = "doc" if h.password_hash_mode == "demo" else "demo"
             time.sleep(3)
             token = self._login_once(other)
-            log.warning("Login riuscito con password_hash_mode=%s: salvo l'impostazione in config.toml", other)
+            log.warning("Login riuscito con password_hash_mode=%s: salvo l'impostazione", other)
             h.password_hash_mode = other
-            self._save_hash_mode(other)
+            if self.extra:
+                if self.on_mode_change:
+                    self.on_mode_change(other)
+            else:
+                self._save_hash_mode(other)
         self._login_block_until = 0
-        log.info("Login al Hub riuscito")
+        log.info("Login al Hub %s riuscito", self.label or self.h.host)
         return token
 
     def _save_hash_mode(self, mode: str):

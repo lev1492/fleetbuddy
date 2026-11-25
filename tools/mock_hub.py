@@ -33,7 +33,7 @@ CACHE: dict[str, float] = {}
 
 
 def tray(i, typ, col, rfid=False):
-    t = {"id": str(i), "tray_type": typ, "tray_color": col, "tray_info_idx": "GFA00" if typ == "PLA" else "GFG00",
+    t = {"id": str(i), "tray_type": typ, "tray_color": col, "tray_info_idx": {"PLA": "GFA00", "PETG-CF": "GFG50"}.get(typ, "GFG00"),
          "tag_uid": "A1B2C3D4E5F60708" if rfid else "0000000000000000", "tray_sub_brands": "PLA Basic" if rfid else "",
          "remain": 72 if rfid else -1}
     if rfid:
@@ -47,6 +47,16 @@ PRINTERS = {
     "0948AB000000002": {"model": "H2D", "name": "H2D grande", "state": "IDLE", "pct": 0, "t0": 0, "dur": 300,
                         "ams": [tray(0, "PLA", "2850E0FF"), tray(1, "PLA", "E02828FF"), tray(2, "PLA", "FFFFFFFF"), tray(3, "PETG", "161616FF")]},
 }
+
+
+# secondo Hub simulato (python -m tools.mock_hub --port 8889 --set b): altre stampanti, altro seriale
+PRINTERS_B = {
+    "03W00X000000011": {"model": "X1E", "name": "X1E reparto 2", "state": "IDLE", "pct": 0, "t0": 0, "dur": 260,
+                        "ams": [tray(0, "PETG-CF", "F2F2F2FF"), tray(1, "PLA", "161616FF"), {"id": "2"}, {"id": "3"}]},
+    "039AA0000000012": {"model": "A1", "name": "A1 reparto 2", "state": "IDLE", "pct": 0, "t0": 0, "dur": 200,
+                        "ams": [tray(0, "PLA", "F98C36FF", True), {"id": "1"}, {"id": "2"}, {"id": "3"}]},
+}
+HUB_SN = "34K000MOCK"
 
 
 def ok(**kw):
@@ -67,7 +77,7 @@ def h(s):
 
 @app.get("/v1/hub/captain")
 def captain():
-    return {"name": "Hub", "hub_sn": "34K000MOCK", "server_id": "34K000MOCK", "activate_state": "Activate",
+    return {"name": "Hub", "hub_sn": HUB_SN, "server_id": HUB_SN, "activate_state": "Activate",
             "activate_uid": "123", "max_bind_num": 50, "version": "01.00.02.06",
             "internal": {"available": 39, "used": 1}, "udisk": {"conn_state": 0, "available": 0, "used": 0}}
 
@@ -340,6 +350,14 @@ def fws():
 
 
 if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", type=int, default=8888)
+    ap.add_argument("--set", choices=("a", "b"), default="a", help="b = secondo Hub con altre stampanti")
+    a = ap.parse_args()
+    if a.set == "b":
+        PRINTERS.clear(); PRINTERS.update(PRINTERS_B)
+        HUB_SN = "34K000MOCK2"
     d = ROOT / "certs" / "mock"
-    uvicorn.run(app, host="0.0.0.0", port=8888, ssl_certfile=str(d / "server.crt"), ssl_keyfile=str(d / "server.key"),
+    uvicorn.run(app, host="0.0.0.0", port=a.port, ssl_certfile=str(d / "server.crt"), ssl_keyfile=str(d / "server.key"),
                 ssl_ca_certs=str(d / "ca.crt"), ssl_cert_reqs=ssl.CERT_REQUIRED)

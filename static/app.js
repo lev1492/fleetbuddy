@@ -286,6 +286,8 @@ function go() {
   if (["hub", "direct", "general"].includes(view) && !isAdmin()) view = "printers";
   if ((view === "admin" && !can("users")) || (view === "stats" && !can("stats"))) view = "printers";
   const navView = ["hub", "direct", "general"].includes(view) ? "admin" : view;   // schede di Amministrazione
+  const admLink = $('.nav a[data-view="admin"]');          // l'amministratore entra in Amministrazione da Generali
+  if (admLink) admLink.setAttribute("href", isAdmin() ? "#general" : "#admin");
   $$(".nav a").forEach(a => a.classList.toggle("on", a.dataset.view === navView));
   $$(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + view));
   (RENDER[view] || RENDER.printers)();
@@ -324,7 +326,8 @@ function connect() {
       const online = S.printers.filter(p => p.online).length, hubUsed = S.printers.some(p => !p.direct) || S.hub_ok || S.hub_error;
       hs.className = "hubstate " + (online === S.printers.length && (S.hub_ok || !hubUsed) ? "ok" : online ? "warn" : "ko");
       hs.innerHTML = `${t("{a} di {b} stampanti connesse", {a: online, b: S.printers.length})}`
-        + (hubUsed ? `<small>${S.hub_ok ? t("Fleet Hub connesso") : esc(S.hub_error || t("Hub non raggiungibile"))}</small>` : "");
+        + (hubUsed ? `<small>${S.hub_ok ? ((S.hubs || []).filter(h => h.enabled).length > 1 ? t("{n} Fleet Hub connessi", {n: S.hubs.filter(h => h.enabled).length}) : t("Fleet Hub connesso"))
+          : esc(S.hub_error || t("Hub non raggiungibile"))}</small>` : "");
       const qn = (S.queue_count || 0) + (S.prod_pending || 0);        // stampe in coda + pezzi degli ordini da avviare
       $("#qbadge").textContent = qn || "";
       $("#qbadge").title = qn ? t("{n} stampe in coda ({f} file)", {n: S.queue_count || 0, f: S.queue_items || S.queue_count || 0})
@@ -386,7 +389,8 @@ function cardTop(p) {
   return `<div class="pc-title"><div class="pc-name">${esc(p.name)}</div>
       <div class="pc-model">${[esc([p.brand, p.printer_model || p.model].filter(Boolean).join(" ")), diam ? esc(diam) : "",
         p.direct && p.web_url ? `<a class="iplink" href="${esc(p.web_url)}" target="_blank" rel="noopener noreferrer" title="${esc(t("Apri l'interfaccia web della stampante in una nuova scheda"))}">${esc((p.ip || "").replace(/\/.*$/, ""))}${EXT_ICON}</a>`
-          : p.direct ? esc((p.ip || "").replace(/\/.*$/, "")) : adm ? esc(p.sn) : ""].filter(Boolean).join(" · ")}</div></div>
+          : p.direct ? esc((p.ip || "").replace(/\/.*$/, "")) : adm ? esc(p.sn) : "",
+        adm && !p.direct && (S.hubs || []).length > 1 ? esc((S.hubs.find(h => h.id === hubOf(p)) || {}).label || "") : ""].filter(Boolean).join(" · ")}</div></div>
     <div class="bdgs">${badges}</div>`;
 }
 function statusInfo(p) {
@@ -1394,9 +1398,91 @@ RENDER.stats = async function renderStats() {
 };
 
 // ------------------------------------------------------------------ hub
+// ---------------------------------------------------------------- Fleet Hub (uno o più)
+let HUBSEL = +(localStorage.getItem("fb_hub") || 0);
+const hubOf = p => p.hub_id ?? 0;
+function hubDialog(h, onDone) {
+  const main = h && h.main;
+  openDialog(`<h3>${h ? t("Modifica Fleet Hub") : t("Aggiungi Fleet Hub")}</h3>
+    <div id="hubform" class="grid1">
+    <label>${t("Nome")}<input name="name" maxlength="40" value="${esc(h ? h.name || "" : "")}" placeholder="${esc(main ? t("Hub principale") : t("es. Hub reparto 2"))}"></label>
+    ${main ? `<p class="sub small" style="margin:0">${t("Indirizzo, account API e certificati del Fleet Hub principale sono in config.toml: da qui si cambia solo il nome mostrato.")}</p>` : `
+    <div class="row"><label style="flex:3">${t("Indirizzo IP del Fleet Hub")}<input name="host" required value="${esc(h ? h.host : "")}" placeholder="192.168.1.51"></label>
+      <label style="flex:1">${t("Porta")}<input name="port" type="number" min="1" max="65535" value="${esc(h ? h.port : 8888)}"></label></div>
+    <div class="row"><label style="flex:1">${t("Utente dell'account API")}<input name="user_name" value="${esc(h ? h.user_name : "admin")}" autocomplete="off"></label>
+      <label style="flex:1">${t("Password dell'account API")}<input name="password" type="password" autocomplete="new-password" placeholder="${esc(h ? t("invariata") : "")}"></label></div>
+    <label>${t("Certificati per la connessione")}<select name="own_certs">
+      <option value="0" ${h && h.own_certs ? "" : "selected"}>${t("Gli stessi del Fleet Hub principale (stesso account Bambu Lab)")}</option>
+      <option value="1" ${h && h.own_certs ? "selected" : ""}>${t("Certificati propri (Hub di un altro account Bambu Lab)")}</option></select></label>
+    <div id="hcerts" class="hcerts">
+      ${h && h.own_certs ? `<p class="sub small" style="margin:0 0 6px">${t("Carica i tre file solo per sostituire quelli già salvati.")}</p>` : ""}
+      <label>${t("Certificato client (catena, .crt)")}<input type="file" name="client_crt" accept=".crt,.pem,.cer"></label>
+      <label>${t("Chiave privata del certificato (.key)")}<input type="file" name="client_key" accept=".key,.pem"></label>
+      <label>${t("Certificato dell'autorità (root-ca.crt)")}<input type="file" name="ca_crt" accept=".crt,.pem,.cer"></label></div>
+    <p class="sub small" style="margin:0">${t("Il Fleet Hub deve essere già attivato, oppure lo attivi dopo il salvataggio con la Activation Key del Developer Center. Per l'attivazione la password deve avere da 8 a 64 caratteri con maiuscola, minuscola, numero e carattere speciale.")}</p>
+    ${h ? `<label class="inline"><input type="checkbox" name="enabled" ${h.enabled ? "checked" : ""}> ${t("Attivo")}</label>` : ""}`}
+    </div>
+    <div id="htest" class="small"></div>
+    <div class="dlgfoot">${btnCancel()}<button class="primary" id="hsave">${h ? t("Salva") : t("Aggiungi")}</button></div>`);
+  const fm = $("#dlgbody"), el = n => fm.elements.namedItem(n);       // il corpo della finestra è già un modulo
+  const certs = () => { if ($("#hcerts")) $("#hcerts").hidden = el("own_certs").value !== "1"; };
+  if (el("own_certs")) { el("own_certs").onchange = certs; certs(); }
+  $("#hsave").onclick = async e => {
+    e.preventDefault();
+    const fd = new FormData();
+    fd.set("name", el("name").value.trim());
+    if (!main) {
+      for (const k of ["host", "port", "user_name", "password", "own_certs"]) fd.set(k, el(k).value);
+      fd.set("enabled", el("enabled") ? (el("enabled").checked ? "1" : "0") : "1");
+      if (el("own_certs").value === "1") for (const k of ["client_crt", "client_key", "ca_crt"]) if (el(k).files[0]) fd.set(k, el(k).files[0]);
+    }
+    const r = await act(() => api(h ? `/api/hubs/${h.id}` : "/api/hubs", {method: h ? "PATCH" : "POST", body: fd}), h ? t("Fleet Hub salvato") : t("Fleet Hub aggiunto"));
+    if (!r) return;
+    $("#dlg").close();
+    const id = h ? h.id : r.id;
+    if (!h) { HUBSEL = id; localStorage.setItem("fb_hub", HUBSEL); }
+    if (!main) await hubTest(id);
+    onDone && onDone();
+  };
+}
+async function hubTest(id) {
+  toast(t("Prova di collegamento al Fleet Hub…"));
+  const r = await act(() => api(`/api/hubs/${id}/test`, {method: "POST"}));
+  if (!r) return;
+  if (r.ok) return toast(t("Fleet Hub collegato: {sn}, firmware {v}", {sn: r.hub_sn || "", v: r.version || ""}), "ok");
+  if (r.step === "activate") return hubActivate(id);
+  toast(r.error, "error");
+}
+function hubActivate(id) {
+  openDialog(`<h3>${t("Attiva il Fleet Hub")}</h3>
+    <p class="sub" style="margin-top:0">${t("Questo Fleet Hub non è ancora attivato. Inserisci la Activation Key generata nel Developer Center di Bambu Lab: Fabbrix Farm Manager attiva il Hub e crea l'account API con utente e password indicati per questo Hub.")}</p>
+    <label>Activation Key<input id="hkey" placeholder="${esc(t("fh_sk_… (vuoto: quella di config.toml)"))}" autocomplete="off"></label>
+    <div class="dlgfoot">${btnCancel()}<button class="primary" id="hact">${t("Attiva")}</button></div>`);
+  $("#hact").onclick = async e => { e.preventDefault();
+    if (await act(() => api(`/api/hubs/${id}/activate`, {method: "POST", body: {activation_key: $("#hkey").value.trim()}}), t("Fleet Hub attivato"))) { $("#dlg").close(); RENDER.hub(); } };
+}
 RENDER.hub = async function renderHub() {
   const el = $("#v-hub");
+  const hubs = await api("/api/hubs").catch(e => (toast(e.message, "error"), []));
+  if (hubs.length && !hubs.some(h => h.id === HUBSEL)) HUBSEL = hubs[0].id;
+  const cur = hubs.find(h => h.id === HUBSEL);
+  const q = (path, extra = "") => `${path}?hub=${HUBSEL}${extra}`;
+  const many = hubs.length > 1;
   el.innerHTML = `<div class="head"><div><h1>${t("Amministrazione")}</h1></div></div>${adminTabs("hub")}
+    <section class="box hubsbox"><div class="hubshead"><div><h2 style="margin:0">${t("Fleet Hub collegati")}</h2>
+      <p class="sub" style="margin:4px 0 0">${t("Ogni Fleet Hub gestisce le sue stampanti Bambu Lab; in Fabbrix Farm Manager compaiono tutte insieme.")}</p></div>
+      <button class="primary" id="hubadd">＋ ${t("Aggiungi Fleet Hub")}</button></div>
+      ${hubs.length ? `<div class="hublist">${hubs.map(h => `<div class="hubrow ${h.id === HUBSEL ? "on" : ""}" data-hub="${h.id}">
+          <span class="hdot ${!h.enabled ? "off" : h.ok ? "ok" : "ko"}"></span>
+          <div class="hmain"><div><b>${esc(h.label)}</b>${h.main ? ` <span class="bdg">${t("principale")}</span>` : ""}</div>
+            <small class="muted">${esc(h.host)}:${esc(h.port)} · ${t("{n} stampanti", {n: h.printers})}</small>
+            <small class="${h.enabled && !h.ok ? "err" : "muted"}">${!h.enabled ? t("Disattivato") : h.ok ? t("Connesso") : esc(h.error || t("In attesa della prima lettura…"))}</small></div>
+          <div class="hacts">${many ? `<button data-sel="${h.id}" ${h.id === HUBSEL ? "disabled" : ""}>${h.id === HUBSEL ? t("Selezionato") : t("Gestisci")}</button>` : ""}
+            ${h.main ? "" : `<button data-test="${h.id}">${t("Prova")}</button>`}<button data-edit="${h.id}">${t("Modifica")}</button>
+            ${h.main ? "" : `<button class="danger" data-delhub="${h.id}">${t("Elimina")}</button>`}</div></div>`).join("")}</div>`
+        : `<p class="sub">${t("Nessun Fleet Hub configurato. Le stampanti collegate direttamente funzionano comunque; aggiungi un Fleet Hub per le Bambu Lab.")}</p>`}
+    </section>
+    ${cur ? `${many ? `<h2 class="hubsel">${t("Gestione di {h}", {h: `<span>${esc(cur.label)}</span>`})}</h2>` : ""}
     <p class="sub">${t("Collegamento stampanti, firmware e impostazioni del box.")}</p><div id="hubinfo" class="cards2"><div class="box">${t("Lettura dal Hub…")}</div></div>
     <h2>${t("Accesso al Web Client del Hub")}</h2>
     <div class="box"><p class="sub" style="margin:0 0 10px">${t("Facoltativo: abilita l'interfaccia di manutenzione del Hub su https://IP-del-Hub. Senza questo account la porta 443 resta chiusa. Usa una password di almeno 12 caratteri, diversa da quella dell'account API.")}</p>
@@ -1410,35 +1496,51 @@ RENDER.hub = async function renderHub() {
     <h2>${t("Stampanti collegate")}</h2><div id="bound"></div>
     <h2>${t("Firmware stampanti")}</h2>
     <div class="box"><div class="row"><label>${t("Carica il file offline-ota-….zip scaricato da bambulab.com")}<input type="file" id="fw" accept=".zip"></label><button id="fwup">${t("Carica sul Hub")}</button></div><div id="fwlist" style="margin-top:12px"></div></div>
-    <h2>${t("File nella cache del Hub")}</h2><div id="cache"></div>`;
-  api("/api/hub").then(h => {
+    <h2>${t("File nella cache del Hub")}</h2><div id="cache"></div>` : ""}`;
+
+  $("#hubadd").onclick = () => hubDialog(null, () => RENDER.hub());
+  $(".hubsbox").onclick = async e => {
+    const b = e.target.closest("button"); if (!b) return;
+    const id = +(b.dataset.sel ?? b.dataset.test ?? b.dataset.edit ?? b.dataset.delhub);
+    const h = hubs.find(x => x.id === id);
+    if (b.dataset.sel != null) { HUBSEL = id; localStorage.setItem("fb_hub", HUBSEL); RENDER.hub(); }
+    if (b.dataset.test != null) { await hubTest(id); RENDER.hub(); }
+    if (b.dataset.edit != null) hubDialog(h, () => RENDER.hub());
+    if (b.dataset.delhub != null && await uiConfirm(t("Eliminare il Fleet Hub «{h}» da Fabbrix Farm Manager? Le sue stampanti non compariranno più; il Hub e le stampanti non vengono modificati.", {h: h.label}), {danger: true})) {
+      if (await act(() => api(`/api/hubs/${id}`, {method: "DELETE"}), t("Fleet Hub eliminato"))) RENDER.hub(); }
+  };
+  if (!cur) return;
+  const hubPrinters = S.printers.filter(p => !p.direct && hubOf(p) === HUBSEL);
+  api(q("/api/hub")).then(h => {
     const pct = (u, a) => (u + a) ? Math.round(100 * u / (u + a)) : 0;
     const ntpOn = h.ntp?.ntp_switch === "open";
     $("#hubinfo").innerHTML = `<div class="box"><dl><dt>${t("Nome")}</dt><dd>${esc(h.name)}</dd><dt>${t("Seriale")}</dt><dd>${esc(h.hub_sn)}</dd>
       <dt>${t("Attivazione")}</dt><dd>${h.activate_state === "Activate" ? t("Attivo") : t("Non attivato")}</dd><dt>${t("Firmware")}</dt><dd>${esc(h.version)}</dd>
-      <dt>${t("Stampanti")}</dt><dd>${t("{n} di {max}", {n: S.printers.filter(p => !p.direct).length, max: h.max_bind_num})}
-        <br><small class="muted">${t("Solo le Bambu Lab collegate al Hub. Le altre {n} stampanti sono gestite direttamente da Fabbrix Farm Manager (Amministrazione → Altre stampanti).", {n: S.printers.filter(p => p.direct).length})}</small></dd></dl></div>
+      <dt>${t("Stampanti")}</dt><dd>${t("{n} di {max}", {n: hubPrinters.length, max: h.max_bind_num})}
+        <br><small class="muted">${many ? t("Solo le Bambu Lab collegate a questo Hub.") : t("Solo le Bambu Lab collegate al Hub. Le altre {n} stampanti sono gestite direttamente da Fabbrix Farm Manager (Amministrazione → Altre stampanti).", {n: S.printers.filter(p => p.direct).length})}</small></dd></dl></div>
       <div class="box"><dl><dt>${t("Memoria interna")}</dt><dd>${t("{u} GB usati, {a} GB liberi", {u: h.internal?.used ?? 0, a: h.internal?.available ?? 0})}</dd></dl>
       <div class="meter"><i style="width:${pct(h.internal?.used || 0, h.internal?.available || 0)}%"></i></div>
       <p class="sub" style="margin:10px 0 0">${t("Sotto i 20 GB liberi il Hub elimina da solo i file non usati da 30 giorni.")}</p></div>
       <div class="box"><dl><dt>${t("Ora del Hub")}</dt><dd>${esc(h.ntp?.date || "—")} (${esc(h.ntp?.time_zone || "")})</dd><dt>NTP</dt><dd>${ntpOn ? t("Attivo") : t("Disattivo")}</dd></dl>
       <div class="row" style="margin-top:10px"><button id="ntpon">${ntpOn ? t("Disattiva NTP") : t("Attiva NTP")}</button><button id="synct">${t("Allinea all'ora di questo dispositivo")}</button></div></div>`;
-    $("#ntpon").onclick = async () => { await act(() => api("/api/hub/ntp", {method: "PUT", body: {ntp_switch: ntpOn ? "close" : "open"}}), t("NTP aggiornato")); RENDER.hub(); };
+    if (h.activate_state !== "Activate" && !cur.main) $("#hubinfo").insertAdjacentHTML("afterbegin", `<div class="box warnbox"><b>${t("Il Fleet Hub non è ancora attivato")}</b> <button class="primary" id="hubact">${t("Attiva")}</button></div>`);
+    if ($("#hubact")) $("#hubact").onclick = () => hubActivate(HUBSEL);
+    $("#ntpon").onclick = async () => { await act(() => api(q("/api/hub/ntp"), {method: "PUT", body: {ntp_switch: ntpOn ? "close" : "open"}}), t("NTP aggiornato")); RENDER.hub(); };
     $("#synct").onclick = async () => {
       const d = new Date(), off = -d.getTimezoneOffset(), tz = `UTC${off >= 0 ? "+" : "-"}${Math.floor(Math.abs(off) / 60)}:${String(Math.abs(off) % 60).padStart(2, "0")}`;
       const pad = n => String(n).padStart(2, "0");
       const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-      await act(() => api("/api/hub/ntp", {method: "PUT", body: {time_zone: tz, date}}), t("Ora del Hub aggiornata")); RENDER.hub();
+      await act(() => api(q("/api/hub/ntp"), {method: "PUT", body: {time_zone: tz, date}}), t("Ora del Hub aggiornata")); RENDER.hub();
     };
   }).catch(e => $("#hubinfo").innerHTML = `<div class="box">${esc(e.message)}</div>`);
 
   $("#wadd").onclick = async () => {
     const pwd = $("#wp").value;
     if (pwd.length < 12 && !await uiConfirm(t("La password ha meno di 12 caratteri, la lunghezza consigliata dal produttore. Continuare?"))) return;
-    const r = await act(() => api("/api/hub/web_user", {method: "POST", body: {username: $("#wu").value, password: pwd}}), t("Account web creato"));
+    const r = await act(() => api(q("/api/hub/web_user"), {method: "POST", body: {username: $("#wu").value, password: pwd}}), t("Account web creato"));
     if (r) $("#wp").value = "";
   };
-  $("#wdel").onclick = async () => { if (await uiConfirm(t("Eliminare l'account del Web Client? L'interfaccia web del Hub non sarà più accessibile."), {danger: true})) await act(() => api("/api/hub/web_user", {method: "DELETE"}), t("Account web eliminato")); };
+  $("#wdel").onclick = async () => { if (await uiConfirm(t("Eliminare l'account del Web Client? L'interfaccia web del Hub non sarà più accessibile."), {danger: true})) await act(() => api(q("/api/hub/web_user"), {method: "DELETE"}), t("Account web eliminato")); };
   const showFound = list => {
     $("#found").innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Nome")}</th><th>${t("Modello")}</th><th>IP</th><th>${t("Seriale")}</th><th>${t("Stato")}</th><th></th></tr></thead><tbody>${list.map(p => {
       const can = p.farm !== false && p.bind !== "occupied" && p.connect !== "lan" && !p.fw_min;
@@ -1448,44 +1550,43 @@ RENDER.hub = async function renderHub() {
         <td>${can ? `<button data-bind="${esc(p.usn)}" data-ip="${esc(p.location)}">${t("Collega al Hub")}</button>` : ""}</td></tr>`;
     }).join("")}</tbody></table></div>` : `<p class="sub">${t("Nessuna stampante trovata. Le stampanti devono avere un firmware recente e non essere in modalità solo LAN né associate a Bambu Handy.")}</p>`;
   };
-  $("#disc").onclick = async () => { $("#found").textContent = t("Ricerca…"); const r = await act(() => api("/api/hub/discover")); if (r) showFound(r); };
+  $("#disc").onclick = async () => { $("#found").textContent = t("Ricerca…"); const r = await act(() => api(q("/api/hub/discover"))); if (r) showFound(r); };
   $("#scan").onclick = async () => { $("#found").textContent = t("Scansione in corso (può richiedere un minuto)…");
-    const r = await act(() => api(`/api/hub/scan?prefix=${encodeURIComponent($("#pref").value)}&begin=${$("#sb").value}&end=${$("#se").value}`)); if (r) showFound(r); };
+    const r = await act(() => api(q("/api/hub/scan", `&prefix=${encodeURIComponent($("#pref").value)}&begin=${$("#sb").value}&end=${$("#se").value}`))); if (r) showFound(r); };
   $("#found").onclick = async e => { const b = e.target.closest("[data-bind]"); if (!b) return; b.disabled = true;
-    await act(() => api("/api/hub/bind", {method: "POST", body: {dev_id: b.dataset.bind, dev_ip: b.dataset.ip}}), t("Stampante collegata al Hub")); };
+    await act(() => api(q("/api/hub/bind"), {method: "POST", body: {dev_id: b.dataset.bind, dev_ip: b.dataset.ip}}), t("Stampante collegata al Hub")); };
 
-  const hubPrinters = S.printers.filter(p => !p.direct);
   $("#bound").innerHTML = hubPrinters.length ? `<div class="tablewrap"><table><thead><tr><th>${t("Nome")}</th><th>${t("Modello")}</th><th>IP</th><th>${t("Firmware")}</th><th>${t("Aggiornamento")}</th><th></th></tr></thead><tbody>
     ${hubPrinters.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.model)}</td><td>${esc(p.ip)}</td><td>${esc(p.firmware)}</td><td>${esc(p.upgrade_state || "—")}</td>
     <td><button class="danger" data-unbind="${p.sn}">${t("Scollega")}</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="sub">${t("Nessuna stampante collegata.")}</p>`;
   $("#bound").onclick = async e => { const b = e.target.closest("[data-unbind]"); if (!b || !await uiConfirm(t("Scollegare la stampante dal Hub?"), {danger: true})) return;
-    const r = await act(() => api("/api/hub/unbind", {method: "POST", body: {dev_ids: [b.dataset.unbind]}}));
+    const r = await act(() => api(q("/api/hub/unbind"), {method: "POST", body: {dev_ids: [b.dataset.unbind]}}));
     if (r) (r.unbind_results || []).forEach(x => toast(x.code ? `${x.dev_id}: ${x.message}` : t("{sn} scollegata", {sn: x.dev_id}), x.code ? "error" : "ok")); };
 
   const loadFw = async () => {
-    const fws = await api("/api/hub/firmwares").catch(() => []);
+    const fws = await api(q("/api/hub/firmwares")).catch(() => []);
     $("#fwlist").innerHTML = fws.length ? `<div class="tablewrap"><table><thead><tr><th>${t("File")}</th><th>${t("Modello")}</th><th>${t("Versione")}</th><th></th></tr></thead><tbody>${fws.map(f => `<tr><td>${esc(f.name)}</td><td>${esc(f.model)}</td><td>${esc(f.version)}</td>
       <td style="white-space:nowrap"><button data-up="${esc(f.name)}">${t("Aggiorna stampanti")}</button> <button class="danger" data-delfw="${esc(f.name)}">${t("Elimina")}</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="sub">${t("Nessun firmware caricato.")}</p>`;
   };
   loadFw();
   $("#fwup").onclick = async () => { const f = $("#fw").files[0]; if (!f) return toast(t("Scegli prima il file del firmware"), "error");
     const fd = new FormData(); fd.append("file", f); toast(t("Caricamento firmware sul Hub…"));
-    await act(() => api("/api/hub/firmwares", {method: "POST", body: fd}), t("Firmware caricato")); loadFw(); };
+    await act(() => api(q("/api/hub/firmwares"), {method: "POST", body: fd}), t("Firmware caricato")); loadFw(); };
   $("#fwlist").onclick = async e => {
     const up = e.target.closest("[data-up]"), del = e.target.closest("[data-delfw]");
-    if (del && await uiConfirm(t("Eliminare il firmware dal Hub?"), {danger: true})) { await act(() => api("/api/hub/firmwares", {method: "DELETE", body: {firmwares: [del.dataset.delfw]}})); loadFw(); }
+    if (del && await uiConfirm(t("Eliminare il firmware dal Hub?"), {danger: true})) { await act(() => api(q("/api/hub/firmwares"), {method: "DELETE", body: {firmwares: [del.dataset.delfw]}})); loadFw(); }
     if (up) {
-      const cands = S.printers.filter(p => !p.active && !p.direct);   // il Hub aggiorna solo le Bambu collegate
+      const cands = hubPrinters.filter(p => !p.active);   // il Hub aggiorna solo le Bambu collegate a lui
       openDialog(`<h3>${t("Aggiorna con {f}", {f: esc(up.dataset.up)})}</h3><p class="sub" style="margin:0">${t("Seleziona le stampanti inattive da aggiornare. Il Hub verifica la compatibilità del modello.")}</p>
         ${cands.map(p => `<label class="inline"><input type="checkbox" value="${p.sn}"> ${esc(p.name)} (${esc(p.model)}, ${esc(p.firmware)})</label>`).join("") || t("Nessuna stampante inattiva.")}
         <div class="dlgfoot">${btnCancel()}<button class="primary" id="doup">${t("Avvia aggiornamento")}</button></div>`);
       $("#doup").onclick = async ev => { ev.preventDefault();
         const ids = $$("#dlgbody input:checked").map(i => i.value); if (!ids.length) return;
-        const r = await act(() => api("/api/hub/upgrade", {method: "POST", body: {dev_ids: ids, firmware_name: up.dataset.up}}));
+        const r = await act(() => api(q("/api/hub/upgrade"), {method: "POST", body: {dev_ids: ids, firmware_name: up.dataset.up}}));
         if (r) { (r.init_upgrade_results || []).forEach(x => toast(x.code ? `${x.dev_id}: ${x.message}` : t("{sn}: aggiornamento avviato", {sn: x.dev_id}), x.code ? "error" : "ok")); $("#dlg").close(); } };
     }
   };
-  api("/api/hub/cache").then(c => $("#cache").innerHTML = c.length ? `<div class="tablewrap"><table><thead><tr><th>${t("File")}</th><th>MD5</th><th>${t("Ultimo uso")}</th></tr></thead><tbody>${c.map(f =>
+  api(q("/api/hub/cache")).then(c => $("#cache").innerHTML = c.length ? `<div class="tablewrap"><table><thead><tr><th>${t("File")}</th><th>MD5</th><th>${t("Ultimo uso")}</th></tr></thead><tbody>${c.map(f =>
     `<tr><td>${esc(f.filename || t("(non in archivio)"))}</td><td><code>${esc(f.file_hash)}</code></td><td>${esc(f.last_use_time)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="sub">${t("Cache vuota.")}</p>`).catch(() => {});
 };
 
@@ -1555,6 +1656,10 @@ RENDER.direct = async function renderDirect() {
     }
   };
 };
+// rotazione della camera: quella salvata, altrimenti 180° per le Fabbrix (camera montata capovolta) e 0° per le altre
+const isFabbrix = (brand, model) => /fabbrix/i.test(`${brand || ""} ${model || ""}`);
+const camRotOf = r => r && ["0", "90", "180", "270"].includes(String(r.camera_rotate || "")) ? String(r.camera_rotate)
+  : (r && isFabbrix(r.brand, r.printer_model) ? "180" : "0");
 function directDialog(r) {
   openDialog(`<h3>${r ? t("Modifica {p}", {p: esc(r.name)}) : t("Aggiungi stampante")}</h3>
     <div class="row"><label style="flex:1">${t("Nome")}<input name="dname" value="${esc(r ? r.name : "")}" maxlength="64" placeholder="Elemento-v21"></label>
@@ -1571,8 +1676,8 @@ function directDialog(r) {
     <label data-f="slug">${t("Stampante su Repetier-Server (slug, facoltativo)")}<input name="slug" value="${esc(r ? r.extra || "" : "")}" placeholder="ender3"></label>
     <label>${t("Indirizzo della foto della webcam (facoltativo)")}<input name="snap" value="${esc(r ? r.snapshot_url : "")}" placeholder="http://192.168.1.179:8080/?action=snapshot · rtsp://192.168.1.180/live"></label>
     <p class="sub small" style="margin:-4px 0 6px">${t("Accetta l'indirizzo di un'immagine (http) o di un flusso video RTSP, es. Prusa Buddy3D Camera: rtsp://IP-della-camera/live.")}</p>
-    <label>${t("Rotazione della camera")}<select name="camrot">${[["", t("Automatica (180° per le Fabbrix)")], ["0", "0°"], ["90", "90°"], ["180", "180°"], ["270", "270°"]]
-      .map(([v, l]) => `<option value="${v}" ${(r ? r.camera_rotate || "" : "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+    <label>${t("Rotazione della camera")}<select name="camrot">${["0", "90", "180", "270"]
+      .map(v => `<option value="${v}" ${camRotOf(r) === v ? "selected" : ""}>${v}°</option>`).join("")}</select></label>
     <label data-f="web">${t("Indirizzo dell'interfaccia web (facoltativo)")}<input name="web" value="${esc(r ? r.web_url || "" : "")}" placeholder="${esc(t("automatico, es. http://192.168.1.60/"))}"></label>
     ${r ? `<label class="inline"><input type="checkbox" name="en" ${r.enabled ? "checked" : ""}> ${t("Attiva")}</label>` : ""}
     <div id="dtest" class="small"></div>
@@ -1590,7 +1695,11 @@ function directDialog(r) {
   };
   const KIND_BRAND = {prusalink: "Prusa", elegoo: "Elegoo", raise3d: "Raise3D", ultimaker: "UltiMaker", intamsys: "INTAMSYS"};
   const fillModels = () => { $("#dl-models").innerHTML = ((CATALOG.brands || {})[val("brand").value] || []).map(m => `<option value="${esc(m)}">`).join(""); };
-  val("brand").oninput = fillModels; fillModels();
+  // finché la rotazione non è stata salvata né scelta a mano, segue Marca e Modello (180° per le Fabbrix)
+  let rotTouched = !!(r && ["0", "90", "180", "270"].includes(String(r.camera_rotate || "")));
+  val("camrot").onchange = () => { rotTouched = true; };
+  const followRot = () => { if (!rotTouched) val("camrot").value = isFabbrix(val("brand").value, val("pmodel").value) ? "180" : "0"; };
+  val("brand").oninput = () => { fillModels(); followRot(); }; val("pmodel").oninput = followRot; fillModels();
   // UltiMaker: richiesta di autorizzazione da approvare sul display; ID e chiave diventano utente e password
   $("#umreq").onclick = async () => {
     const host = val("host").value.trim();
@@ -1609,8 +1718,9 @@ function directDialog(r) {
     }
     $("#umst").innerHTML = `<span class="warn">${t("Nessuna risposta dalla stampante: riprova")}</span>`;
   };
-  val("kind").onchange = () => { showFields(); if (!r && (!val("brand").value || Object.values(KIND_BRAND).includes(val("brand").value))) { val("brand").value = KIND_BRAND[val("kind").value] || ""; fillModels(); } };
+  val("kind").onchange = () => { showFields(); if (!r && (!val("brand").value || Object.values(KIND_BRAND).includes(val("brand").value))) { val("brand").value = KIND_BRAND[val("kind").value] || ""; fillModels(); } followRot(); };
   showFields(); if (!r && !val("brand").value) { val("brand").value = KIND_BRAND[val("kind").value] || ""; fillModels(); }
+  followRot();
   const body = () => ({id: r ? r.id : undefined, name: val("dname").value || val("host").value, kind: val("kind").value, host: val("host").value,
     password: val("pw").value, api_key: val("api").value, username: val("user").value, extra: val("slug").value,
     brand: val("brand").value.trim(), printer_model: val("pmodel").value.trim(), web_url: val("web").value.trim(), camera_rotate: val("camrot").value,

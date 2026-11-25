@@ -58,6 +58,11 @@ CREATE TABLE IF NOT EXISTS direct_printers (
     id INTEGER PRIMARY KEY, kind TEXT DEFAULT 'duet', name TEXT, host TEXT, password TEXT DEFAULT '',
     snapshot_url TEXT DEFAULT '', enabled INTEGER DEFAULT 1, created_at REAL
 );
+-- Fleet Hub aggiunti da Amministrazione (quello di config.toml non è qui); certificati propri in data/hubs/<id>/
+CREATE TABLE IF NOT EXISTS fleet_hubs (
+    id INTEGER PRIMARY KEY, name TEXT DEFAULT '', host TEXT, port INTEGER DEFAULT 8888, user_name TEXT DEFAULT 'admin',
+    password TEXT DEFAULT '', hash_mode TEXT DEFAULT 'demo', own_certs INTEGER DEFAULT 0, enabled INTEGER DEFAULT 1, created_at REAL
+);
 """
 
 # colonne aggiunte nelle versioni successive (migrazione automatica dei database esistenti)

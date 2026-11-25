@@ -3,6 +3,29 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.32.0] – 2026-11-25
+
+### Novità
+- Più Fleet Hub: in Amministrazione → Fleet Hub si aggiungono tutti i Fleet Hub che servono con "＋ Aggiungi Fleet
+  Hub" (nome, indirizzo, porta, account API). Per i Hub dello stesso account Bambu Lab si usano i certificati del Hub
+  principale; per quelli di un altro account si caricano certificato client, chiave privata e certificato
+  dell'autorità (salvati in data/hubs/<id>/, controllati prima del salvataggio). Per ogni Hub: Prova del
+  collegamento, Modifica, Attivo/disattivato, Elimina; un Hub nuovo non ancora attivato si attiva dall'interfaccia
+  con la Activation Key del Developer Center.
+- Le stampanti di tutti i Fleet Hub compaiono insieme; stampa, comandi, camera, filamenti e nome passano dal Hub a cui
+  è collegata ciascuna stampante. Se un Hub non risponde, solo le sue stampanti risultano offline; nel menu si legge
+  quale Hub ha il problema ("2 Fleet Hub connessi" quando va tutto bene). Con più Hub la scheda della stampante (per
+  l'amministratore) indica a quale Hub è collegata.
+- Fleet Hub: la pagina mostra l'elenco dei Hub con stato e numero di stampanti; "Gestisci" sceglie il Hub a cui si
+  riferiscono informazioni, Web Client, aggiunta stampanti, stampanti collegate, firmware e cache. Il Hub principale
+  resta quello di config.toml (da qui si cambia solo il nome mostrato).
+- Amministrazione si apre su Generali.
+- Generali → Impostazioni riorganizzate per argomento (Stampanti, Camera, Files, Notifiche), con la spiegazione sotto
+  ogni scelta.
+- Rotazione della camera: tolta la voce "Automatica"; si sceglie 0°, 90°, 180° o 270°. Una stampante mai impostata
+  mostra 180° se Marca o Modello contengono "Fabbrix", altrimenti 0°, e nel modulo la scelta segue Marca e Modello
+  finché non la si cambia a mano.
+
 ## [0.31.1] – 2026-11-25
 
 ### Novità

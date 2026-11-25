@@ -218,7 +218,9 @@ def state_for(u: User) -> dict:
         if not st["hub_ok"]:
             st["hub_error"] = _("Hub non raggiungibile: avvisa l'amministratore")
     elif not st["hub_ok"] and S().hub_error_obj is not None:
-        st["hub_error"] = S().hub_error_obj.localized(current_lang.get())
+        st["hub_error"] = S().hub_error_text(current_lang.get())
+    for h in st.get("hubs") or []:
+        h["label"] = S().hub_label(h["id"], current_lang.get())
     st["settings"] = settings()
     rows = S().db.q("""SELECT q.id, q.printer_sn, q.group_id, q.copies, q.file_id, f.filename, f.project_id
                        FROM queue q LEFT JOIN files f ON f.id=q.file_id WHERE q.status='queued'
@@ -1034,7 +1036,7 @@ async def printer_name(request: Request, sn: str, body: dict):
         S().db.x("UPDATE direct_printers SET name=? WHERE id=?", (name, int(sn.split("-", 1)[1])))
         S().reload_direct()
         return {"ok": True}
-    return await asyncio.to_thread(S().hub.set_name, sn, name)
+    return await asyncio.to_thread(S().hub_for(sn).set_name, sn, name)
 
 
 @app.get("/api/printers/{sn}/snapshot")
@@ -1093,7 +1095,7 @@ async def printer_filament(request: Request, sn: str, body: dict):
         "ams_id": ams_id, "slot_id": slot_id,
     }
     opt = "external_filament_setting" if ams_id in (254, 255) else "ams_filament_setting"
-    return await asyncio.to_thread(S().hub.opt, sn, opt, {opt: setting})
+    return await asyncio.to_thread(S().hub_for(sn).opt, sn, opt, {opt: setting})
 
 
 @app.get("/api/hms")
@@ -2155,21 +2157,226 @@ async def direct_delete(request: Request, rid: int):
     return {"ok": True}
 
 
-@app.get("/api/hub")
-async def hub_info(request: Request):
+# ====================================================================== Fleet Hub (più di uno)
+def _same_hub(hub: int, sns) -> None:
+    """Le stampanti indicate devono essere collegate al Fleet Hub scelto."""
+    for sn in sns or []:
+        if S().hub_of.get(sn, 0) != hub:
+            raise HTTPException(400, _("{sn} non è collegata a questo Fleet Hub", sn=sn))
+
+
+def _hub_row(hid: int) -> dict:
+    i = dict(S().hub_info.get(hid) or {})
+    if not i:
+        raise HTTPException(404, _("Fleet Hub non trovato"))
+    st = S().hub_state.get(hid) or {}
+    i["label"] = S().hub_label(hid, current_lang.get())
+    i["ok"] = bool(st.get("ok"))
+    i["error"] = i.get("error") or (st["obj"].localized(current_lang.get()) if st.get("obj") else "")
+    i["printers"] = sum(1 for p in S().hub_printers.values() if p.get("hub_id", 0) == hid)
+    return i
+
+
+@app.get("/api/hubs")
+async def hubs_list(request: Request):
     _admin(request)
-    info = await asyncio.to_thread(S().hub.captain)
+    return [_hub_row(hid) for hid in sorted(S().hub_info)]
+
+
+def _check_cert_files(client_crt: Path, client_key: Path, ca: Path):
+    """Verifica che certificato, chiave e autorità si possano usare per la connessione mTLS."""
+    import ssl
     try:
-        info["ntp"] = await asyncio.to_thread(S().hub.get_ntp)
+        ctx = ssl.create_default_context(cafile=str(ca))
+        ctx.load_cert_chain(str(client_crt), str(client_key))
+    except (ssl.SSLError, OSError, ValueError) as e:
+        raise HTTPException(400, _("Certificati non validi: {e}", e=e)) from e
+
+
+async def _save_hub_certs(hid: int, files: dict[str, UploadFile | None], required: bool):
+    """Salva i certificati caricati in data/hubs/<id>/ (tutti e tre insieme, controllati prima di sostituire i vecchi)."""
+    given = {k: f for k, f in files.items() if f is not None and f.filename}
+    if not given:
+        if required:
+            raise HTTPException(400, _("Carica certificato client, chiave privata e certificato dell'autorità"))
+        return
+    if len(given) < 3:
+        raise HTTPException(400, _("Carica certificato client, chiave privata e certificato dell'autorità"))
+    d = S().hub_dir(hid)
+    tmp = d.with_name(f"{hid}.new")
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    for name, f in given.items():
+        data = await f.read()
+        if len(data) > 64 * 1024:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise HTTPException(400, _("File troppo grande per essere un certificato"))
+        (tmp / name).write_bytes(data)
+    (tmp / "client.key").chmod(0o600)
+    try:
+        _check_cert_files(tmp / "client.crt", tmp / "client.key", tmp / "ca.crt")
+    except HTTPException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    shutil.rmtree(d, ignore_errors=True)
+    tmp.rename(d)
+
+
+def _hub_fields(name: str, host: str, port: str, user_name: str) -> tuple[str, str, int, str]:
+    host = host.strip().removeprefix("https://").removeprefix("http://").strip("/")
+    if ":" in host and not port:
+        host, port = host.rsplit(":", 1)
+    if not host:
+        raise HTTPException(400, _("Indica l'indirizzo del Fleet Hub"))
+    try:
+        p = int(port or 8888)
+        assert 0 < p < 65536
+    except (ValueError, AssertionError):
+        raise HTTPException(400, _("Porta non valida")) from None
+    return name.strip()[:40], host[:120], p, (user_name.strip() or "admin")[:64]
+
+
+@app.post("/api/hubs")
+async def hubs_add(request: Request, name: str = Form(""), host: str = Form(""), port: str = Form(""),
+                   user_name: str = Form("admin"), password: str = Form(""), own_certs: str = Form("0"),
+                   client_crt: UploadFile | None = File(None), client_key: UploadFile | None = File(None),
+                   ca_crt: UploadFile | None = File(None)):
+    _admin(request)
+    name, host, p, user_name = _hub_fields(name, host, port, user_name)
+    own = own_certs in ("1", "true", "on")
+    if not own and not cfg.hub.host:
+        raise HTTPException(400, _("Non c'è un Fleet Hub principale da cui prendere i certificati: caricali per questo Hub"))
+    if S().db.one("SELECT 1 FROM fleet_hubs WHERE host=? AND port=?", (host, p)) or (cfg.hub.host == host and int(cfg.hub.port) == p):
+        raise HTTPException(409, _("Questo Fleet Hub è già collegato"))
+    if not password:
+        raise HTTPException(400, _("Indica la password dell'account API del Fleet Hub"))
+    hid = S().db.x("INSERT INTO fleet_hubs(name, host, port, user_name, password, own_certs, enabled, created_at) VALUES(?,?,?,?,?,?,1,?)",
+                   (name, host, p, user_name, password, 1 if own else 0, time.time()))
+    if own:
+        try:
+            await _save_hub_certs(hid, {"client.crt": client_crt, "client.key": client_key, "ca.crt": ca_crt}, required=True)
+        except HTTPException:
+            S().db.x("DELETE FROM fleet_hubs WHERE id=?", (hid,))
+            raise
+    S().reload_hubs()
+    return {"id": hid}
+
+
+@app.patch("/api/hubs/{hid}")
+async def hubs_edit(request: Request, hid: int, name: str = Form(""), host: str = Form(""), port: str = Form(""),
+                    user_name: str = Form("admin"), password: str = Form(""), own_certs: str = Form("0"),
+                    enabled: str = Form("1"), client_crt: UploadFile | None = File(None),
+                    client_key: UploadFile | None = File(None), ca_crt: UploadFile | None = File(None)):
+    _admin(request)
+    if hid == 0:              # quello di config.toml: da qui si cambia solo il nome mostrato
+        S().db.set_setting("hub0_name", name.strip()[:40])
+        S().reload_hubs()
+        return {"ok": True}
+    row = S().db.one("SELECT * FROM fleet_hubs WHERE id=?", (hid,))
+    if not row:
+        raise HTTPException(404, _("Fleet Hub non trovato"))
+    name, host, p, user_name = _hub_fields(name, host, port, user_name)
+    own = own_certs in ("1", "true", "on")
+    if not own and not cfg.hub.host:
+        raise HTTPException(400, _("Non c'è un Fleet Hub principale da cui prendere i certificati: caricali per questo Hub"))
+    if S().db.one("SELECT 1 FROM fleet_hubs WHERE host=? AND port=? AND id<>?", (host, p, hid)) or (cfg.hub.host == host and int(cfg.hub.port) == p):
+        raise HTTPException(409, _("Questo Fleet Hub è già collegato"))
+    if own:
+        await _save_hub_certs(hid, {"client.crt": client_crt, "client.key": client_key, "ca.crt": ca_crt},
+                              required=not (S().hub_dir(hid) / "client.crt").exists())
+    S().db.x("UPDATE fleet_hubs SET name=?, host=?, port=?, user_name=?, password=?, own_certs=?, enabled=? WHERE id=?",
+             (name, host, p, user_name, password or row["password"], 1 if own else 0, 0 if enabled in ("0", "false") else 1, hid))
+    S().reload_hubs()
+    return {"ok": True}
+
+
+@app.delete("/api/hubs/{hid}")
+async def hubs_delete(request: Request, hid: int):
+    _admin(request)
+    if hid == 0:
+        raise HTTPException(400, _("Il Fleet Hub principale è configurato in config.toml e non si può eliminare da qui"))
+    if not S().db.one("SELECT 1 FROM fleet_hubs WHERE id=?", (hid,)):
+        raise HTTPException(404, _("Fleet Hub non trovato"))
+    S().db.x("DELETE FROM fleet_hubs WHERE id=?", (hid,))
+    shutil.rmtree(S().hub_dir(hid), ignore_errors=True)
+    S().reload_hubs()
+    for sn in [sn for sn, h in S().hub_of.items() if h == hid]:   # le sue stampanti spariscono alla lettura successiva
+        S().hub_of.pop(sn, None)
+        S().hub_printers.pop(sn, None)
+    return {"ok": True}
+
+
+@app.post("/api/hubs/{hid}/test")
+async def hubs_test(request: Request, hid: int):
+    """Prova di collegamento: raggiungibilità (mTLS), attivazione e login con l'account API."""
+    _admin(request)
+    h = S().hub_by_id(hid)
+    try:
+        info = await asyncio.to_thread(h.captain)
+    except HubError as e:
+        return {"ok": False, "step": "connect", "error": e.localized(current_lang.get())}
+    out = {"hub_sn": info.get("hub_sn"), "version": info.get("version"), "name": info.get("name"),
+           "activated": info.get("activate_state") == "Activate"}
+    if not out["activated"]:
+        return {**out, "ok": False, "step": "activate", "error": _("Il Fleet Hub non è ancora attivato")}
+    try:
+        h.logout()
+        await asyncio.to_thread(h._ensure_token)
+    except HubError as e:
+        return {**out, "ok": False, "step": "login", "error": e.localized(current_lang.get())}
+    return {**out, "ok": True}
+
+
+@app.post("/api/hubs/{hid}/activate")
+async def hubs_activate(request: Request, hid: int, body: dict):
+    """Attivazione di un Fleet Hub nuovo (come tools/activate.py): ticket dal Hub, codice dal cloud Bambu Lab,
+    installazione del codice e creazione dell'account API con utente e password indicati per questo Hub."""
+    _admin(request)
+    from .hub_client import activate_cloud
+    h = S().hub_by_id(hid)
+    info = await asyncio.to_thread(h.captain)
+    if info.get("activate_state") == "Activate":
+        raise HTTPException(409, _("Il Fleet Hub è già attivato"))
+    key = str(body.get("activation_key") or "").strip() or cfg.cloud.activation_key
+    if not key.startswith("fh_sk_"):
+        raise HTTPException(400, _("Inserisci la Activation Key generata nel Developer Center di Bambu Lab (inizia con fh_sk_)"))
+    hc = h.h
+    problem = password_problem_hub(hc.password)
+    if problem:
+        raise HTTPException(400, problem)
+    ticket = await asyncio.to_thread(h.activation_ticket)
+    code = await asyncio.to_thread(activate_cloud, cfg.cloud.domain, key, ticket)
+    await asyncio.to_thread(h.install_activation_code, code, hc.user_name, hc.password)
+    return {"ok": True}
+
+
+def password_problem_hub(pwd: str) -> str | None:
+    """Regole del Fleet Hub per la password dell'account API."""
+    if not 8 <= len(pwd.encode()) <= 64:
+        return _("La password dell'account API deve avere da 8 a 64 caratteri")
+    for rx, what in ((r"[A-Z]", _("una maiuscola")), (r"[a-z]", _("una minuscola")), (r"\d", _("un numero")),
+                     (r"[^A-Za-z0-9]", _("un carattere speciale"))):
+        if not re.search(rx, pwd):
+            return _("La password dell'account API deve contenere {what}", what=what)
+    return None
+
+
+@app.get("/api/hub")
+async def hub_info(request: Request, hub: int = 0):
+    _admin(request)
+    h = S().hub_by_id(hub)
+    info = await asyncio.to_thread(h.captain)
+    try:
+        info["ntp"] = await asyncio.to_thread(h.get_ntp)
     except HubError:
         info["ntp"] = None
     return info
 
 
 @app.put("/api/hub/ntp")
-async def hub_ntp(request: Request, body: dict):
+async def hub_ntp(request: Request, body: dict, hub: int = 0):
     _admin(request)
-    return await asyncio.to_thread(S().hub.set_ntp, {k: v for k, v in body.items() if v not in (None, "")})
+    return await asyncio.to_thread(S().hub_by_id(hub).set_ntp, {k: v for k, v in body.items() if v not in (None, "")})
 
 
 def _with_fw_check(printers: list[dict]) -> list[dict]:
@@ -2179,103 +2386,106 @@ def _with_fw_check(printers: list[dict]) -> list[dict]:
 
 
 @app.get("/api/hub/discover")
-async def hub_discover(request: Request, only_can_bind: bool = False):
+async def hub_discover(request: Request, only_can_bind: bool = False, hub: int = 0):
     _admin(request)
-    return _with_fw_check(await asyncio.to_thread(S().hub.local_printers, only_can_bind))
+    return _with_fw_check(await asyncio.to_thread(S().hub_by_id(hub).local_printers, only_can_bind))
 
 
 @app.get("/api/hub/scan")
-async def hub_scan(request: Request, prefix: str, begin: int = 1, end: int = 254):
+async def hub_scan(request: Request, prefix: str, begin: int = 1, end: int = 254, hub: int = 0):
     _admin(request)
-    return _with_fw_check(await asyncio.to_thread(S().hub.scan_printers, prefix, begin, end))
+    return _with_fw_check(await asyncio.to_thread(S().hub_by_id(hub).scan_printers, prefix, begin, end))
 
 
 @app.post("/api/hub/bind")
-async def hub_bind(request: Request, body: dict):
+async def hub_bind(request: Request, body: dict, hub: int = 0):
     _admin(request)
-    return await asyncio.to_thread(S().hub.bind, body["dev_id"], body["dev_ip"])
+    return await asyncio.to_thread(S().hub_by_id(hub).bind, body["dev_id"], body["dev_ip"])
 
 
 @app.post("/api/hub/unbind")
-async def hub_unbind(request: Request, body: dict):
+async def hub_unbind(request: Request, body: dict, hub: int = 0):
     _admin(request)
-    return await asyncio.to_thread(S().hub.unbind, body["dev_ids"])
+    _same_hub(hub, body["dev_ids"])
+    return await asyncio.to_thread(S().hub_by_id(hub).unbind, body["dev_ids"])
 
 
 @app.get("/api/hub/cache")
-async def hub_cache(request: Request):
+async def hub_cache(request: Request, hub: int = 0):
     _admin(request)
-    files = await asyncio.to_thread(S().hub.cached_files, 500)
+    files = await asyncio.to_thread(S().hub_by_id(hub).cached_files, 500)
     names = {r["md5"]: r["filename"] for r in S().db.q("SELECT md5, filename FROM files")}
     for f in files:
         f["filename"] = names.get(f.get("file_hash"), "")
     return files
 
 
-def _hub_password_problem(pwd: str) -> str | None:
+def _hub_password_problem(pwd: str, hub: int = 0) -> str | None:
     if len(pwd) < 8 or len(pwd.encode()) > 64:
         return _("La password deve avere da 8 a 64 caratteri")
     for rx, what in ((r"[A-Z]", _("una maiuscola")), (r"[a-z]", _("una minuscola")), (r"\d", _("un numero")),
                      (r"[^A-Za-z0-9]", _("un carattere speciale"))):
         if not re.search(rx, pwd):
             return _("La password deve contenere {what}", what=what)
-    if pwd == cfg.hub.password:
+    h = S().hubs.get(hub)
+    if h is not None and pwd == getattr(getattr(h, "h", None), "password", None):
         return _("Usa una password diversa da quella dell'account API")
     return None
 
 
 @app.post("/api/hub/web_user")
-async def hub_web_user_add(request: Request, body: dict):
+async def hub_web_user_add(request: Request, body: dict, hub: int = 0):
     _admin(request)
     user, pwd = str(body.get("username", "")).strip(), str(body.get("password", ""))
     if not 1 < len(user) < 32:
         raise HTTPException(400, _("Il nome utente deve avere da 2 a 31 caratteri"))
-    problem = _hub_password_problem(pwd)
+    problem = _hub_password_problem(pwd, hub)
     if problem:
         raise HTTPException(400, problem)
-    return await asyncio.to_thread(S().hub.add_web_user, user, pwd)
+    return await asyncio.to_thread(S().hub_by_id(hub).add_web_user, user, pwd)
 
 
 @app.delete("/api/hub/web_user")
-async def hub_web_user_delete(request: Request):
+async def hub_web_user_delete(request: Request, hub: int = 0):
     _admin(request)
-    return await asyncio.to_thread(S().hub.delete_web_user)
+    return await asyncio.to_thread(S().hub_by_id(hub).delete_web_user)
 
 
 @app.get("/api/hub/firmwares")
-async def hub_firmwares(request: Request):
+async def hub_firmwares(request: Request, hub: int = 0):
     _admin(request)
-    return await asyncio.to_thread(S().hub.firmwares)
+    return await asyncio.to_thread(S().hub_by_id(hub).firmwares)
 
 
 @app.post("/api/hub/firmwares")
-async def hub_firmware_upload(request: Request, file: UploadFile = File(...)):
+async def hub_firmware_upload(request: Request, file: UploadFile = File(...), hub: int = 0):
     _admin(request)
     tmp = cfg.data_path / "tmp" / Path(file.filename or "firmware.zip").name
     with tmp.open("wb") as out:
         shutil.copyfileobj(file.file, out, 1 << 20)
     try:
         md5 = await asyncio.to_thread(md5_file, tmp)
-        return await asyncio.to_thread(S().hub.upload_firmware, str(tmp), tmp.name, md5)
+        return await asyncio.to_thread(S().hub_by_id(hub).upload_firmware, str(tmp), tmp.name, md5)
     finally:
         tmp.unlink(missing_ok=True)
 
 
 @app.delete("/api/hub/firmwares")
-async def hub_firmware_delete(request: Request, body: dict):
+async def hub_firmware_delete(request: Request, body: dict, hub: int = 0):
     _admin(request)
-    return await asyncio.to_thread(S().hub.delete_firmwares, body["firmwares"])
+    return await asyncio.to_thread(S().hub_by_id(hub).delete_firmwares, body["firmwares"])
 
 
 @app.post("/api/hub/upgrade")
-async def hub_upgrade(request: Request, body: dict):
+async def hub_upgrade(request: Request, body: dict, hub: int = 0):
     u = U(request)
     _admin(request)
+    _same_hub(hub, body["dev_ids"])
     for sn in body["dev_ids"]:
         p = printer_for(u, sn)
         if p["active"]:
             raise HTTPException(409, _("{p} sta stampando: aggiornamento non consentito", p=p["name"]))
-    return await asyncio.to_thread(S().hub.upgrade, body["dev_ids"], body["firmware_name"])
+    return await asyncio.to_thread(S().hub_by_id(hub).upgrade, body["dev_ids"], body["firmware_name"])
 
 
 # ====================================================================== statico

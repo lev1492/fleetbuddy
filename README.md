@@ -206,6 +206,14 @@ le stampanti abilitate e una priorità (bassa, normale, alta, urgente).
   stato noto e i pezzi restano assegnati. Al ritorno online Fabbrix Farm Manager si riallinea (stampa proseguita, terminata o
   persa: in quest'ultimo caso il pezzo viene rilanciato).
 
+## Più Fleet Hub
+Il Fleet Hub principale è quello di `config.toml`. Altri Fleet Hub si aggiungono da *Amministrazione → Fleet Hub →
+＋ Aggiungi Fleet Hub* (indirizzo, porta 8888, utente e password dell'account API). Per un Hub dello stesso account
+Bambu Lab bastano i certificati del principale; per un Hub di un altro account si caricano certificato client (catena),
+chiave privata e `root-ca.crt`, salvati in `data/hubs/<id>/`. Un Hub non ancora attivato si attiva dalla stessa pagina
+con la Activation Key del Developer Center. Le stampanti di tutti i Hub compaiono insieme e ogni comando passa dal Hub
+a cui è collegata la stampante; se un Hub non risponde, solo le sue stampanti risultano offline.
+
 ## Altre stampanti (senza Fleet Hub)
 In *Amministrazione → Altre stampanti* si collegano stampanti che non passano dal Fleet Hub. Compaiono nell'elenco
 insieme alle Bambu, con storico, statistiche, coda, gruppi e permessi. "Prova connessione" verifica i dati prima di salvarli.
