@@ -180,6 +180,46 @@ sudo systemctl restart fleetbuddy
 - Le password sono salvate con PBKDF2-SHA256; le sessioni durano 30 giorni; dopo 5 tentativi errati
   l'accesso da quell'indirizzo è sospeso per 5 minuti.
 
+## Invio dagli slicer
+> Per ora riservato agli **amministratori**: per aprirlo agli utenti con il permesso Files togli la spunta in
+> *Amministrazione → Generali → Files → Invio dagli slicer solo per gli amministratori*.
+
+PrusaSlicer, OrcaSlicer, Cura (con il plugin *OctoPrint Connection* del Marketplace) e ideaMaker possono inviare i file
+direttamente al Farm Manager, che per lo slicer è una stampante **OctoPrint**. Dal menu, **Collega slicer**:
+
+1. crea una **chiave API** personale (si vede una sola volta; ha i permessi del tuo utente);
+2. scegli la **cartella predefinita** per i file inviati senza cartella;
+3. copia l'**indirizzo** della destinazione di "Carica e stampa":
+   `http(s)://<pi>:8000/octoprint/` (tutte le stampanti), `…/octoprint/g/<gruppo>/` (un gruppo, per nome o id),
+   `…/octoprint/p/<seriale>/` (una stampante). Nello slicer si crea una stampante fisica per ogni destinazione;
+4. nello slicer: tipo di host **OctoPrint**, l'indirizzo e la chiave API, poi **Test**.
+
+Nella finestra di invio dello slicer la cartella si scrive davanti al nome (`Clienti/Rossi/staffa.gcode`); deve già
+esistere nei Files. **Carica** archivia il file; **Carica e stampa** crea anche un ordine di produzione (una copia per
+piatto) sulle stampanti compatibili della destinazione. Con OrcaSlicer e le stampanti Bambu Lab attiva *Usa host di
+stampa di terze parti*: il G-code viene impacchettato in `.gcode.3mf` e stampato dal Fleet Hub. Bambu Studio non può
+inviare a server di terze parti: esporta il `.gcode.3mf` e caricalo nei Files.
+
+Con l'HTTPS e un certificato autofirmato lo slicer deve fidarsi del certificato (su Windows va importato tra le
+autorità radice attendibili).
+
+### Plugin per Cura e OrcaSlicer
+Per **Cura** (5.x) e **OrcaSlicer** (2.5 o successivo) c'è un plugin, scaricabile da *Collega slicer*, che non richiede
+di copiare chiavi e fa scegliere tutto al momento dell'invio: cartella dei Files, destinazione, solo Files oppure
+ordine di produzione con copie e priorità, note.
+
+- **Cura**: trascina `FabbrixFarmManager.curapackage` nella finestra di Cura e riavvia. Dopo lo slicing, nel menu
+  accanto a *Salva su disco*, scegli **Invia al Farm Manager**. Funziona con qualsiasi stampante, UltiMaker comprese
+  (ricevono un `.ufp`).
+- **OrcaSlicer**: *File → Plugin → Installa plugin locale* → `fabbrix_farm_manager.py`, poi *Attiva*. Dopo
+  *Esporta G-code* (o *Esporta file del piatto*) compare l'avviso **Invia al Farm Manager**; in alternativa barra
+  spaziatrice → *Invia a Fabbrix Farm Manager*. Alla prima esecuzione OrcaSlicer chiede il permesso di leggere il file
+  e di usare la rete.
+
+La prima volta il plugin chiede l'indirizzo del Farm Manager e mostra un **codice di 6 caratteri**: il browser si apre
+sulla pagina di approvazione (oppure lo si scrive in *Collega slicer → Approva il codice*). La chiave creata ha i
+permessi del tuo utente e si revoca da *Collega slicer*. I sorgenti dei plugin sono in `plugins/`.
+
 ## Produzione
 La pagina *Produzione* gestisce ordini di produzione: uno o più modelli dell'archivio con il numero di copie,
 le stampanti abilitate e una priorità (bassa, normale, alta, urgente).

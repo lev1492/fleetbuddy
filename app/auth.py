@@ -249,3 +249,29 @@ class Auth:
 
     def drop_sessions(self, uid: int):
         self.db.x("DELETE FROM sessions WHERE user_id=?", (uid,))
+
+    # ------------------------------------------------------------------ chiavi API (slicer)
+    def create_api_key(self, uid: int, name: str) -> tuple[int, str]:
+        """Nuova chiave per l'utente: restituita una sola volta, nel database resta solo l'hash."""
+        key = "ffm_" + secrets.token_urlsafe(30)
+        kid = self.db.x("INSERT INTO api_keys(user_id, name, key_hash, prefix, created_at) VALUES(?,?,?,?,?)",
+                        (uid, " ".join(str(name or "").split())[:60], _token_hash(key), key[:10], time.time()))
+        return kid, key
+
+    def api_key_user_id(self, key: str | None, ip: str = "", agent: str = "") -> int | None:
+        """Utente della chiave (None se manca o non è valida); annota l'ultimo uso."""
+        key = (key or "").strip()
+        if not key:
+            return None
+        r = self.db.one("SELECT id, user_id, last_used_at FROM api_keys WHERE key_hash=?", (_token_hash(key),))
+        if not r:
+            return None
+        now = time.time()
+        if not r["last_used_at"] or now - r["last_used_at"] > 60:      # niente scritture continue sulla microSD
+            self.db.x("UPDATE api_keys SET last_used_at=?, last_ip=?, last_agent=? WHERE id=?",
+                      (now, ip[:64], agent[:120], r["id"]))
+        return r["user_id"]
+
+    def api_key_failed(self, ip: str):
+        """Chiave sbagliata: conta come un tentativo di accesso errato (blocco dopo 5 in 5 minuti)."""
+        self._fails.setdefault(ip, []).append(time.time())

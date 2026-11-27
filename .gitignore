@@ -16,3 +16,6 @@ __pycache__/
 fleetbuddy-backup-*
 test_cfg.ini
 .env
+
+# file aggiunti da Windows ai download (WSL)
+*:Zone.Identifier

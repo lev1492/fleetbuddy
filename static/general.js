@@ -36,7 +36,11 @@ RENDER.general = async function renderGeneral() {
             <p class="hint">${t("Ogni quanto si aggiorna l'immagine quando qualcuno tiene aperta la camera di una stampante.")}</p></div>
           <div class="gset"><h3>${t("Files")}</h3>
             <label class="inline"><input type="checkbox" id="fshowall" ${S.settings.files_show_all ? "checked" : ""}> ${t("Mostra «Tutti» nella pagina Files")}</label>
-            <p class="hint">${t("Aggiunge la voce «Tutti», con i file di tutti i progetti insieme. Senza, la pagina si apre sul primo progetto.")}</p></div>
+            <p class="hint">${t("Aggiunge la voce «Tutti», con i file di tutti i progetti insieme. Senza, la pagina si apre sul primo progetto.")}</p>
+            <label class="inline"><input type="checkbox" id="slpaused" ${S.settings.slicer_orders_paused ? "checked" : ""}> ${t("Ordini dagli slicer in pausa")}</label>
+            <p class="hint">${t("Gli ordini creati con «Carica e stampa» da uno slicer restano in pausa finché qualcuno non li avvia dalla Produzione.")}</p>
+            <label class="inline"><input type="checkbox" id="sladmin" ${S.settings.slicer_admin_only !== false ? "checked" : ""}> ${t("Invio dagli slicer solo per gli amministratori")}</label>
+            <p class="hint">${t("«Collega slicer», i plugin per Cura e OrcaSlicer e l'invio come stampante OctoPrint funzionano solo per gli amministratori. Togli la spunta per aprirli agli utenti con il permesso Files.")}</p></div>
           <div class="gset"><h3>${t("Notifiche")}</h3>
             <label>${t("Lingua delle notifiche")}<select id="notlang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === (S.settings.notify_lang || "it") ? "selected" : ""}>${v}</option>`).join("")}</select></label>
             <p class="hint">${t("La lingua delle notifiche vale per ntfy, Telegram e webhook, che non sono legati a un utente.")}</p></div>
@@ -129,6 +133,8 @@ RENDER.general = async function renderGeneral() {
   $("#grace").onchange = e => saveSetting({offline_grace_s: +e.target.value});
   $("#poll").onchange = e => saveSetting({poll_interval: +e.target.value});
   $("#fshowall").onchange = e => saveSetting({files_show_all: e.target.checked});
+  $("#slpaused").onchange = e => saveSetting({slicer_orders_paused: e.target.checked});
+  $("#sladmin").onchange = e => saveSetting({slicer_admin_only: e.target.checked});
   wireUpdateBox();
   $("#gmode").onchange = e => { cfg.mode = e.target.value; };
   $("#gcountry").onchange = e => {

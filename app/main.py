@@ -7,7 +7,6 @@ import logging
 import re
 import shutil
 import time
-import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -22,10 +21,9 @@ from .i18n import _, current_lang, from_accept_language, normalize
 from .hub_client import HubError
 from .printers import FILAMENT_PRESETS, auto_map, firmware_below_min, is_ready
 from .service import Service, qmsg
-from . import bambu_gcode, materials, production, resinmeta
+from . import ingest, materials, octoprint, production, resinmeta, slicerapi
 from .connectors import KINDS, make_client
-from .gcodemeta import is_gcode, parse_gcode
-from .threemf import md5_file, parse_3mf
+from .threemf import md5_file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("fleetbuddy.web")
@@ -34,7 +32,8 @@ svc: Service | None = None
 auth: Auth | None = None
 COOKIE = "fb_session"
 PUBLIC = {"/", "/api/session", "/api/login", "/api/setup", "/api/logout"}
-DEFAULT_SETTINGS = {"theme": "auto", "offline_grace_s": 30, "camera_refresh_s": 10, "notify_lang": "it"}
+DEFAULT_SETTINGS = {"theme": "auto", "offline_grace_s": 30, "camera_refresh_s": 10, "notify_lang": "it",
+                    "slicer_orders_paused": False, "slicer_admin_only": True}
 
 
 @asynccontextmanager
@@ -50,12 +49,16 @@ async def lifespan(_app: FastAPI):
             log.info("Creato l'amministratore '%s' da config.toml", cfg.app.ui_user)
         except ValueError as e:
             log.warning("Impossibile creare l'amministratore da config.toml (%s): usa la pagina di configurazione", e)
+    octoprint.init(svc=S, auth=lambda: auth, group_targetable=group_targetable, settings=settings,
+                   can_prioritize=can_prioritize)
     svc.start()
     yield
     await svc.stop()
 
 
 app = FastAPI(title=APP_NAME, version=__version__, lifespan=lifespan)
+app.include_router(octoprint.router)          # /octoprint/...: invio dei file dagli slicer, con chiave API propria
+app.include_router(slicerapi.router)          # /slicer/v1/...: plugin Cura e OrcaSlicer (abbinamento, invio)
 APP_INFO = {"name": APP_NAME, "version": __version__, "repo": REPO_URL}
 
 
@@ -315,6 +318,65 @@ async def my_profile(request: Request, body: dict):
         if body["theme"] not in ("", "auto", "light", "dark"):
             raise HTTPException(400, _("Tema non valido"))
         S().db.x("UPDATE users SET theme=? WHERE id=?", (body["theme"], u.id))
+    if "default_project" in body:
+        pid = body["default_project"]
+        pid = int(pid) if str(pid or "").isdigit() else None
+        if pid is not None and not u.sees_project(pid):
+            raise HTTPException(403, _("Scegli un progetto a cui hai accesso"))
+        S().db.x("UPDATE users SET default_project=? WHERE id=?", (pid, u.id))
+    return {"ok": True}
+
+
+# ====================================================================== slicer: chiavi API
+def _key_row(r: dict) -> dict:
+    return {"id": r["id"], "name": r["name"], "prefix": r["prefix"], "created_at": r["created_at"],
+            "last_used_at": r["last_used_at"], "last_ip": r["last_ip"],
+            "last_agent": ingest.source_label(ingest.source_from_agent(r["last_agent"])) if r["last_agent"] else "",
+            "user_id": r["user_id"], "username": r.get("username")}
+
+
+def need_slicer(u: User):
+    """Invio dagli slicer: finché "slicer_admin_only" è attivo (predefinito) è riservato agli amministratori."""
+    if not octoprint.slicer_allowed(u):
+        raise HTTPException(403, _("L'invio dagli slicer è per ora riservato agli amministratori"))
+
+
+@app.get("/api/me/slicer")
+async def my_slicer(request: Request):
+    """Chiavi API dell'utente (dell'amministratore: di tutti), cartella predefinita e destinazioni possibili."""
+    u = U(request)
+    need_slicer(u)
+    db = S().db
+    rows = db.q("SELECT k.*, us.username FROM api_keys k LEFT JOIN users us ON us.id=k.user_id "
+                + ("" if u.is_admin else "WHERE k.user_id=? ") + "ORDER BY k.created_at DESC", () if u.is_admin else (u.id,))
+    me = db.one("SELECT default_project FROM users WHERE id=?", (u.id,)) or {}
+    groups = [{"id": g["id"], "name": g["name"]} for g in db.q("SELECT id, name, owner_id FROM printer_groups ORDER BY name")
+              if g["owner_id"] in (None, u.id) and group_targetable(u, g["id"])]
+    printers = sorted(({"sn": p["sn"], "name": p["name"]} for p in S().printers.values() if u.sees_printer(p["sn"])),
+                      key=lambda x: x["name"].lower())
+    return {"keys": [_key_row(r) for r in rows], "default_project": me.get("default_project"),
+            "groups": groups, "printers": printers, "can_upload": u.can("files"), "can_order": u.can("production")}
+
+
+@app.post("/api/me/apikeys")
+async def my_apikey_new(request: Request, body: dict):
+    u = U(request)
+    need_slicer(u)
+    if not u.can("files"):
+        raise HTTPException(403, _("Il tuo ruolo non consente di caricare file"))
+    if len(S().db.q("SELECT id FROM api_keys WHERE user_id=?", (u.id,))) >= 20:
+        raise HTTPException(409, _("Hai già 20 chiavi: elimina quelle che non usi più"))
+    kid, key = auth.create_api_key(u.id, str(body.get("name") or "") or "Slicer")
+    return {"id": kid, "key": key}
+
+
+@app.delete("/api/apikeys/{kid}")
+async def apikey_delete(request: Request, kid: int):
+    u = U(request)
+    r = S().db.one("SELECT user_id FROM api_keys WHERE id=?", (kid,))
+    if not r or (r["user_id"] != u.id and not u.is_admin):
+        raise HTTPException(404, _("Chiave non trovata"))
+    S().db.x("DELETE FROM api_keys WHERE id=?", (kid,))
     return {"ok": True}
 
 
@@ -403,6 +465,10 @@ async def put_settings(request: Request, body: dict):
         cur["theme"] = body["theme"]
     if "files_show_all" in body:
         cur["files_show_all"] = bool(body["files_show_all"])
+    if "slicer_orders_paused" in body:
+        cur["slicer_orders_paused"] = bool(body["slicer_orders_paused"])
+    if "slicer_admin_only" in body:
+        cur["slicer_admin_only"] = bool(body["slicer_admin_only"])
     if body.get("poll_interval") in (5, 10, 15):
         cur["poll_interval"] = int(body["poll_interval"])
     if body.get("offline_grace_s") in (10, 20, 30, 60, 120, 300):
@@ -563,6 +629,7 @@ async def users_delete(request: Request, uid: int):
         S().db.x("DELETE FROM group_printers WHERE group_id=?", (g["id"],))
         S().db.x("UPDATE queue SET status='error', message=? WHERE group_id=? AND status='queued'", (qmsg("gruppo eliminato"), g["id"]))
     S().db.x("DELETE FROM printer_groups WHERE owner_id=?", (uid,))
+    S().db.x("DELETE FROM api_keys WHERE user_id=?", (uid,))
     auth.drop_sessions(uid)
     return {"ok": True}
 
@@ -1125,22 +1192,7 @@ async def files(request: Request, project: str | None = None, paged: bool = Fals
 
 
 def file_made_for(f: dict) -> dict | None:
-    """Stampante per cui il file è stato preparato (se il file lo indica) e diametri degli ugelli."""
-    meta = f.get("meta") or {}
-    model, noz = "", []
-    try:
-        if meta.get("kind") not in ("gcode", "resin"):
-            model, noz = production.file_printer(S(), f)          # 3mf: letto una volta e memorizzato
-        model = model or meta.get("printer_model") or meta.get("printer_model_id") or ""
-        if not noz:
-            pl = (meta.get("plates") or [{}])[0]
-            noz = [x for x in str(pl.get("nozzle_diameters") or "").replace(",", " ").split() if x]
-    except Exception:  # noqa: BLE001 - un file illeggibile non blocca l'elenco
-        pass
-    model = str(model).strip()
-    if not model:
-        return None
-    return {"model": model, "nozzles": sorted({f"{float(x):g}" for x in noz if str(x).replace(".", "", 1).isdigit()})}
+    return ingest.file_made_for(S(), f)
 
 
 @app.get("/api/files/{fid}/targets")
@@ -1173,68 +1225,21 @@ async def upload_file(request: Request, file: UploadFile = File(...), project_id
     pid = int(project_id) if project_id.isdigit() else None
     if not u.sees_project(pid):
         raise HTTPException(403, _("Scegli un progetto a cui hai accesso"))
-    data = S().cfg.data_path
-    gcode_file = is_gcode(file.filename or "")
-    low = (file.filename or "").lower()
-    resin = resinmeta.is_resin(low)                     # .ctb / .goo / .cbddlp: stampanti a resina Elegoo
-    ext = (Path(low).suffix if resin else (".bgcode" if low.endswith(".bgcode") else ".ufp" if low.endswith(".ufp") else ".gcode")
-           if gcode_file else ".3mf")
-    tmp = data / "tmp" / f"{uuid.uuid4().hex}{ext}"
-    with tmp.open("wb") as out:
-        shutil.copyfileobj(file.file, out, 1 << 20)
-    # G-code generato per una Bambu Lab: il Fleet Hub stampa solo .gcode.3mf, quindi lo si impacchetta
-    converted = gcode_file and not resin and await asyncio.to_thread(bambu_gcode.is_bambu_gcode, tmp)
-    if converted:
-        tmp3 = tmp.with_suffix(".3mf")
-        try:
-            await asyncio.to_thread(bambu_gcode.convert, tmp, tmp3)
-        except Exception as e:  # noqa: BLE001
-            tmp3.unlink(missing_ok=True); tmp.unlink(missing_ok=True)
-            raise HTTPException(400, _("File non valido: {e}", e=e))
-        tmp.unlink(missing_ok=True)
-        tmp, gcode_file, ext = tmp3, False, ".3mf"
     try:
-        meta = await asyncio.to_thread(resinmeta.parse_resin if resin else parse_gcode if gcode_file else parse_3mf, tmp)
-    except Exception as e:  # noqa: BLE001
-        tmp.unlink(missing_ok=True)
-        raise HTTPException(400, _("File non valido: {e}", e=e))
-    md5 = await asyncio.to_thread(md5_file, tmp)
-    existing = S().db.one("SELECT id, project_id FROM files WHERE md5=?", (md5,))
-    if existing:
-        tmp.unlink(missing_ok=True)
-        return {"id": existing["id"], "duplicate": True, "project_id": existing["project_id"]}
-    rel = f"{cfg.app.data_dir}/archive/{md5}{ext}"
-    tmp.rename(cfg.path(rel))
-    name = Path(file.filename or "senza_nome.gcode.3mf").name
-    if converted:                                       # plate_1.gcode → plate_1.gcode.3mf
-        name = re.sub(r"\.(gcode|gco|g)$", "", name, flags=re.I) + ".gcode.3mf"
-    sig = file_signature({"id": None, "path": rel, "meta": meta})
-    final, n = name, 0
-    while _name_clash(final, pid, sig):   # stesso nome e stessa configurazione nella cartella: "1-nome", "2-nome", ...
-        n += 1
-        final = f"{n}-{name}"
-    fid = S().db.x("INSERT INTO files(md5, filename, path, size, uploaded_at, meta, project_id, uploaded_by) "
-                   "VALUES(?,?,?,?,?,?,?,?)",
-                   (md5, final, rel,
-                    cfg.path(rel).stat().st_size, time.time(), json.dumps(meta), pid, u.id))
-    return {"id": fid, "duplicate": False, "filename": final, "renamed": final != name, "converted": bool(converted)}
+        r = await asyncio.to_thread(ingest.ingest, S(), file.file, file.filename or "", pid, u.id, "web")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if r["duplicate"]:
+        return {"id": r["id"], "duplicate": True, "project_id": r["project_id"]}
+    return {"id": r["id"], "duplicate": False, "filename": r["filename"], "renamed": r["renamed"], "converted": r["converted"]}
 
 
 def file_signature(f: dict) -> tuple:
-    """Configurazione di un file: stampante per cui è preparato, ugelli e materiali. Due file con lo stesso nome ma
-    configurazione diversa (es. stessa staffa per H2D e per X1E, o in PETG e in PLA) possono stare nella stessa cartella."""
-    mf = file_made_for(f) or {}
-    mats = sorted({str(x.get("type") or "").upper() for pl in (f.get("meta") or {}).get("plates") or []
-                   for x in pl.get("filaments") or [] if x.get("type")})
-    return (mf.get("model", "").lower(), tuple(mf.get("nozzles") or ()), tuple(mats))
+    return ingest.file_signature(S(), f)
 
 
 def _name_clash(name: str, pid, sig: tuple, exclude: int | None = None) -> bool:
-    for r in S().db.q("SELECT id, path, meta FROM files WHERE filename=? COLLATE NOCASE AND project_id IS ? AND id IS NOT ?",
-                      (name, pid, exclude)):
-        if file_signature({"id": r["id"], "path": r["path"], "meta": json.loads(r["meta"] or "{}")}) == sig:
-            return True
-    return False
+    return ingest.name_clash(S(), name, pid, sig, exclude)
 
 
 @app.delete("/api/files/{fid}")
@@ -1266,7 +1271,7 @@ async def edit_file(request: Request, fid: int, body: dict):
     return {"ok": True}
 
 
-FILE_EXTS = (".gcode.3mf", ".3mf", ".bgcode", ".gcode", ".gco", ".g", ".ufp", ".ctb", ".goo", ".cbddlp")
+FILE_EXTS = ingest.FILE_EXTS
 
 
 def _new_filename(fid: int, name) -> str:
@@ -2501,6 +2506,6 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 async def index():
     # versione nei link di script e stili: dopo un aggiornamento il browser carica sempre i file nuovi
     html = (BASE_DIR / "static" / "index.html").read_text(encoding="utf-8")
-    for asset in ("/static/app.js", "/static/production.js", "/static/materials.js", "/static/general.js", "/static/style.css"):
+    for asset in ("/static/app.js", "/static/production.js", "/static/materials.js", "/static/general.js", "/static/slicer.js", "/static/style.css"):
         html = html.replace(f'"{asset}"', f'"{asset}?v={__version__}"')
     return Response(html, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-cache"})

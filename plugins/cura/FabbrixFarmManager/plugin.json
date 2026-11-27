@@ -1,0 +1,9 @@
+{
+    "name": "Fabbrix Farm Manager",
+    "author": "Fabbrix",
+    "version": "1.0.0",
+    "description": "Invia i file sezionati a Fabbrix Farm Manager: cartella dei Files, destinazione, ordine di produzione con copie e priorità, note. / Send sliced files to Fabbrix Farm Manager.",
+    "api": 8,
+    "supported_sdk_versions": ["8.0.0"],
+    "i18n-catalog": "cura"
+}

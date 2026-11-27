@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS fleet_hubs (
     id INTEGER PRIMARY KEY, name TEXT DEFAULT '', host TEXT, port INTEGER DEFAULT 8888, user_name TEXT DEFAULT 'admin',
     password TEXT DEFAULT '', hash_mode TEXT DEFAULT 'demo', own_certs INTEGER DEFAULT 0, enabled INTEGER DEFAULT 1, created_at REAL
 );
+-- chiavi API personali per gli slicer (API compatibile OctoPrint): si salva solo l'hash della chiave
+CREATE TABLE IF NOT EXISTS api_keys (
+    id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT DEFAULT '', key_hash TEXT UNIQUE, prefix TEXT DEFAULT '',
+    created_at REAL, last_used_at REAL, last_ip TEXT DEFAULT '', last_agent TEXT DEFAULT ''
+);
 """
 
 # colonne aggiunte nelle versioni successive (migrazione automatica dei database esistenti)
@@ -93,6 +98,8 @@ MIGRATIONS = [
     ("jobs", "thumb", "TEXT DEFAULT ''"),
     ("users", "theme", "TEXT DEFAULT ''"),
     ("job_filaments", "source", "TEXT DEFAULT 'slicer'"),
+    ("files", "source", "TEXT DEFAULT 'web'"),            # web, prusaslicer, orcaslicer, cura, ideamaker, ...
+    ("users", "default_project", "INTEGER"),              # cartella dei file inviati dagli slicer senza percorso
 ]
 
 

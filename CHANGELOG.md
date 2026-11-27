@@ -3,6 +3,36 @@
 Tutte le modifiche rilevanti a FleetBuddy. Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e la numerazione segue il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.34.0] – 2026-11-27
+
+### Novità
+- Invio dagli slicer: PrusaSlicer, OrcaSlicer (anche con i profili Bambu Lab), Cura (plugin "OctoPrint Connection") e
+  ideaMaker inviano i file direttamente al Farm Manager, che risponde come una stampante OctoPrint su `/octoprint/`.
+  - "Carica" mette il file nei Files; "Carica e stampa" crea anche un ordine di produzione (una copia per piatto) sulle
+    stampanti compatibili della destinazione: tutte (`/octoprint/`), un gruppo (`/octoprint/g/<gruppo>/`) o una
+    stampante (`/octoprint/p/<seriale>/`).
+  - La cartella si sceglie scrivendola davanti al nome del file nello slicer (es. `Clienti/Rossi/staffa.gcode`);
+    senza cartella si usa la cartella predefinita dell'utente. Le cartelle non vengono create dagli slicer.
+  - Chiavi API personali: "Collega slicer" (in basso nel menu) crea e revoca le chiavi, sceglie la cartella
+    predefinita, prepara l'indirizzo e mostra le istruzioni per ogni slicer. La chiave ha i permessi dell'utente
+    ("Files" per caricare, "Produzione" per Carica e stampa); l'amministratore vede e revoca le chiavi di tutti.
+  - Files: etichetta "da PrusaSlicer", "da OrcaSlicer", ... sui file arrivati dagli slicer.
+  - Generali → Files: "Ordini dagli slicer in pausa", per approvare gli ordini prima che partano.
+- Plugin per Cura e OrcaSlicer 2.5+ (in `plugins/`, scaricabili da "Collega slicer"): niente chiavi da copiare. Il
+  plugin si abbina con un codice di 6 caratteri che si approva nel Farm Manager (dal browser che il plugin apre, o
+  scrivendolo in "Collega slicer"); poi a ogni invio si scelgono cartella dei Files, destinazione (tutte le stampanti
+  compatibili, un gruppo o una stampante), azione (solo Files o ordine di produzione), copie, priorità (amministratore
+  e Manager) e note.
+  - Cura: "Invia al Farm Manager" accanto a "Salva su disco", per qualsiasi stampante, UltiMaker comprese (che
+    ricevono un .ufp; le altre un G-code).
+  - OrcaSlicer: dopo "Esporta G-code" o "Esporta file del piatto" compare l'avviso "Invia al Farm Manager"; si apre
+    anche dalla Speed Dial (barra spaziatrice).
+  - API per i plugin su `/slicer/v1/` (abbinamento, informazioni, invio) con la stessa chiave personale dell'API OctoPrint.
+- Per ora tutte le funzioni di invio dagli slicer (Collega slicer, plugin, API OctoPrint e /slicer/v1) sono riservate
+  agli amministratori. Si aprono agli utenti con il permesso Files togliendo la spunta in Generali → Files →
+  "Invio dagli slicer solo per gli amministratori".
+- Controlli automatici: test dell'API per gli slicer e per i plugin (`tests/`), eseguiti a ogni push.
+
 ## [0.33.0] – 2026-11-25
 
 ### Novità
